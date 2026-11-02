@@ -19,7 +19,7 @@ var HOME_APP = 'com.samsung.tv.csfs';
 var HOME_LABEL_MAX = 12;
 function homeShortcut(value) {
     if (value == null) return null;
-    if (!value || !APP_ID.test(value.appId || '') || typeof value.label !== 'string') throw Error('Choose an installed app and a button label');
+    if (!value || typeof value.appId !== 'string' || !APP_ID.test(value.appId) || typeof value.label !== 'string') throw Error('Choose an installed app and a button label');
     var label = value.label.trim();
     if (!label || label.length > HOME_LABEL_MAX || /[\u0000-\u001f\u007f]/.test(label)) throw Error('Button label must contain 1–12 characters');
     if (value.appId === HOME_APP) return null;
@@ -152,7 +152,7 @@ function build(parsed, options) {
     });
     var shortcut = null;
     try { shortcut = homeShortcut(options.homeShortcut); } catch (e) { skipped.push({item: 'Home shortcut', reason: 'Invalid setting; Samsung Home is used'}); }
-    if (shortcut && !(parsed.installed && parsed.installed[shortcut.appId])) {
+    if (shortcut && !(parsed.installed && Object.prototype.hasOwnProperty.call(parsed.installed, shortcut.appId))) {
         skipped.push({item: shortcut.label, reason: 'Custom Home app is unavailable; Samsung Home is used'}); shortcut = null;
     }
     return {entries: entries, skipped: skipped, homeShortcut: shortcut};

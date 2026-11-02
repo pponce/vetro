@@ -4,6 +4,7 @@ on:
     branches: [build/launcher-home-shortcut]
     paths:
       - 'dock/**'
+      - 'app/**'
       - '.github/workflows/launcher-home-shortcut-test-package.yml'
 permissions:
   contents: write
