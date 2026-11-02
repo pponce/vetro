@@ -131,6 +131,8 @@ assert.ok(noYt.skipped.some(x => /No YouTube icon/.test(x.reason)));
     assert.throws(() => catalog.homeShortcut({appId: custom.appId, label: '1234567890123'}), /1–12/);
     assert.throws(() => catalog.homeShortcut({appId: custom.appId, label: 'New\nline'}), /1–12/);
     assert.deepEqual(catalog.homeShortcut({appId: custom.appId, label: '  AeroTizen  '}), custom);
+    assert.throws(() => catalog.homeShortcut({appId: [custom.appId], label: 'AeroTizen'}), /Choose/);
+    assert.ok(!catalog.tsv(catalog.build(catalog.parse(OUTPUT), {homeShortcut: {appId: 'toString', label: 'Home'}})).includes('customhome\t'));
 
     console.log('PASS dock catalog: Home row, registry and icons become the dock list');
 })().catch(e => { console.error(e); process.exitCode = 1; });
