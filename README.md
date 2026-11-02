@@ -59,6 +59,8 @@ Each switch shows *Done* or *Partly done*, so you can see what actually changed.
 
 Quick settings and Task manager share the same inventory: disable an assistant in one and its components show up as disabled in the other. Disabling a component keeps it installed and can be reversed; stopping ends the running process; uninstalling needs an installer to recover. Descriptions come from the Q80A's firmware, so on other models some packages are unclassified and left alone.
 
+**Choose your power-on app.** In **Task manager**, select an app and enable **Startup → Open onscreen at power-on**. Vetro opens that app after a full boot or a wake from standby. Only one app can be selected; choosing another replaces it. The separate **Start at boot** flags remain available for multiple apps. [Power-on app setup and behavior →](app/docs/STARTUP-APP.md)
+
 ## Remapper
 
 Do what you want with the remote. Press a button, choose an app, and the button opens it. Shortcuts survive restarts, and a key can also trigger an MQTT message for Home Assistant.
