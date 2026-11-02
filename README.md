@@ -61,6 +61,8 @@ Quick settings and Task manager share the same inventory: disable an assistant i
 
 **Choose your power-on app.** In **Task manager**, select an app and enable **Startup → Open onscreen at power-on**. Vetro opens that app after a full boot or a wake from standby. Only one app can be selected; choosing another replaces it. The separate **Start at boot** flags remain available for multiple apps. [Power-on app setup and behavior →](app/docs/STARTUP-APP.md)
 
+**Choose a return app.** Enable **Return here after exiting another app** in an app's Task manager details to select one destination when another app falls back to Samsung Home or TV. It is independent of the power-on choice. [Return behavior and detection limits →](app/docs/RETURN-APP.md)
+
 ## Remapper
 
 Do what you want with the remote. Press a button, choose an app, and the button opens it. Shortcuts survive restarts, and a key can also trigger an MQTT message for Home Assistant.
