@@ -34,3 +34,40 @@ jobs:
         run: dotnet run --project dock/tests/Launcher.Tests.csproj --configuration Release
       - name: Compile TV launcher
         run: dotnet build dock/Launcher.csproj --configuration Release -p:UseAppHost=false
+
+  app_test_package:
+    if: github.repository == 'pponce/vetro' && github.ref == 'refs/heads/build/app-startup-and-return'
+    needs: [check, launcher]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Package unsigned TV integration
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const app = require('./app/build.cjs');
+          const integration = require('./rooting/build.cjs');
+          const files = integration.collectIntegration();
+          const names = files.map(f => decodeURIComponent(f.uri));
+          for (const name of ['service/startup-app.js', 'service/return-app.js', 'service/power-state.js', 'service/root-agent.js']) {
+            if (!names.includes(name)) throw Error('Missing integration file: ' + name);
+          }
+          fs.mkdirSync('dist', {recursive:true});
+          fs.writeFileSync('dist/vetro-app-startup-and-return-unsigned.wgt', app.zip(files));
+          NODE
+          git rev-parse HEAD > dist/SOURCE_COMMIT.txt
+          sha256sum dist/vetro-app-startup-and-return-unsigned.wgt > dist/SHA256SUMS
+          cp notes/app-startup-return-tv-test.md dist/TV-TEST.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vetro-app-startup-and-return-unsigned
+          path: |
+            dist/vetro-app-startup-and-return-unsigned.wgt
+            dist/SOURCE_COMMIT.txt
+            dist/SHA256SUMS
+            dist/TV-TEST.md
+          if-no-files-found: error
+          retention-days: 14
