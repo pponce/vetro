@@ -3,11 +3,15 @@ const assert = require('assert').strict, path = require('path'), EventEmitter = 
 const load = require('./service-harness.cjs');
 const Real = require('../service/return-app.js');
 let selected = null, revision = 0, registryError = null, launchOptions;
+let tick = () => Promise.resolve(), nextDelay = 1000;
+const timers = [];
 const calls = [], rows = [{appId: 'video.one', show: true, disabled: false}, {appId: 'video.two', show: true, disabled: false}];
-const service = load(path.resolve(__dirname, '..'), {setInterval: () => ({unref(){}}), dependencies: {
+const service = load(path.resolve(__dirname, '..'), {setInterval: () => ({unref(){}}),
+    setTimeout: (callback, delay) => {const timer={callback,delay,unref(){}};timers.push(timer);return timer;}, dependencies: {
     './return-app.js': {...Real, ReturnApp: function (options) {
         launchOptions = options;
-        this.status = () => ({appId: selected, revision}); this.tick = () => Promise.resolve();
+        this.status = () => ({appId: selected, revision}); this.tick = () => tick();
+        this.nextDelay = () => nextDelay;
         this.configure = (id, expected, apps) => {
             if (expected !== revision) throw Error('Return choice changed');
             if (id && !apps.some(a => a.appId === id)) throw Error('App unavailable');
@@ -26,6 +30,19 @@ function request(method, body, raw = false) {
     });
 }
 (async () => {
+    const first = timers.find(t => t.callback === service.context.pollReturnApp);
+    assert.equal(first.delay, 1000);
+    let release;
+    tick = () => new Promise(resolve => {release=resolve;});
+    const count = timers.length, checking = first.callback();
+    assert.equal(timers.length, count, 'no next poll while the current TV read is pending');
+    nextDelay = 300; release(); await checking;
+    assert.equal(timers.length, count + 1);
+    assert.equal(timers[timers.length - 1].delay, 300, 'an exit recheck does not wait for the idle interval');
+    tick = () => Promise.reject(Error('temporary read failure')); nextDelay = 1000;
+    await timers[timers.length - 1].callback();
+    assert.equal(timers[timers.length - 1].delay, 1000, 'polling continues after a failed check');
+    tick = () => Promise.resolve();
     assert.equal((await request('GET')).body.appId, null);
     for (const p of [null, [], {}, {appId:'video.one'}, {appId:'video.one;id', expectedRevision:0},
         {appId:'video.one', expectedRevision:'0'}, {appId:'video.one', expectedRevision:0, cmd:'id'}]) {
@@ -62,5 +79,5 @@ function request(method, body, raw = false) {
         ]);
     } finally { clearTimeout(timeout); }
     assert.deepEqual(commands,[Real.COMMAND,'foreground-launch'],'fresh snapshot executes within the occupied queue slot');
-    console.log('PASS return API: bounded body, one selected app, stale writes, readback, offline disable, and guarded command dispatch');
+    console.log('PASS return API: adaptive polling without overlap, bounded body, one selected app, stale writes, readback, offline disable, and guarded command dispatch');
 })().catch(error => {console.error(error); process.exitCode=1;});
