@@ -2,6 +2,7 @@ import base64
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import secrets
 import shutil
 import subprocess
@@ -16,6 +17,13 @@ spec = importlib.util.spec_from_file_location('installer', Path(__file__).parent
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 REV = 'a' * 40
+PROBE = {'uid':0,'duid':'TESTTV1234567','sourceRevision':'b'*40,'updateLocked':False,
+         'authorFingerprint':installer.digest(b'author'),
+         'launcherSha256':installer.digest(b'native'),'runtime':'6.0.9'}
+
+
+def frame(mode, result):
+    return installer.WORKER_PREFIX + json.dumps({'protocol':1,'mode':mode,'result':result})
 
 
 class InstallerTests(unittest.TestCase):
@@ -85,7 +93,8 @@ class InstallerTests(unittest.TestCase):
             raise AssertionError(route)
         obj.request=request
         obj.execute=lambda command: obj.calls.append(('exec',command)) or json.dumps({'phase':'install-returned','submitted':True,'finished':True})
-        obj.worker=lambda stage,mode: obj.calls.append(('worker',mode)) or {'sourceRevision':REV,'launcherSha256':'native'}
+        obj.worker=lambda stage,mode: obj.calls.append(('worker',mode)) or (
+            {'verified':True,'revision':REV} if mode=='finish' else {'sourceRevision':REV,'launcherSha256':'native'})
         ledger={'revision':REV,'launcherSha256':'native','stage':'/tmp/vetro-update-'+'a'*16,
                 'dock':{'enabled':True,'fixTizenTube':False,'pid':42},'sent':True,'complete':False}
         return obj,ledger
@@ -117,12 +126,106 @@ class InstallerTests(unittest.TestCase):
 
     def test_tv_service_executable_is_never_probed_as_node(self):
         obj=object.__new__(installer.Installer);commands=[]
-        obj.execute=lambda command: commands.append(command) or '{"uid":0}'
+        obj.execute=lambda command: commands.append(command) or frame('probe',PROBE)
         stage='/tmp/vetro-update-'+'a'*16
-        self.assertEqual(obj.worker(stage,'probe'),{'uid':0})
+        self.assertEqual(obj.worker(stage,'probe'),PROBE)
         self.assertEqual(commands,['/usr/bin/dotnet '+stage+'/VetroUpdate.dll probe'])
         self.assertNotIn('/proc/',installer.launch_command('/usr/bin/dotnet',stage))
         self.assertFalse(hasattr(installer.Installer,'node_path'))
+
+    def test_versioned_result_ignores_surrounding_runtime_output(self):
+        output='Runtime startup\n{"unrelated":true}\n'+frame('probe',PROBE)+'\nRuntime shutdown\n'
+        self.assertEqual(installer.worker_response(output,'probe'),PROBE)
+        installed={k:PROBE[k] for k in ('authorFingerprint','sourceRevision','launcherSha256')}
+        self.assertEqual(installer.worker_response(frame('installed',installed),'installed'),installed)
+        done={'verified':True,'revision':REV}
+        self.assertEqual(installer.worker_response(frame('finish',done)+'\nshutdown','finish'),done)
+
+    def test_result_rejects_missing_duplicate_truncated_and_wrong_operation(self):
+        valid=frame('probe',PROBE)
+        outputs=['',json.dumps(PROBE),valid+'\n'+valid,valid[:-1],valid+' extra',frame('installed',PROBE),
+                 'VETRO_UPDATE_RESULT_V2 '+json.dumps(PROBE),valid+'\n'+'x'*65536]
+        for output in outputs:
+            with self.subTest(output_length=len(output)):
+                with self.assertRaises(RuntimeError) as caught:installer.worker_response(output,'probe')
+                self.assertNotIn(PROBE['duid'],str(caught.exception))
+        for version in (2,True,'1'):
+            output=installer.WORKER_PREFIX+json.dumps({'protocol':version,'mode':'probe','result':PROBE})
+            with self.assertRaises(RuntimeError):installer.worker_response(output,'probe')
+
+    def test_result_requires_typed_identity_and_completion_fields(self):
+        for field,value in [('uid',False),('uid',1),('updateLocked',0),('duid','TEST12345'),
+                            ('authorFingerprint','bad'),('launcherSha256',None),('sourceRevision','bad'),('runtime','')]:
+            result=dict(PROBE);result[field]=value
+            with self.subTest(field=field):
+                with self.assertRaises(RuntimeError):installer.worker_response(frame('probe',result),'probe')
+        for result in ({},[],{'verified':False,'revision':REV},{'verified':True,'revision':'bad'}):
+            with self.assertRaises(RuntimeError):installer.worker_response(frame('finish',result),'finish')
+
+    def test_valid_frame_cannot_hide_failed_tv_command(self):
+        obj=object.__new__(installer.Installer)
+        obj.request=lambda route,body: {'ok':False,'exit_code':1,'output':frame('probe',PROBE),'stderr':'runtime failed'}
+        with self.assertRaisesRegex(RuntimeError,'runtime failed'):
+            obj.worker('/tmp/vetro-update-'+'a'*16,'probe')
+
+    def test_unconfirmed_finish_keeps_attempt_pending(self):
+        obj,ledger=self.fake_installer()
+        obj.worker=lambda stage,mode: ({'verified':True,'revision':'c'*40} if mode=='finish'
+                                      else {'sourceRevision':REV,'launcherSha256':'native'})
+        with patch.object(installer.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'requested revision'):obj.verify(ledger)
+        self.assertFalse(ledger['complete']);self.assertTrue(ledger['sent'])
+
+    def test_complete_host_flow_with_runtime_noise_and_short_tv_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);native=root/'app/native/dock/tvlauncher-dotnet.dll'
+            native.parent.mkdir(parents=True);native.write_bytes(b'native')
+            obj=object.__new__(installer.Installer)
+            obj.root=root;obj.args=SimpleNamespace(expected_commit=REV)
+            obj.ledger_file=root/'state.json';obj.redactions=[];obj.sent=False;obj.messages=[]
+            obj.log=obj.messages.append
+            stage='/tmp/vetro-update-'+'a'*16
+            obj.stage_helper=lambda:stage
+            obj.command=lambda args: REV if args==['git','rev-parse','HEAD'] else ''
+            uploads=[];obj.upload=lambda folder,name,data:uploads.append((name,data))
+            state={'submitted':0,'pid':42}
+            def request(route,body=None,timeout=None):
+                if route=='/status':
+                    return {'mode':'tv-integration','agent':{'connected':True},
+                            'app':{'sourceRevision':REV if state['submitted'] else 'b'*40,'sourceDirty':False}}
+                if route=='/dock':
+                    if body:state['pid']=99
+                    return {'enabled':True,'running':True,'pid':state['pid'],'fixTizenTube':False}
+                if route in ('/startup-app','/return-app'):return {'appId':None,'revision':0}
+                self.assertEqual(route,'/exec');command=body['cmd']
+                if command.startswith('nohup setsid '):
+                    state['submitted']+=1;output='updater-started\n'
+                elif command.startswith('cat '):
+                    output=json.dumps({'submitted':True,'finished':True,'phase':'install-returned'})
+                elif command.startswith('rm -rf '):output=''
+                else:
+                    self.assertTrue(command.startswith('/usr/bin/dotnet '+stage+'/VetroUpdate.dll '))
+                    mode=command.rsplit(' ',1)[1]
+                    result=(dict(PROBE) if mode=='probe' else dict(PROBE,sourceRevision=REV) if mode=='installed'
+                            else {'verified':True,'revision':REV})
+                    output='Runtime startup\n'+frame(mode,result)+'\nRuntime shutdown\n'
+                return {'ok':True,'exit_code':0,'timed_out':False,'output':output,'stderr':''}
+            obj.request=request
+            def sign(duid,revision,native_hash):
+                profile={'profiles':[{'Level':'Partner','Exists':True,'Usable':True,'Duids':['testtv1234567'],'Path':str(root)}]}
+                self.assertEqual(installer.partner_profile(json.dumps(profile),duid),root)
+                self.assertEqual(revision,REV);self.assertEqual(native_hash,installer.digest(b'native'))
+                file=root/'signed.wgt';file.write_bytes(b'package')
+                return file,{'authorFingerprint':PROBE['authorFingerprint'],'sha256':installer.digest(b'package'),'size':7}
+            obj.sign=sign
+            obj.run()
+            self.assertTrue(json.loads(obj.ledger_file.read_text())['complete'])
+            self.assertEqual(state['submitted'],1);self.assertEqual(state['pid'],99)
+            job=json.loads(dict(uploads)['job.json'])
+            self.assertEqual(job['duidFingerprint'],installer.digest(PROBE['duid'].lower().encode()))
+            self.assertTrue(any(line.startswith('VERIFIED:') for line in obj.messages))
+            obj.run()
+            self.assertEqual(state['submitted'],1,'Already-installed build is not resubmitted')
 
     def test_helper_transfer_is_checked_before_any_execution(self):
         obj=object.__new__(installer.Installer);obj.root=Path('/unused');obj.log=lambda _:None

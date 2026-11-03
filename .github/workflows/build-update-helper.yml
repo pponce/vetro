@@ -23,7 +23,10 @@ jobs:
         with:
           dotnet-version: '10.0.100'
       - name: Test helper and SDB wire protocol
-        run: dotnet run --project tools/tv-updater/tests/Tests.csproj --configuration Release
+        run: |
+          dotnet run --project tools/tv-updater/tests/Tests.csproj --configuration Release > "$RUNNER_TEMP/vetro-helper-tests.log"
+          cat "$RUNNER_TEMP/vetro-helper-tests.log"
+          python3 tools/tests/check_helper_contract.py "$RUNNER_TEMP/vetro-helper-tests.log"
       - name: Compile TV helper
         run: |
           dotnet build tools/tv-updater/VetroUpdate.csproj --configuration Release

@@ -23,10 +23,53 @@ import zipfile
 STAGE = re.compile(r"/tmp/vetro-update-[a-f0-9]{16}\Z")
 REVISION = re.compile(r"[a-f0-9]{40}\Z")
 CHUNK = 16384
+WORKER_PREFIX = 'VETRO_UPDATE_RESULT_V1 '
 
 
 def digest(value):
     return hashlib.sha256(value).hexdigest()
+
+
+def worker_response(output, mode):
+    """Read only the helper's explicit result, not surrounding runtime output."""
+    if mode not in ('probe', 'installed', 'finish'):
+        raise ValueError('Invalid updater operation')
+    if not isinstance(output, str) or len(output) > 65536:
+        raise RuntimeError('TV updater response is missing or exceeds its limit')
+    frames = [line[len(WORKER_PREFIX):] for line in output.splitlines()
+              if line.startswith(WORKER_PREFIX)]
+    if len(frames) != 1:
+        raise RuntimeError('Expected one TV updater result for ' + mode
+                           + '; received ' + str(len(frames)) + ' marked results')
+    try:
+        envelope = json.loads(frames[0])
+    except ValueError:
+        raise RuntimeError('TV updater result for ' + mode + ' is incomplete or invalid JSON') from None
+    if (not isinstance(envelope, dict) or type(envelope.get('protocol')) is not int
+            or envelope['protocol'] != 1 or envelope.get('mode') != mode
+            or not isinstance(envelope.get('result'), dict)):
+        raise RuntimeError('TV updater result version, operation, or payload is invalid')
+    result = envelope['result']
+    def revision(value):
+        return isinstance(value, str) and REVISION.fullmatch(value) is not None
+    def checksum(value):
+        return isinstance(value, str) and re.fullmatch(r'[a-f0-9]{64}', value) is not None
+    if mode == 'finish':
+        valid = result.get('verified') is True and revision(result.get('revision'))
+    else:
+        valid = (checksum(result.get('authorFingerprint')) and checksum(result.get('launcherSha256'))
+                 and 'sourceRevision' in result
+                 and (result['sourceRevision'] is None or revision(result['sourceRevision'])))
+        if mode == 'probe':
+            valid = (valid and isinstance(result.get('duid'), str)
+                     and re.fullmatch(r'[A-Za-z0-9]{10,64}', result['duid']) is not None
+                     and type(result.get('uid')) is int and result['uid'] == 0
+                     and type(result.get('updateLocked')) is bool
+                     and isinstance(result.get('runtime'), str) and 0 < len(result['runtime']) <= 64)
+    if not valid:
+        # Do not include raw output: the probe contains the TV's private ID.
+        raise RuntimeError('TV updater result for ' + mode + ' is missing valid required fields')
+    return result
 
 
 def lower_keys(value):
@@ -164,7 +207,10 @@ class Installer:
     def worker(self, stage, mode):
         if not STAGE.fullmatch(stage):
             raise RuntimeError('Invalid saved update directory')
-        return json.loads(self.execute(' '.join(map(shlex.quote, ['/usr/bin/dotnet', stage + '/VetroUpdate.dll', mode]))))
+        if mode not in ('probe', 'installed', 'finish'):
+            raise ValueError('Invalid updater operation')
+        output = self.execute(' '.join(map(shlex.quote, ['/usr/bin/dotnet', stage + '/VetroUpdate.dll', mode])))
+        return worker_response(output, mode)
 
     def stage_helper(self):
         files = helper_files(self.root)
@@ -287,7 +333,9 @@ class Installer:
                 raise RuntimeError('Updated Vetro is installed, but the enabled launcher has not been confirmed running')
             if before.get('pid') and after.get('pid') == before['pid']:
                 raise RuntimeError('The old launcher process is still running')
-        self.worker(ledger['stage'], 'finish')
+        finished = self.worker(ledger['stage'], 'finish')
+        if finished.get('verified') is not True or finished.get('revision') != revision:
+            raise RuntimeError('TV updater did not confirm completion of the requested revision')
         ledger['complete'] = True
         self.write_ledger(ledger)
         self.log('VERIFIED: combined source revision, launcher DLL, both new settings, and root connection.')

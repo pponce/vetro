@@ -241,6 +241,13 @@ namespace VetroUpdate
 
     internal static class Program
     {
+        internal const string ResponsePrefix = "VETRO_UPDATE_RESULT_V1 ";
+
+        internal static string ResponseLine(string mode, object result)
+        {
+            return ResponsePrefix + JsonSerializer.Serialize(new { protocol = 1, mode, result });
+        }
+
         public static int Main(string[] args)
         {
             try
@@ -261,7 +268,10 @@ namespace VetroUpdate
                     case "finish": result = worker.Finish(JsonSerializer.Deserialize<Job>(File.ReadAllText(Path.Combine(directory, "job.json")))); break;
                     default: throw new ArgumentException("Use probe, installed, install, or finish");
                 }
-                Console.WriteLine(JsonSerializer.Serialize(result));
+                // The TV runtime may write its own startup/shutdown messages to
+                // stdout. Frame the response separately from those messages.
+                Console.WriteLine();
+                Console.WriteLine(ResponseLine(args[0], result));
                 return 0;
             }
             catch (Exception error) { Console.Error.WriteLine(error.Message); return 1; }

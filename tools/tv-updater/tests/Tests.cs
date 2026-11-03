@@ -149,6 +149,23 @@ internal static class Tests
             }
             Throws(() => Worker.AuthorFingerprint("<!DOCTYPE a [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><a>&x;</a>"), "No XML external entity resolution");
         });
+        Test("helper response uses a versioned operation-specific frame", () => {
+            using (var f = new Fixture()) {
+                string line = Program.ResponseLine("probe", f.Worker.Probe());
+                Assert(line.StartsWith(Program.ResponsePrefix) && !line.Contains('\n'), "Single marked result line");
+                using (var document = JsonDocument.Parse(line.Substring(Program.ResponsePrefix.Length))) {
+                    var value = document.RootElement;
+                    Assert(value.GetProperty("protocol").GetInt32() == 1, "Protocol version");
+                    Assert(value.GetProperty("mode").GetString() == "probe", "Operation identity");
+                    Assert(value.GetProperty("result").GetProperty("duid").GetString() == Duid, "Typed result serialized");
+                }
+                // CI passes this entire test log (including the other PASS
+                // lines) through the real Python decoder to check the boundary.
+                Console.WriteLine("Runtime fixture startup");
+                Console.WriteLine(line);
+                Console.WriteLine("Runtime fixture shutdown");
+            }
+        });
         Test("checksum, identity, revision and root preflight", () => {
             Action<Fixture>[] change = {
                 f => f.Job.sha256 = new string('0', 64), f => f.Job.size = 9,
