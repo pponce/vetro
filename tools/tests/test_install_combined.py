@@ -62,7 +62,7 @@ class InstallerTests(unittest.TestCase):
     def test_updater_finishes_after_the_launching_shell_exits(self):
         stage=Path('/tmp/vetro-update-'+secrets.token_hex(8));stage.mkdir()
         try:
-            (stage/'worker.js').write_text('import time\nfrom pathlib import Path\ntime.sleep(.3)\nPath(__file__).with_name("finished").write_text("ok")\n')
+            (stage/'VetroUpdate.dll').write_text('import time\nfrom pathlib import Path\ntime.sleep(.3)\nPath(__file__).with_name("finished").write_text("ok")\n')
             result=subprocess.run(['sh','-c',installer.launch_command(sys.executable,str(stage))],capture_output=True,text=True,timeout=2)
             self.assertEqual(result.returncode,0);self.assertEqual(result.stdout,'updater-started\n')
             deadline=time.monotonic()+3
@@ -72,7 +72,7 @@ class InstallerTests(unittest.TestCase):
 
     def fake_installer(self, ready=True):
         obj=object.__new__(installer.Installer);obj.sent=False;obj.calls=[];obj.messages=[]
-        obj.log=obj.messages.append;obj.node_path=lambda _: '/usr/bin/node';obj.write_ledger=lambda d: obj.calls.append(('ledger',dict(d)))
+        obj.log=obj.messages.append;obj.write_ledger=lambda d: obj.calls.append(('ledger',dict(d)))
         count=[0]
         def request(route, body=None, timeout=None):
             obj.calls.append((route,body))
@@ -84,8 +84,8 @@ class InstallerTests(unittest.TestCase):
             if route=='/dock':return {'enabled':True,'running':True,'fixTizenTube':False,'pid':99}
             raise AssertionError(route)
         obj.request=request
-        obj.execute=lambda command: obj.calls.append(('exec',command)) or json.dumps({'phase':'installing','submitted':True})
-        obj.worker=lambda node,stage,mode: obj.calls.append(('worker',mode)) or {'sourceRevision':REV,'launcherSha256':'native'}
+        obj.execute=lambda command: obj.calls.append(('exec',command)) or json.dumps({'phase':'install-returned','submitted':True,'finished':True})
+        obj.worker=lambda stage,mode: obj.calls.append(('worker',mode)) or {'sourceRevision':REV,'launcherSha256':'native'}
         ledger={'revision':REV,'launcherSha256':'native','stage':'/tmp/vetro-update-'+'a'*16,
                 'dock':{'enabled':True,'fixTizenTube':False,'pid':42},'sent':True,'complete':False}
         return obj,ledger
@@ -114,6 +114,47 @@ class InstallerTests(unittest.TestCase):
                 obj.verify(ledger)
         self.assertTrue(ledger['sent']);self.assertFalse(ledger['complete'])
         self.assertNotIn(('worker','finish'),obj.calls)
+
+    def test_tv_service_executable_is_never_probed_as_node(self):
+        obj=object.__new__(installer.Installer);commands=[]
+        obj.execute=lambda command: commands.append(command) or '{"uid":0}'
+        stage='/tmp/vetro-update-'+'a'*16
+        self.assertEqual(obj.worker(stage,'probe'),{'uid':0})
+        self.assertEqual(commands,['/usr/bin/dotnet '+stage+'/VetroUpdate.dll probe'])
+        self.assertNotIn('/proc/',installer.launch_command('/usr/bin/dotnet',stage))
+        self.assertFalse(hasattr(installer.Installer,'node_path'))
+
+    def test_helper_transfer_is_checked_before_any_execution(self):
+        obj=object.__new__(installer.Installer);obj.root=Path('/unused');obj.log=lambda _:None
+        obj.upload=lambda *args:None;obj.calls=[]
+        obj.execute=lambda command: obj.calls.append(command) or 'wrong-checksum  file'
+        with patch.object(installer,'helper_files',return_value={'VetroUpdate.dll':b'helper'}):
+            with self.assertRaisesRegex(RuntimeError,'checksum'):obj.stage_helper()
+        self.assertEqual(len(obj.calls),2)
+        self.assertNotIn('VetroUpdate.dll probe',' '.join(obj.calls))
+
+    def test_running_updater_is_not_cleaned_or_unlocked(self):
+        obj,ledger=self.fake_installer()
+        obj.request=lambda route,body=None,timeout=None: {'app':{'sourceRevision':REV,'sourceDirty':False},'agent':{'connected':True}}
+        obj.execute=lambda command: json.dumps({'phase':'installing','submitted':True,'finished':False})
+        with patch.object(installer.time,'monotonic',side_effect=[0,1,2,3,200]),patch.object(installer.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'updater has not finished'):obj.verify(ledger)
+        self.assertNotIn(('worker','finish'),obj.calls)
+        self.assertFalse(ledger['complete']);self.assertTrue(ledger['sent'])
+
+    def test_precompiled_helper_matches_source_and_manifest(self):
+        root=Path(__file__).resolve().parents[2]
+        files=installer.helper_files(root)
+        self.assertEqual(set(files),{'VetroUpdate.dll','VetroUpdate.runtimeconfig.json'})
+        self.assertTrue(files['VetroUpdate.dll'].startswith(b'MZ'))
+        spec=importlib.util.spec_from_file_location('bundle',root/'tools/tv-updater/bundle.py')
+        bundle=importlib.util.module_from_spec(spec);spec.loader.exec_module(bundle)
+        with tempfile.TemporaryDirectory() as directory:
+            copy=Path(directory)/'helper';shutil.copytree(root/'tools/tv-updater',copy)
+            for name in ('VetroUpdate.cs','compiled/VetroUpdate.dll'):
+                file=copy/name;old=file.read_bytes();file.write_bytes(old+b'changed')
+                with self.assertRaisesRegex(RuntimeError,'does not match'):bundle.verify(copy)
+                file.write_bytes(old)
 
 
 if __name__=='__main__':unittest.main()

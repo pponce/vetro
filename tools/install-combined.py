@@ -4,6 +4,7 @@ import argparse
 import base64
 import datetime
 import hashlib
+import importlib.util
 import ipaddress
 import json
 import os
@@ -93,10 +94,18 @@ def transfer_commands(stage, name, data):
         yield f'printf %s {shlex.quote(encoded)} | base64 -d | dd of={target} bs={CHUNK} seek={index} conv=notrunc 2>/dev/null'
 
 
-def launch_command(node, stage):
+def helper_files(root):
+    source = root / 'tools/tv-updater/bundle.py'
+    spec = importlib.util.spec_from_file_location('tv_updater_bundle', source)
+    bundle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bundle)
+    return bundle.verify(source.parent)
+
+
+def launch_command(runtime, stage):
     if not STAGE.fullmatch(stage):
         raise ValueError('Invalid staging path')
-    return ('nohup setsid ' + ' '.join(map(shlex.quote, [node, stage + '/worker.js', 'install']))
+    return ('nohup setsid ' + ' '.join(map(shlex.quote, [runtime, stage + '/VetroUpdate.dll', 'install']))
             + ' </dev/null >' + shlex.quote(stage + '/worker.log') + ' 2>&1 &\nprintf "updater-started\\n"')
 
 
@@ -152,24 +161,24 @@ class Installer:
         temporary.chmod(0o600)
         temporary.replace(self.ledger_file)
 
-    def node_path(self, status):
-        pid = status.get('self', {}).get('pid')
-        candidates = ['/usr/bin/node', '/usr/bin/nodejs']
-        if isinstance(pid, int) and pid > 1:
-            candidates.append(f'/proc/{pid}/exe')
-        command = ('for n in ' + ' '.join(map(shlex.quote, candidates)) + '; do\n'
-                   'if [ -x "$n" ]; then "$n" -e \'process.stdout.write("VETRO_NODE:"+process.execPath+"\\n")\' 2>/dev/null && break; fi\n'
-                   'done')
-        output = self.execute(command)
-        match = re.search(r'^VETRO_NODE:(/[^\r\n]+)$', output, re.M)
-        if not match:
-            raise RuntimeError('A standalone Node runtime was not found on the TV; no install was submitted')
-        return match[1]
-
-    def worker(self, node, stage, mode):
+    def worker(self, stage, mode):
         if not STAGE.fullmatch(stage):
             raise RuntimeError('Invalid saved update directory')
-        return json.loads(self.execute(' '.join(map(shlex.quote, [node, stage + '/worker.js', mode]))))
+        return json.loads(self.execute(' '.join(map(shlex.quote, ['/usr/bin/dotnet', stage + '/VetroUpdate.dll', mode]))))
+
+    def stage_helper(self):
+        files = helper_files(self.root)
+        stage = '/tmp/vetro-update-' + secrets.token_hex(8)
+        self.execute('test -x /usr/bin/dotnet && command -v base64 >/dev/null && command -v dd >/dev/null '
+                     '&& command -v sha256sum >/dev/null && command -v setsid >/dev/null && command -v nohup >/dev/null '
+                     '&& mkdir ' + shlex.quote(stage) + ' && chmod 755 ' + shlex.quote(stage))
+        for name, data in files.items():
+            self.upload(stage, name, data)
+            output = self.execute('sha256sum ' + shlex.quote(stage + '/' + name))
+            if output.split()[:1] != [digest(data)]:
+                raise RuntimeError('Transferred TV updater did not match its checksum: ' + name)
+        self.log('Using the TV’s existing .NET runtime; no standalone TV Node runtime or Mint .NET SDK is needed.')
+        return stage
 
     def upload(self, stage, name, data):
         commands = list(transfer_commands(stage, name, data))
@@ -185,7 +194,7 @@ class Installer:
             folder = self.project / 'vetro-install' / 'bin'
             candidates = [folder / 'v3.1.0' / 'apps2samsung-cli', folder / '3.1.0' / 'apps2samsung-cli']
             if folder.is_dir():
-                candidates += sorted(folder.glob('*/apps2samsung-cli'))
+                candidates += sorted(folder.rglob('apps2samsung-cli'))
         for file in candidates:
             if file.is_file() and os.access(file, os.X_OK):
                 return file
@@ -247,8 +256,17 @@ class Installer:
             except (OSError, ValueError, RuntimeError):
                 pass
             raise RuntimeError('Install outcome is unverified. No second install will be sent. Open Vetro and rerun this block to resume verification.')
-        node = self.node_path(status)
-        installed = self.worker(node, ledger['stage'], 'installed')
+        # The replacement service can start before vd_appinstall releases its SDB
+        # stream. Do not delete the helper's files while it is still running.
+        deadline = time.monotonic() + 150
+        while True:
+            progress = json.loads(self.execute('cat ' + shlex.quote(ledger['stage'] + '/state.json')))
+            if progress.get('finished') is True:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError('New Vetro is running, but the updater has not finished. Rerun this block to resume verification; no second install will be sent.')
+            time.sleep(3)
+        installed = self.worker(ledger['stage'], 'installed')
         if installed.get('sourceRevision') != revision or installed.get('launcherSha256') != ledger['launcherSha256']:
             raise RuntimeError('Installed files do not match the combined build')
         for endpoint in ('/startup-app', '/return-app'):
@@ -268,7 +286,7 @@ class Installer:
                 raise RuntimeError('Updated Vetro is installed, but the enabled launcher has not been confirmed running')
             if before.get('pid') and after.get('pid') == before['pid']:
                 raise RuntimeError('The old launcher process is still running')
-        self.worker(node, ledger['stage'], 'finish')
+        self.worker(ledger['stage'], 'finish')
         ledger['complete'] = True
         self.write_ledger(ledger)
         self.log('VERIFIED: combined source revision, launcher DLL, both new settings, and root connection.')
@@ -302,13 +320,8 @@ class Installer:
         dock = self.request('/dock', timeout=40)
         if not isinstance(dock.get('enabled'), bool):
             raise RuntimeError('Current launcher state could not be read')
-        node = self.node_path(status)
-        stage = '/tmp/vetro-update-' + secrets.token_hex(8)
-        self.execute('command -v base64 >/dev/null && command -v dd >/dev/null && command -v setsid >/dev/null && command -v nohup >/dev/null && mkdir ' + shlex.quote(stage) + ' && chmod 755 ' + shlex.quote(stage))
-        for name, source in [('worker.js', 'tools/tv-update-worker.js'), ('compat.js', 'app/service/compat.js'),
-                             ('sdb.js', 'rooting/service/sdb.js'), ('adb.js', 'rooting/service/adb.js')]:
-            self.upload(stage, name, (self.root / source).read_bytes())
-        probe = self.worker(node, stage, 'probe')
+        stage = self.stage_helper()
+        probe = self.worker(stage, 'probe')
         if probe.get('uid') != 0 or probe.get('updateLocked'):
             raise RuntimeError('Root preflight failed or another update is still pending')
         self.redactions.append(probe['duid'])
@@ -327,7 +340,7 @@ class Installer:
         self.write_ledger(ledger)
         self.sent = True
         self.log('Starting one detached update through the TV’s loopback SDB. The dashboard may disconnect temporarily.')
-        command = launch_command(node, stage)
+        command = launch_command('/usr/bin/dotnet', stage)
         try:
             self.execute(command)
         except (OSError, ValueError, RuntimeError):

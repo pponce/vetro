@@ -21,7 +21,7 @@ jobs:
       - name: Combined installer checks
         run: |
           python3 tools/tests/test_install_combined.py
-          node tools/tests/tv-update-worker.test.cjs
+          python3 tools/tv-updater/bundle.py
       - name: Release hygiene and architecture
         run: python3 .github/scripts/audit_release.py
   launcher:
@@ -38,6 +38,10 @@ jobs:
         run: dotnet run --project dock/tests/Launcher.Tests.csproj --configuration Release
       - name: Compile TV launcher
         run: dotnet build dock/Launcher.csproj --configuration Release -p:UseAppHost=false
+      - name: TV updater and local-SDB tests
+        run: dotnet run --project tools/tv-updater/tests/Tests.csproj --configuration Release
+      - name: Compile TV updater
+        run: dotnet build tools/tv-updater/VetroUpdate.csproj --configuration Release
   combined_package:
     if: github.repository == 'pponce/vetro' && github.ref == 'refs/heads/combined/startup-return-launcher'
     needs: [check, launcher]

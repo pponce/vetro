@@ -19,8 +19,10 @@ The installer uses the existing signing profile and current root service. A deta
 
 No TV update has been executed from this workspace. The provided script is for the user to run on the existing Linux host. Do not submit the startup or return-app upstream PRs until the user reports their TV tests. No backups or certificate replacements are performed.
 
+The first user attempt with combined commit `101ec30ee6f660fac237b48613ebfea9fbe427f8` stopped during Node CLI discovery: a candidate executable aborted on `-e`. It submitted no install. The updater now uses a precompiled .NET helper and the TV's existing `/usr/bin/dotnet`; it no longer assumes that the web service runtime is a standalone Node CLI. The compiled helper is built and tested on GitHub, with source and binary hashes checked on the host and transferred helper hashes checked on the TV. No .NET SDK is required on the user's computer.
+
 ## Validation
 
-The merged application passed 71 suites. The 9 integration suites and 17 Python parser tests passed. Installer tests cover cached certificate eligibility, identity and checksum mismatches, exact/repeatable transfers, detached process completion, one-time install submission, acknowledgement loss, and resumed verification. GitHub additionally runs the launcher tests and compilation.
+The merged application passed 71 suites. The 9 integration suites and 17 Python parser tests passed. The replacement updater passed 9 .NET suites, including real loopback socket fixtures, and the host installer passed 11 Python tests. These cover cached certificate eligibility, identity and checksum mismatches, fragmented/invalid SDB frames, exact/repeatable transfers, detached process completion, one-time install submission, acknowledgement loss, and resumed verification. GitHub additionally runs the launcher tests and compilation.
 
 The physical S95C install and behavior checks remain outstanding. Use `tools/README.md`, `app/docs/STARTUP-APP.md`, and `app/docs/RETURN-APP.md` for the procedure and limits.

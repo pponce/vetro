@@ -45,3 +45,7 @@ __pycache__/
 # Dock launcher build output
 /dock/**/bin/
 /dock/**/obj/
+
+# Standalone TV updater build output (compiled/ is deliberately tracked)
+/tools/tv-updater/**/bin/
+/tools/tv-updater/**/obj/
