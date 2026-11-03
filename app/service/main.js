@@ -38,29 +38,30 @@ var leftovers = new (require('./leftovers.js').Leftovers)(agentExecute);
 var StartupApp = require('./startup-app.js');
 var ReturnApp = require('./return-app.js');
 var ReturnNavigation = require('./return-navigation.js');
-var appPowerReader = new (require('./power-state.js').Reader)();
+var AppPower = require('./power-state.js');
+var appPowerReader = new AppPower.Reader(), appPowerSessions = new AppPower.Sessions();
+function readAppPower() {
+    return appPowerReader.read().then(function (power) {
+        appPowerSessions.observe(power, AppPower.readClock());
+        return power;
+    });
+}
+function appPowerSession() { return appPowerSessions.current; }
 function launchVisibleApp(appId, guard) {
     return agentExecute('/usr/bin/app_launcher -s ' + appId, 10000, guard).then(function (r) {
         if (r.exit_code || r.timed_out) throw Error('TV did not confirm the launch command');
     });
 }
-function foregroundSnapshot(insideLaunchGuard) {
-    // A guard already owns the queue slot. Queuing its read again would deadlock.
-    var request = insideLaunchGuard ? platform.execute(ReturnApp.COMMAND, 4000) : agentExecute(ReturnApp.COMMAND, 4000);
-    return request.then(function (r) {
-        if (r.exit_code || r.timed_out) throw Error('Foreground/source state unavailable');
-        return ReturnApp.parse(r.stdout);
-    });
-}
 var startupApp = new StartupApp.StartupApp({
-    readPower: appPowerReader.read.bind(appPowerReader),
+    readPower: readAppPower, powerSession: appPowerSession,
     ready: function () { return platform.status().agent.connected === true; },
     inventory: function () { return inventory(true); },
     presence: function () { return presence.read(); },
-    launch: launchVisibleApp, snapshot: foregroundSnapshot, activity: remoteActivity
+    launch: launchVisibleApp, snapshot: returnSnapshot, activity: remoteActivity
 });
 function returnSnapshot(insideLaunchGuard) {
     // Foreground failure must still reject even though the optional native read succeeds.
+    // A launch guard owns the queue slot; queueing its read again would deadlock.
     var command = '(' + ReturnApp.COMMAND + ') && { ' + ReturnNavigation.COMMAND + '; }';
     var request = insideLaunchGuard ? platform.execute(command, 4000) : agentExecute(command, 4000);
     return request.then(function (r) {
@@ -69,7 +70,7 @@ function returnSnapshot(insideLaunchGuard) {
     });
 }
 var returnApp = new ReturnApp.ReturnApp({
-    readPower: appPowerReader.read.bind(appPowerReader),
+    readPower: readAppPower, powerSession: appPowerSession,
     ready: function () { return platform.status().agent.connected === true; },
     paused: function () { return startupApp.status().pending; },
     inventory: function () { return inventory(true); },
@@ -628,6 +629,7 @@ function handleDock(req, res) {
 }
 
 function noteReturnActions(actions) {
+    if (actions.some(function (a) { return a.type !== 'mqtt' && !(a.type === 'key' && /^(KEY_POWER|XF86PowerOff)$/.test(a.key)); })) startupApp.noteNavigation();
     returnApp.noteActions(actions);
     scheduleReturnApp(true);
 }

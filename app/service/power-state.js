@@ -24,6 +24,19 @@ function readClock() {
     return {bootId: bootId, suspendOffset: suspendOffset, uptimeSeconds: uptimeSeconds};
 }
 
+// Shared diagnostic identity for a power session observed by either foreground
+// controller. Unknown reads never advance it. Service restarts get a new identity.
+function Sessions(now) { this.now = now || Date.now; this.current = null; this.previous = null; this.sequence = 0; }
+Sessions.prototype.observe = function (power, clock) {
+    var old = this.previous;
+    if (power === 'on' && (!this.current || !old || old.power === 'standby' || old.bootId !== clock.bootId ||
+        typeof old.suspendOffset === 'number' && typeof clock.suspendOffset === 'number' && clock.suspendOffset - old.suspendOffset > 1)) {
+        this.current = {id: String(clock.bootId || 'unknown') + ':' + this.now() + ':' + (++this.sequence),
+            bootId: clock.bootId, observedAt: this.now()};
+    }
+    this.previous = {power:power, bootId:clock.bootId, suspendOffset:clock.suspendOffset};
+};
+
 function Reader(options) {
     options = options || {};
     this.http = options.http || http;
@@ -62,4 +75,4 @@ Reader.prototype.read = function () {
     return this.pending;
 };
 
-module.exports = {Reader: Reader, decode: decode, readClock: readClock};
+module.exports = {Reader: Reader, Sessions: Sessions, decode: decode, readClock: readClock};

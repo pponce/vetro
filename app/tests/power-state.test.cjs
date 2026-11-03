@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('assert').strict, EventEmitter = require('events');
-const {Reader, decode, readClock} = require('../service/power-state.js');
+const {Reader, Sessions, decode, readClock} = require('../service/power-state.js');
 assert.equal(decode('{"device":{"PowerState":"on"}}'), 'on');
 assert.equal(decode('{"device":{"PowerState":"standby"}}'), 'standby');
 for (const body of ['{}', 'null', '{', '{"device":{"PowerState":"unknown"}}']) assert.throws(() => decode(body));
@@ -25,5 +25,13 @@ const http = {get(options, callback) {
     for (mode of ['error', 'large', 'redirect']) await assert.rejects(reader.read());
     mode = 'ok'; assert.equal(await reader.read(), 'on', 'failures release the pending read');
     const clock = readClock(); assert.ok(clock.bootId); assert.ok(Number.isFinite(clock.suspendOffset));
+    let now=100;const sessions=new Sessions(()=>now), observed={bootId:'boot-a',suspendOffset:0};
+    sessions.observe('on',observed);const first=sessions.current;
+    now++;sessions.observe('on',observed);assert.equal(sessions.current,first,'ordinary polling shares the power session');
+    sessions.observe('standby',observed);assert.equal(sessions.current,first);
+    now++;sessions.observe('on',observed);const wake=sessions.current;assert.notEqual(wake.id,first.id);
+    now++;observed.suspendOffset+=30;sessions.observe('on',observed);assert.notEqual(sessions.current.id,wake.id,'missed standby is detected by suspend');
+    const resumed=sessions.current;observed.bootId='boot-b';sessions.observe('on',observed);assert.notEqual(sessions.current.id,resumed.id);
+    assert.equal(first.observedAt,100,'old result identities are immutable');
     console.log('PASS power reader: explicit status only, bounded local request, no redirect, unknown stays unknown, suspend clock');
 })().catch(error => {console.error(error); process.exitCode = 1;});

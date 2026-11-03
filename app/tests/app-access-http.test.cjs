@@ -24,6 +24,20 @@ const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-
   const denied=await ipc(ports.APP_PORT,'garage.app','tasks.stop',{appId:'media.app'});assert.equal(denied.error.code,'permission_denied');
   await api('/app-access',{action:'revoke',appId:'garage.app',expectedRevision:state.revision},owner);
   assert.equal((await ipc(ports.APP_PORT,'garage.app','apps.list')).error.code,'permission_denied');
+  const launchRequest=await ipc(ports.APP_PORT,'garage.app','access.request',{scopes:['apps.launch']});
+  state=(await api('/app-access',undefined,owner)).body;
+  state=(await api('/app-access',{action:'approve',requestId:launchRequest.result.requestId,scopes:['apps.launch'],expectedRevision:state.revision},owner)).body;
+  const commands=[];c.platform.execute=async command=>{commands.push(command);return {exit_code:0,stdout:''};};
+  c.startupApp.pending={stage:'waiting'};c.returnApp.pending={appId:'home.app'};
+  const launched=await ipc(ports.APP_PORT,'garage.app','apps.launch',{appId:'media.app'});
+  assert.equal(launched.ok,true);assert.equal(launched.result.submitted,true);
+  assert.equal(c.startupApp.pending.cancelled,true,'approved app launch cancels a waiting power-on attempt');
+  assert.equal(c.returnApp.pending,null,'approved app launch retains return coordination');
+  assert.deepEqual(commands,['/usr/bin/app_launcher -s media.app']);
+  c.startupApp.pending=null;
+  await api('/app-access',{action:'revoke',appId:'garage.app',expectedRevision:state.revision},owner);
+  assert.equal((await ipc(ports.APP_PORT,'garage.app','apps.launch',{appId:'media.app'})).error.code,'permission_denied');
+  assert.equal(commands.length,1,'revoked access never reaches the TV command queue');
   console.log('PASS real HTTP router + MessagePort: closed owner API, widget handshake, pairing, approval, scoped app reads and immediate revocation');
  }finally{if(server)await new Promise(r=>server.close(r));f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

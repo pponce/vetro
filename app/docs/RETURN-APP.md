@@ -6,6 +6,10 @@ For example, select Garage Home, open Netflix, then exit Netflix. If the TV fall
 
 The return choice is independent of **Open onscreen at power-on**, **Start at boot**, and **Restart automatically**. You can use the same app for startup and return, choose different apps, or leave either feature off. Both foreground settings are off until you select an app.
 
+The status API includes `lastResultAt` (Unix milliseconds), `lastResultSession`
+and the currently observed `powerSession`. A confirmation belongs to its recorded
+session and time; it does not establish what appeared during a later power-on.
+
 ## Detection and limits
 
 Vetro observes the TV's foreground app and source while the TV reports that it is on. It waits for another launcher app to fall back to Samsung Home or TV, allows a short settling period, and checks the current state again immediately before launching the destination. Switching to another app, a changed source, or a foreground overlay cancels that return. Leaving the destination itself for TV or an input does not trigger a return.

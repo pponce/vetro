@@ -67,3 +67,19 @@ The helper source is in `tools/tv-updater/`. `build-update-helper.yml` compiles 
 `vetro_owner.py` handles older unauthenticated Vetro and the new owner-paired API. On an explicit HTTP 401 it prompts for the on-TV pairing code and stores the returned credential in a private host file. It never prints the code or token, uses no proxy, rejects redirects, and never replays a request after a timeout/disconnect. `VETRO_TOKEN` can supply an already paired owner credential. Do not share this maintenance credential with a TV app.
 
 The Vetro installer checks service-side Tizen APIs before installation, saves startup/return observations, and verifies app communication availability after reconnection. App access stays off until the owner enables it. See [combined testing](../notes/combined-permissions-testing.md) and [app permissions](../app/docs/APP-PERMISSIONS.md).
+
+## Capture a power-on test
+
+After pairing the maintenance tool during installation, select a power-on app,
+leave another app onscreen for at least ten seconds, use normal standby, then
+turn the TV on using only Power. Wait thirty seconds before capturing:
+
+```sh
+python3 tools/capture-power-on.py --tv TV_IPV4 --project-root /path/to/samsung-tv-tools --report-host USER@LINUX_HOST
+```
+
+The capture preserves timestamped startup/return results before reading current
+foreground, source and monitoring state. It does not navigate, change settings
+or start pairing. If the credential expired, pair the maintenance tool before
+repeating the test. Reports omit owner credentials, app approvals and remote-key
+history. Run the capture before changing selections or testing automatic return.

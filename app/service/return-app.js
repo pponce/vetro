@@ -48,6 +48,7 @@ function ReturnApp(options) {
     this.clock = options.clock || Power.readClock;
     var reader = new Power.Reader();
     this.readPower = options.readPower || reader.read.bind(reader);
+    this.powerSession = options.powerSession || function () { return null; };
     this.ready = options.ready || function () { return false; };
     this.paused = options.paused || function () { return false; };
     this.snapshot = options.snapshot;
@@ -58,6 +59,7 @@ function ReturnApp(options) {
     this.config = {version: 1, appId: null, revision: 0};
     this.previous = null; this.lastClock = null; this.lastAt = null;
     this.pending = null; this.busy = false; this.error = null; this.lastResult = null;
+    this.lastResultAt = null; this.lastResultSession = null;
     try {
         var stored = JSON.parse(this.fs.readFileSync(this.file, 'utf8'));
         if (!stored || stored.version !== 1 || !Choice.validId(stored.appId) || !Number.isInteger(stored.revision) || stored.revision < 0) throw Error('Invalid saved return choice');
@@ -66,7 +68,13 @@ function ReturnApp(options) {
 }
 ReturnApp.prototype.status = function () {
     return {appId: this.config.appId, revision: this.config.revision, pending: !!this.pending,
-        lastResult: this.lastResult, error: this.error, navigation: this.navigation.intent};
+        lastResult: this.lastResult, lastResultAt:this.lastResultAt, lastResultSession:this.lastResultSession,
+        powerSession:this.powerSession(), error: this.error, navigation: this.navigation.intent};
+};
+ReturnApp.prototype.result = function (message, event) {
+    this.lastResult = message;
+    this.lastResultAt = message === null ? null : this.now();
+    this.lastResultSession = message === null ? null : event && event.powerSession || this.powerSession();
 };
 ReturnApp.prototype.nextDelay = function () {
     // Recheck a possible exit as soon as it settles, without waiting for the idle poll.
@@ -92,14 +100,14 @@ ReturnApp.prototype.configure = function (id, expected, rows) {
         var next = {version: 1, appId: id, revision: this.config.revision + 1};
         save(this.fs, this.file, next);
         this.config = next;
-        this.reset(); this.error = null; this.lastResult = null;
+        this.reset(); this.error = null; this.result(null);
     }
     return Object.assign(this.status(), {verified: true, previousAppId: previous});
 };
 ReturnApp.prototype.current = function (event) {
     return this.pending === event && this.config.appId === event.appId && this.config.revision === event.revision && this.ready() && !this.paused();
 };
-ReturnApp.prototype.finish = function (message) { this.pending = null; this.lastResult = message; };
+ReturnApp.prototype.finish = function (message) { this.result(message, this.pending); this.pending = null; };
 ReturnApp.prototype.tick = function () {
     var self = this;
     if (this.busy || !this.config.appId) return Promise.resolve();
@@ -130,8 +138,8 @@ ReturnApp.prototype.tick = function () {
             if (!event && old && ordinary(old, self.config.appId) && old.sourceType === state.sourceType) {
                 event = self.pending = {appId: self.config.appId, revision: self.config.revision,
                     left: old.full, sourceType: state.sourceType, bootId: clock.bootId,
-                    suspendOffset: clock.suspendOffset, started: now, stage: 'waiting'};
-                self.lastResult = null;
+                    suspendOffset: clock.suspendOffset, started: now, stage: 'waiting', powerSession:self.powerSession()};
+                self.result(null);
             }
             if (!event || !self.current(event)) return;
             if (now - event.started > EXPIRE_MS) return self.finish('Return expired before the TV was ready');
@@ -155,7 +163,7 @@ ReturnApp.prototype.tick = function () {
                         });
                     });
                 }).then(function () {
-                    if (self.current(event)) { event.stage = 'verifying'; event.sent = self.now(); self.lastResult = 'Return requested'; }
+                    if (self.current(event)) { event.stage = 'verifying'; event.sent = self.now(); self.result('Return requested', event); }
                 }).catch(function (e) { if (self.current(event)) self.finish('Return not completed: ' + e.message); });
             });
         });

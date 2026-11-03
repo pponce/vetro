@@ -46,6 +46,12 @@ function fixture() {
     await fast.tick(undefined,1);assert.deepEqual(fast.launches,['home.app'],'return is requested at the short settling deadline');
     assert.equal(fast.app.nextDelay(),1000,'verification uses the normal interval');
     await fast.tick('home.app',1000);assert.match(fast.app.status().lastResult,/confirmed/);
+    const dated=fixture();dated.choose('home.app');let powerSession={id:'session-one'};
+    dated.app.powerSession=()=>powerSession;await dated.exit();await dated.tick('home.app');
+    const confirmed=dated.app.status();assert.equal(confirmed.lastResultAt,dated.time);
+    powerSession={id:'session-two'};dated.power='standby';await dated.tick();
+    assert.equal(dated.app.status().lastResultSession.id,'session-one','previous return confirmation keeps its original session');
+    assert.equal(dated.app.status().powerSession.id,'session-two');assert.equal(dated.app.status().lastResultAt,confirmed.lastResultAt);
     for(const cause of ['app','overlay','source','power']) {
         const quick=fixture();quick.choose('home.app');
         await quick.tick('video.one',1000);await quick.tick(HOME,1000);

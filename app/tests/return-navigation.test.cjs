@@ -25,9 +25,12 @@ assert.equal(N.actionIntent({type:'key',key:'KEY_RETURN'}),null,'Back is an exit
     const req=new EventEmitter();req.method='POST';req.url='/apps/launch';
     const response=new Promise(resolve=>service.router(req,{writeHead(){},end(body){resolve(JSON.parse(body));}}));
     c.returnApp.pending={appId:'home.app'};
+    c.startupApp.pending={stage:'waiting'};
     req.emit('data',Buffer.from(JSON.stringify({appId:'video.two'})));req.emit('end');
     assert.equal(c.returnApp.pending,null,'API cancels return before slow inventory/root queue');
     assert.equal(c.returnApp.navigation.intent.appId,'video.two');
+    assert.equal(c.startupApp.pending.cancelled,true,'API also cancels startup before inventory or command queues');
+    c.startupApp.pending=null;
     release({apps:[{appId:'video.two'}]});await response;
     assert.equal(commands.filter(x=>x==='/usr/bin/app_launcher -s video.two').length,1);
     await c.runActions([{type:'key',key:'KEY_HOME'}]);

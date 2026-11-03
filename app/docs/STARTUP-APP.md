@@ -20,14 +20,27 @@ The controls are independent. Selecting a power-on app does not change its boot 
 
 ## What to expect
 
-Vetro requests the app launch only while the TV is idle and ready within ten seconds of
-power-on. It uses a one-second settling period, then checks the remote activity,
-foreground app and input again immediately before dispatching the launch.
+Vetro requests one launch while the TV is idle and ready. A standby wake has a
+twenty-second readiness window; a full boot has a ten-second window measured from
+system boot. Remote monitoring can reconnect within that window. It must then be
+ready for at least one second. Reconnection never extends the deadline.
+
+While the TV is on, Vetro records recent foreground and source observations. If
+the same enabled launcher app resumes automatically after standby, it can yield
+to the selected startup app. This requires a recent observation before standby,
+unchanged source and no observed navigation. An app first discovered after wake
+is not treated as an automatic resume. Missing or stale evidence leaves it alone.
 
 Pressing a remote button other than Power cancels that attempt. Selecting another
-app, opening a menu, changing the input, or losing remote monitoring also cancels
-it. Remote activity monitoring must be connected at power-on through Vetro's
-configured physical remote. Without that coverage, the launch is skipped.
+app, opening a menu, or changing the input cancels the attempt. Vetro also respects
+its native launcher's visible dock and explicit selections. Foreground, source,
+power and observed activity are checked again immediately before dispatch. Losing
+monitoring while a launch is queued cancels it. Without a configured physical
+remote that becomes ready before the deadline, the launch is skipped.
+
+Remote events during a disconnected interval cannot be reconstructed. Vetro uses
+the current foreground, source and known navigation as additional checks; these
+do not identify every external app-to-app transition.
 
 If root becomes available after the deadline, Vetro leaves the current screen
 alone. A late service start after a full boot does not create a new deadline.
@@ -43,7 +56,16 @@ The choice is stored on the TV. If the selected app is removed or disabled, Vetr
 
 ## Integration
 
-`GET /startup-app` returns `appId`, `revision`, `powerState`, `pending`, `lastResult`, and `error`. Set a choice with `POST /startup-app` and an installed app ID plus the revision returned by the last read:
+`GET /startup-app` returns `appId`, `revision`, `powerState`, `pending`, `lastResult`,
+and `error`. It also includes `lastResultAt` (Unix milliseconds),
+`lastResultSession` and the currently observed `powerSession`. Session objects
+contain an opaque `id`, `bootId` and `observedAt`; service restarts create a new
+observation identity. `event` records the attempt kind, deadline, readiness,
+phase and pre-standby app. Results belong to the session recorded with them, even
+if the current power session has changed. Saving a new selection clears the
+previous result. A service restart abandons a pending attempt without replaying it.
+
+Set a choice with `POST /startup-app` and an installed app ID plus the revision returned by the last read:
 
 ```json
 {"appId":"example.app","expectedRevision":0}
