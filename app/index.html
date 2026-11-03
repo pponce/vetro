@@ -4,6 +4,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="$WEBAPIS/webapis/webapis.js"></script>
 <script src="service/app-access-client.js"></script>
+<!-- DIAGNOSTICS_SCRIPT -->
 <style>
 /* Values from design-system/tokens.css (dark), status colours from the dashboard. Static page: solid surfaces,
    no blur, no animation. Flex without gap and ES5 only, so older TV runtimes draw it the same. */
@@ -78,7 +79,7 @@ function widgetSession() {
   if(widgetCredential && widgetCredential.expires>Date.now()+30000)return Promise.resolve(widgetCredential.token);
   if(widgetConnecting)return widgetConnecting;
   widgetConnecting=Promise.resolve().then(function(){
-    if(!widgetClient)widgetClient=new VetroAppAccess({widget:true,timeout:2000});
+    if(!widgetClient)widgetClient=new VetroAppAccess({widget:true,timeout:2000,diagnostics:window.VetroConnectionDiagnostics});
     return widgetClient.call('widget.connect',{});
   }).then(function(d){
     if(!d||typeof d.token!=='string'||!/^[a-f0-9]{64}$/.test(d.token)||typeof d.expires!=='number'||!isFinite(d.expires)||d.expires<=Date.now())throw Error('Widget identity was not verified');
@@ -337,7 +338,7 @@ function run(full) {
     .then(function () { if(fullCheck)return sendReport().then(function () { delivered = true; }, function (e) {screenError=String(e&&e.message||e);}); })
     .then(function () { return readScreen().catch(function (e) {screenError=String(e&&e.message||e);return null;}); })
     .then(function (d) { render(d, false); }, function () { render(null, false); })
-    .then(function () { running = false;resetIdle(); });
+    .then(function () { running = false;resetIdle();if(widgetClient&&widgetClient.diagnostics)widgetClient.diagnostics.publish(true); });
 }
 document.addEventListener('visibilitychange', function () { if (document.hidden && canIdle && !running && !pairingVisible && !pairingError) leave(); });
 document.addEventListener('keydown', function (e) {

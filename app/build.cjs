@@ -54,12 +54,15 @@ function collectFiles() {
     if (!process.env.VETRO_SOURCE_REVISION && metadata.sourceRevision) {
         try { metadata.sourceDirty = require('child_process').execFileSync('git', ['status', '--porcelain', '--', '.', '../rooting'], {cwd: __dirname, stdio: ['ignore','pipe','ignore']}).toString().trim() !== ''; } catch (_) {}
     }
-    return names.map(name => ({uri: encodeURIComponent(name), data: name === 'service/build-info.js'
-        ? Buffer.from("'use strict';\nmodule.exports = " + JSON.stringify(metadata) + ';\n')
-        : PORT_FILES.includes(name) && port !== DEFAULT_PORT
-        ? Buffer.from(fs.readFileSync(path.join(__dirname,name),'utf8').replace(/\b8099\b/g, String(port)))
-        : fs.readFileSync(path.join(__dirname,name))}))
-        .concat(dockFiles.map(file => ({uri: encodeURIComponent(file.name), data: fs.readFileSync(file.source)})));
+    return names.map(name => {
+        let data=name==='service/build-info.js'
+            ? Buffer.from("'use strict';\nmodule.exports = " + JSON.stringify(metadata) + ';\n')
+            : fs.readFileSync(path.join(__dirname,name));
+        if(PORT_FILES.includes(name)&&port!==DEFAULT_PORT)data=Buffer.from(data.toString().replace(/\b8099\b/g,String(port)));
+        if(name==='index.html'&&metadata.connectionDiagnostics===true)data=Buffer.from(data.toString().replace('<!-- DIAGNOSTICS_SCRIPT -->','<script src="service/connection-debug-client.js"></script>'));
+        if(name==='service/connection-debug-client.js')data=Buffer.from(data.toString().replace('var revision=null; // BUILD_DIAGNOSTIC_REVISION','var revision='+JSON.stringify(metadata.sourceRevision||null)+';'));
+        return {uri:encodeURIComponent(name),data:data};
+    }).concat(dockFiles.map(file => ({uri:encodeURIComponent(file.name),data:fs.readFileSync(file.source)})));
 }
 function zip(files) {
     const chunks = [], directory = []; let offset = 0;

@@ -13,7 +13,7 @@ assert.deepEqual(names.filter(name => !name.startsWith('native/dock/res/')).sort
     'config.xml', 'icon.png', 'index.html', 'native/TvState.dll', 'native/TvState.runtimeconfig.json', 'service/tv-state.js',
     'native/dock/tvlauncher-dotnet.dll', 'native/dock/tvlauncher-dotnet.runtimeconfig.json', 'service/dock.js', 'service/dock-catalog.js',
     'service/build-info.js', 'service/blocklist.js', 'service/exec-error.js', 'service/app-catalog.js', 'service/app-facts.js', 'service/app-groups.js','service/app-registry.js', 'service/dashboard.js', 'service/physical-input.js', 'service/presence.js', 'service/apps.js', 'service/component-actions.js','service/control.js',     'service/debloat.js', 'service/diagnostic-report.js', 'service/hbbtv.js','service/home-order.js','service/home-routing.js','service/local-dns.js','service/menu-settings.js','service/main.js',
-    'service/mqtt-bridge.js', 'service/mqtt.js', 'service/compat.js', 'service/connection-diagnostics.js', 'service/package-info.js',
+    'service/mqtt-bridge.js', 'service/mqtt.js', 'service/compat.js', 'service/connection-diagnostics.js', 'service/message-reply-diagnostics.js', 'service/connection-debug-client.js', 'service/package-info.js',
     'service/access-store.js', 'service/auth.js', 'service/app-identity.js', 'service/app-access.js', 'service/app-api.js', 'service/app-ports.js', 'service/app-access-client.js', 'service/app-access-ui.js',
     'service/platform.js', 'service/power-state.js', 'service/startup-app.js', 'service/return-app.js', 'service/return-navigation.js', 'service/privacy.js', 'service/probe.js', 'service/quick-settings.js', 'service/quick-wins.js', 'service/leftovers.js', 'service/remap.js',
     'service/samsung-remote.js', 'service/screen-status.js', 'service/settings.js', 'service/system-monitor.js','service/tv-settings.js'
@@ -38,6 +38,8 @@ try {
     const diagnosticInfo = {module: {exports: {}}};
     require('vm').runInNewContext(text(build.collectFiles(), 'service/build-info.js'), diagnosticInfo);
     assert.equal(diagnosticInfo.module.exports.connectionDiagnostics, true);
+    assert.ok(text(build.collectFiles(),'index.html').includes('<script src="service/connection-debug-client.js"></script>'));
+    assert.ok(!text(files,'index.html').includes('<script src="service/connection-debug-client.js"></script>'));
     process.env.VETRO_CONNECTION_DIAGNOSTICS = 'yes';
     assert.throws(() => build.collectFiles(), /VETRO_CONNECTION_DIAGNOSTICS/);
 } finally { delete process.env.VETRO_CONNECTION_DIAGNOSTICS; }

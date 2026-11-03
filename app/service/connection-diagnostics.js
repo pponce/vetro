@@ -14,6 +14,8 @@ function errorName(error) {
 function increment(object,key) { object[key] = Math.min(1000000,object[key]+1); }
 function Diagnostics(info) {
     info=info||{};
+    this.reportEnabled=info.connectionDiagnostics===true;
+    this.replyReport=null;this.replyReportStarted=false;
     this.state={
         schema:1,
         sourceRevision:typeof info.sourceRevision==='string' && /^[a-f0-9]{40}$/.test(info.sourceRevision)?info.sourceRevision:null,
@@ -24,7 +26,7 @@ function Diagnostics(info) {
         appPort:{available:false,error:null},
         widget:{portCreated:false,listenerRegistered:false,received:0,rejected:0,
             accepted:0,sessionsIssued:0,repliesSent:0,replyErrors:0,
-            stage:'not-started',error:null,sender:null,frame:null}
+            stage:'not-started',error:null,sender:null,frame:null,replyDiagnostics:null},screen:null
     };
 }
 Diagnostics.prototype.lifecycle=function(kind) {
@@ -64,7 +66,25 @@ Diagnostics.prototype.received=function(data,remote) {
             arrayValue:!!item&&Array.isArray(item.value)};
     } catch (_) { w.sender=null;w.frame=null; }
 };
+Diagnostics.prototype.consume=function(p,remote) {
+    if(!this.reportEnabled||!remote||remote.appId!=='vetrotvapp.app'||typeof remote.isTrusted!=='boolean')return false;
+    if(p.method==='diagnostic.screen') {
+        this.state.screen=require('./message-reply-diagnostics.js').screen(p.params);return true;
+    }
+    if(p.method==='diagnostic.ack') {
+        if(this.replyReport)this.replyReport.ack(p.params,remote);
+        return true;
+    }
+    return false;
+};
+Diagnostics.prototype.replyFailure=function(tizen,remote,source,request,encoded,error) {
+    if(!this.reportEnabled||this.replyReportStarted||errorName(error)!=='TypeMismatchError')return;
+    this.replyReportStarted=true;
+    try {this.replyReport=new (require('./message-reply-diagnostics.js').Report)(tizen,remote,source,request,encoded,error);}
+    catch(e) {this.state.widget.replyDiagnostics={schema:2,stopped:'probe-error',error:errorName(e)};}
+};
 Diagnostics.prototype.snapshot=function() {
+    if(this.replyReport)this.state.widget.replyDiagnostics=this.replyReport.snapshot();
     // All stored values above are constructed here; caller-owned objects are never retained.
     return JSON.parse(JSON.stringify(this.state));
 };

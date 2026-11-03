@@ -13,7 +13,7 @@ function start(tizen,access,auth,diagnostics) {
             Object.keys(p).some(function(k){return ['version','id','method','params'].indexOf(k)<0;})) throw Error('Invalid app request');
         return p;
     }
-    function reply(remote,p,result,error,port) {
+    function reply(remote,p,result,error,port,request) {
         var message={version:1,id:p.id,ok:!error};
         if(error)message.error={code:error.code||'unavailable',message:error.code?error.message:'App request is unavailable',submitted:typeof error.submitted==='boolean'?error.submitted:null};
         else message.result=result;
@@ -22,7 +22,12 @@ function start(tizen,access,auth,diagnostics) {
         try {
             remote.sendMessage([{key:'json',value:encoded}],port);
             if(port===internal||port===widgetReply)trace('reply-sent');
-        } catch (error) { if(port===internal||port===widgetReply)trace('reply-error',error); }
+        } catch (error) {
+            if(port===internal||port===widgetReply) {
+                trace('reply-error',error);
+                if(diagnostics&&typeof diagnostics.replyFailure==='function')diagnostics.replyFailure(tizen,remote,port,request,encoded,error);
+            }
+        }
     }
     try {
         if (!tizen || !tizen.messageport || !access.options.identity.available()) throw Error('Tizen app identity and MessagePort APIs are required');
@@ -71,13 +76,14 @@ function start(tizen,access,auth,diagnostics) {
                     typeof remote.sendMessage!=='function'){trace('sender-rejected');return;}
                 replyPort=remote.isTrusted?internal:widgetReply;
                 try { p=decode(data); } catch(error) { trace('frame-rejected',error);return; }
+                if(diagnostics&&typeof diagnostics.consume==='function'&&diagnostics.consume(p,remote))return;
                 if(p.method!=='widget.connect'||Object.keys(p.params).length){trace('method-rejected');return;}
                 trace('accepted');
                 // The trusted port verifies the signer; the exact sender ID restricts this to Vetro's widget.
                 var session=auth.issueWidget();
                 trace('session-issued');
-                reply(remote,p,session,null,replyPort);
-            } catch(e){trace('session-error',e);if(p)reply(remote,p,null,e,replyPort);}
+                reply(remote,p,session,null,replyPort,data);
+            } catch(e){trace('session-error',e);if(p)reply(remote,p,null,e,replyPort,data);}
         });
         if(widgetListener!==undefined)trace('listening');
     } catch(error) { trace(widgetStage,error); }

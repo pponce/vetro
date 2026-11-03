@@ -19,7 +19,9 @@
         // regular return ports; response identity still comes from Tizen metadata.
         this.local=mp.requestLocalMessagePort(name);
         if(this.trusted&&this.local.isTrusted!==false)throw Error('Widget reply port unavailable');
+        this.diagnostics=this.trusted&&typeof options.diagnostics==='function'?options.diagnostics(this):null;
         this.listener=this.local.addMessagePortListener(function(data,remote){
+            if(self.diagnostics)try{self.diagnostics.observe(data,remote);}catch(_){}
             if(!remote||remote.appId!=='vetrotvapp.svc'||remote.messagePortName!==self.replyPort||self.trusted&&remote.isTrusted!==false)return;
             var p;
             try {
@@ -37,6 +39,7 @@
         return new Promise(function(resolve,reject){
             if(self.closed)return reject(Error('Vetro client is closed'));
             if(Object.keys(self.pending).length)return reject(Error('Wait for the current Vetro request to finish'));
+            if(self.diagnostics)try{self.diagnostics.publish();}catch(_){}
             var id=String(++self.sequence),data,remote,sending=false;
             try {
                 data=JSON.stringify({version:1,id:id,method:method,params:params||{}});
