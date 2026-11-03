@@ -1,12 +1,12 @@
 {
   "sources": {
     "SdbSession.cs": "29ff20b351a081c5625a976c504c85a37a49a658fbf7fb9cfb0dad71ee7a9ce2",
-    "VetroUpdate.cs": "19403bfac35c206e4bb4961b3f11305a0d8843c1a576c6ca4a5121ec38f98d32",
+    "VetroUpdate.cs": "90903acd87ae98f502ef11782f38ed77100e375509733676c1e1bfb974993931",
     "VetroUpdate.csproj": "0047222910647e74038f9631b2e6e3a931050532ee1286cee6c8f5a68ac4d974",
     "bundle.py": "8fe60de7947ac0a0ab7a03d8a9223a27d671fc597e146ee521d76224519bc8cf"
   },
   "files": {
-    "VetroUpdate.dll": "0294db3fed3d24178fd783994e7843f8c80eb5a4462eb2a5e1f0c7b3d67045a3",
+    "VetroUpdate.dll": "834617f3d7b2bde7137e5b4f19852f6a02ed9c5273db9736aab9c861a549d5e0",
     "VetroUpdate.runtimeconfig.json": "3a3d61ada1d357e1aff49dc201818d781a85a35a0f169d53f654289885692b2b"
   }
 }
