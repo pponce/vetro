@@ -87,12 +87,14 @@ internal static class Tests
             return memory.ToArray();
         }
     }
-    private static string ReadPacket(NetworkStream stream)
+    private static string ReadPacket(NetworkStream stream, uint? first = null, uint? second = null)
     {
         using (var reader = new BinaryReader(stream, Encoding.UTF8, true))
         {
             byte[] header = reader.ReadBytes(24);
             Assert(header.Length == 24, "Complete header");
+            if (first.HasValue) Assert(BitConverter.ToUInt32(header, 4) == first.Value, "Packet sender ID");
+            if (second.HasValue) Assert(BitConverter.ToUInt32(header, 8) == second.Value, "Packet recipient ID");
             int size = BitConverter.ToInt32(header, 12);
             Assert(size >= 0 && size <= 4096, "Bounded packet");
             byte[] data = reader.ReadBytes(size);
@@ -188,9 +190,52 @@ internal static class Tests
                 Assert(ReadPacket(stream) == "CNXN:host::\0", "Client handshake"); Send(stream, Packet("CNXN", 0x01000000, 4096));
                 Assert(ReadPacket(stream) == "OPEN:shell:0 getduid\0", "Command open");
                 Send(stream, Packet("OKAY", 7, 12345)); Send(stream, Packet("WRTE", 7, 12345, Encoding.UTF8.GetBytes(Duid)));
-                Assert(ReadPacket(stream) == "OKAY:", "Data acknowledged"); Send(stream, Packet("CLSE", 7, 12345));
-                Assert(ReadPacket(stream) == "CLSE:", "Close acknowledged");
+                Assert(ReadPacket(stream, 12345, 7) == "OKAY:", "Data acknowledged"); Send(stream, Packet("CLSE", 7, 12345));
+                Assert(stream.ReadByte() == -1, "CLOSE receives no reply");
             }, port => { using (var session = new SdbSession("127.0.0.1", port, 2000)) Assert(session.Execute("shell:0 getduid", 2000) == Duid, "Exact output"); });
+        });
+        Test("SDB zero-sender WRITE and CLOSE complete the actual probe", () => {
+            foreach (var ids in new[] { new uint[] { 0, 7 }, new uint[] { 7, 0 }, new uint[] { 0, 0 } }) {
+                using (var f = new Fixture()) WithServer(stream => {
+                    Assert(ReadPacket(stream) == "CNXN:host::\0", "Client handshake"); Send(stream, Packet("CNXN", 0x01000000, 4096));
+                    Assert(ReadPacket(stream, 12345, 0) == "OPEN:shell:0 getduid\0", "Read-only DUID probe");
+                    Send(stream, Packet("OKAY", 7, 12345));
+                    foreach (string chunk in new[] { Duid.Substring(0, 8), Duid.Substring(8) + "\r\n" }) {
+                        Send(stream, Packet("WRTE", ids[0], 12345, Encoding.UTF8.GetBytes(chunk)));
+                        Assert(ReadPacket(stream, 12345, 7) == "OKAY:", "ACK uses the peer from READY, including after zero-sender WRITE");
+                    }
+                    Send(stream, Packet("CLSE", ids[1], 12345));
+                    Assert(stream.ReadByte() == -1, "No CLOSE reply or second command");
+                }, port => {
+                    var worker = new Worker(f.Stage, new[] { f.InstalledRoot },
+                        () => new SdbSession("127.0.0.1", port, 2000), () => 0, () => "unused", f.Lock);
+                    var info = worker.Probe();
+                    Assert(info.duid == Duid && info.sourceRevision == Before, "Complete probe result");
+                });
+            }
+        });
+        Test("SDB compatibility preserves stream boundaries and READY ordering", () => {
+            var frames = new[] {
+                Packet("WRTE", 8, 12345, Encoding.UTF8.GetBytes(Duid)), Packet("CLSE", 8, 12345),
+                Packet("WRTE", 0, 12346), Packet("CLSE", 0, 12346), Packet("OKAY", 8, 12345)
+            };
+            foreach (byte[] frame in frames) WithServer(stream => {
+                ReadPacket(stream); Send(stream, Packet("CNXN", 0x01000000, 4096)); ReadPacket(stream);
+                Send(stream, Packet("OKAY", 7, 12345)); stream.Write(frame, 0, frame.Length);
+            }, port => {
+                using (var session = new SdbSession("127.0.0.1", port, 1000)) {
+                    try { session.Execute("shell:0 getduid", 1000); throw new Exception("Invalid stream accepted"); }
+                    catch (IOException error) {
+                        Assert(error.Message.Contains("packet=") && error.Message.Contains("opened=7"), "Header-only diagnostics");
+                        Assert(!error.Message.Contains(Duid), "DUID never included in diagnostics");
+                    }
+                }
+            });
+            foreach (byte[] frame in new[] { Packet("OKAY", 0, 12345), Packet("WRTE", 0, 12345), Packet("CLSE", 0, 12345) })
+                WithServer(stream => {
+                    ReadPacket(stream); Send(stream, Packet("CNXN", 0x01000000, 4096)); ReadPacket(stream);
+                    stream.Write(frame, 0, frame.Length);
+                }, port => { using (var session = new SdbSession("127.0.0.1", port, 1000)) Throws(() => session.Execute("shell:0 getduid", 1000), "No success before valid READY"); });
         });
         Test("SDB auth, corrupt framing, checksum and oversized frames fail", () => {
             var frames = new List<byte[]> { Packet("AUTH", 1, 0), Packet("CNXN", 0, 4096), Packet("CNXN", 0, 4096, new byte[] { 1 }), Packet("CNXN", 0, 4096) };

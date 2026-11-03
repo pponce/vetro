@@ -106,6 +106,14 @@ namespace VetroUpdate
             }
         }
 
+        private static IOException StreamError(string reason, Packet packet, uint remote)
+        {
+            // Header metadata is useful for firmware differences; never log the
+            // payload, which can contain a TV identifier or command output.
+            return new IOException(reason + " (packet=" + packet.Command + ", sender=" + packet.First
+                + ", recipient=" + packet.Second + ", opened=" + remote + ", bytes=" + packet.Data.Length + ")");
+        }
+
         public string Execute(string command, int timeout)
         {
             if (Text(command).Length > MaximumPayload) throw new ArgumentException("SDB command is too long");
@@ -117,15 +125,20 @@ namespace VetroUpdate
                 while (true)
                 {
                     var packet = Receive();
-                    if (packet.Second != LocalId) throw new IOException("Unexpected loopback SDB stream ID");
-                    if (remote != 0 && packet.First != remote) throw new IOException("Loopback SDB remote stream changed");
+                    if (packet.Second != LocalId) throw StreamError("Unexpected loopback SDB recipient stream", packet, remote);
                     if (packet.Command == "OKAY")
                     {
-                        if (packet.First == 0) throw new IOException("Invalid loopback SDB remote stream");
+                        if (packet.First == 0 || remote != 0 && packet.First != remote)
+                            throw StreamError("Invalid loopback SDB READY sender", packet, remote);
                         remote = packet.First;
                     }
                     else if (packet.Command == "WRTE" && remote != 0)
                     {
+                        // Legacy ADB specifies WRITE(0, remote-id, data). SDB's
+                        // existing JS client also routes by the recipient ID.
+                        // Keep the peer learned from OKAY for acknowledgements.
+                        if (packet.First != 0 && packet.First != remote)
+                            throw StreamError("Unexpected loopback SDB WRITE sender", packet, remote);
                         if (output.Length + packet.Data.Length > 65536) throw new IOException("Loopback SDB output exceeded its limit");
                         output.Write(packet.Data, 0, packet.Data.Length);
                         Send("OKAY", LocalId, remote);
@@ -133,13 +146,16 @@ namespace VetroUpdate
                     else if (packet.Command == "CLSE")
                     {
                         // A close without an OPEN acknowledgement is not a successful command.
-                        if (remote == 0) throw new IOException("Loopback SDB refused the command stream");
-                        // CLSE itself is the terminal acknowledgement; a failed close reply
-                        // must not make the caller reissue an already completed command.
-                        try { Send("CLSE", LocalId, remote); } catch (IOException) { }
+                        if (remote == 0) throw StreamError("Loopback SDB refused the command stream", packet, remote);
+                        // Older peers also use CLOSE(0, remote-id) for normal
+                        // completion. AOSP handles that compatibility case.
+                        if (packet.First != 0 && packet.First != remote)
+                            throw StreamError("Unexpected loopback SDB CLOSE sender", packet, remote);
+                        // CLOSE is terminal and receives no reply, as in Vetro's
+                        // JS transport and the protocol's CLOSE specification.
                         return Encoding.UTF8.GetString(output.ToArray());
                     }
-                    else throw new IOException("Unexpected loopback SDB stream packet");
+                    else throw StreamError("Unexpected loopback SDB stream packet", packet, remote);
                 }
             }
         }
