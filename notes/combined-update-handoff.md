@@ -21,8 +21,24 @@ No TV update has been executed from this workspace. The provided script is for t
 
 The first user attempt with combined commit `101ec30ee6f660fac237b48613ebfea9fbe427f8` stopped during Node CLI discovery: a candidate executable aborted on `-e`. It submitted no install. The updater now uses a precompiled .NET helper and the TV's existing `/usr/bin/dotnet`; it no longer assumes that the web service runtime is a standalone Node CLI. The compiled helper is built and tested on GitHub, with source and binary hashes checked on the host and transferred helper hashes checked on the TV. No .NET SDK is required on the user's computer.
 
+The second user attempt at `36c4e0ab0f3ac7201ae01b68898f148c0d7df482` loaded the .NET helper but stopped in the read-only SDB probe with `Loopback SDB remote stream changed`. It also submitted no install. That check compared the sender ID on every packet. The replacement accepts the documented zero-sender WRITE format and zero-sender CLOSE compatibility behavior, retains the peer learned from the first READY for acknowledgements, and sends no reply to CLOSE. It still rejects wrong recipient IDs, unexpected nonzero sender IDs, and responses before a valid READY. New errors include only packet header metadata, never the response payload. The failing hardware report did not include a packet header, so the precise variant on that TV remains unconfirmed until the retry.
+
+Protocol references used for this correction:
+
+- [AOSP legacy protocol](https://android.googlesource.com/platform/system/core/+/515bed0e6aae4a835ab4393499c7dd99941a8423/adb/protocol.txt): `WRITE(0, remote-id, data)` and no reply to CLOSE.
+- [AOSP transport compatibility](https://coral.googlesource.com/android-core/+/8a9a1c5056a05d292b031810cfd59bc2181e2934/adb/adb.cpp): normal zero-sender CLOSE packets on the same transport.
+- Existing `rooting/service/adb.js`: routes received responses by recipient ID, retains the first READY peer, and does not reply to CLOSE.
+
 ## Validation
 
-The merged application passed 71 suites. The 9 integration suites and 17 Python parser tests passed. The replacement updater passed 9 .NET suites, including real loopback socket fixtures, and the host installer passed 11 Python tests. These cover cached certificate eligibility, identity and checksum mismatches, fragmented/invalid SDB frames, exact/repeatable transfers, detached process completion, one-time install submission, acknowledgement loss, and resumed verification. GitHub additionally runs the launcher tests and compilation.
+The merged application passed 71 suites. The 9 integration suites and 17 Python parser tests passed. The updater has 11 .NET suites, including real loopback socket fixtures that exercise the actual DUID probe with zero-sender WRITE/CLOSE combinations. The host installer has 11 Python tests. These cover cached certificate eligibility, identity and checksum mismatches, fragmented/invalid SDB frames, exact/repeatable transfers, detached process completion, one-time install submission, acknowledgement loss, and resumed verification. GitHub additionally runs the launcher tests and compilation.
 
 The physical S95C install and behavior checks remain outstanding. Use `tools/README.md`, `app/docs/STARTUP-APP.md`, and `app/docs/RETURN-APP.md` for the procedure and limits.
+
+## Next steps
+
+1. Use the exact final combined commit supplied with the retry block. The block uses the existing separate worktree and preserves local edits.
+2. Keep the TV on and Vetro's root connection available. Reuse the cached Partner certificate and loopback SDB; do not change Developer Mode's Host PC IP.
+3. Confirm the script reports VERIFIED after checking the installed source revision, launcher DLL, settings endpoints, and launcher refresh. An unresolved submission must only resume verification; never clear its ledger or submit again without evidence.
+4. Test ordinary standby power-on, cold boot, the return destination, Home-key debounce, opening Samsung Home, and the configured Home shortcut.
+5. Keep upstream PR branches isolated. Submit startup/return PRs only after hardware feedback. AeroTizen remains a separate update at the pinned main commit above.

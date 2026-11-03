@@ -23,7 +23,7 @@ Optional arguments: `--port` for the current Vetro port, `--installer` for an ex
 ## What the installer does
 
 1. Verifies the checkout and current Vetro root connection; reads the launcher's existing state.
-2. Checks the TV's local SDB connection and signing identity using a temporary .NET helper outside Vetro's package. This uses the same `/usr/bin/dotnet` runtime as Vetro's root agent; it does not try to run the TV's web service executable as a standalone Node CLI. The helper is compiled in the repository, so the Linux computer does not need a .NET SDK.
+2. Checks the TV's local SDB connection and signing identity using a temporary .NET helper outside Vetro's package. This uses the same `/usr/bin/dotnet` runtime as Vetro's root agent. The helper is compiled in the repository, so the Linux computer does not need a .NET SDK.
 3. Reads the existing Partner profile, confirms it covers this TV, signs the full integration widget, and checks the package ID, source revision, and native launcher hash.
 4. Transfers the signed widget in checked blocks. The TV helper verifies the complete SHA-256 before installation.
 5. Starts one detached updater through the existing root service. That updater uses loopback SDB, so Developer Mode's Host PC IP stays unchanged. Its files and process are outside the package being replaced.
@@ -41,6 +41,6 @@ If the helper proves that installation was never submitted, the report says so a
 
 ## Validation limits
 
-Automated checks cover the .NET helper's source/file hashes, fragmented SDB packets, protocol failures, transfer integrity, certificate selection, package identity, process detachment, one-time dispatch, lost acknowledgements, revision verification, and launcher restart. Actual TV self-update behavior and the new startup/return settings still need the user's S95C test. These checks do not claim that the hardware test has happened.
+Automated checks cover the .NET helper's source/file hashes, fragmented SDB packets, zero-sender response variants, protocol failures, transfer integrity, certificate selection, package identity, process detachment, one-time dispatch, lost acknowledgements, revision verification, and launcher restart. Test the update and startup/return behavior on each TV model; automated checks do not establish hardware compatibility.
 
 The helper source is in `tools/tv-updater/`. `build-update-helper.yml` compiles and tests changes on the combined branch, then commits only the helper DLL, runtime configuration, and hash manifest. It uses a normal fast-forward push and cannot overwrite a newer branch head. `python3 tools/tv-updater/bundle.py` verifies that the checked-in source and helper match the manifest.
