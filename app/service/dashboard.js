@@ -290,13 +290,13 @@ dd{margin:0;overflow-wrap:anywhere}
 <section id="remote" hidden><p id="newShortcutHelp" class="notice">Add a new shortcut with Steps 1 and 2. To change a saved shortcut, choose Edit below.</p><fieldset id="newShortcutFields" class="shortcut-fields" aria-label="Add a new shortcut"><div class="layout"><div class="box"><div class="eyebrow">Step 1 · Capture a key</div><h2>Listen to the remote</h2><p class="notice">Select a device, start listening and press a key. Listening temporarily pauses all remote shortcuts, including Home.</p><label class="field"><span>Physical device</span><select id="device"><option value="">Loading…</option></select></label><div class="row"><button id="observe" class="primary">Start listening</button><button id="refreshInput">Refresh status</button></div><div id="keyEvent">No key captured</div><p id="inputStatus" class="muted" aria-live="polite">Reading remote state…</p></div>
 <div class="box"><div class="eyebrow">Step 2 · Choose an action</div><h2>New shortcut</h2><label class="field"><span>Captured key code</span><input id="inputCode" type="number" min="0" max="767" placeholder="Press a key while listening"></label><label class="field"><span>Action</span><select id="shortcutAction"><option value="launch">Open app</option><option value="launcher">Toggle Vetro launcher</option></select></label><label class="field" id="shortcutAppField"><span>App to open</span><select id="targetApp"><option value="">Select an app…</option></select></label><div class="row"><button id="saveRule" class="primary">Add shortcut</button></div><p id="newShortcutStatus" class="notice rule-message" role="status" aria-live="polite" hidden></p></div></div></fieldset><div class="box" id="homeSection"><h2>Home button</h2><div id="homeRule"></div><div id="homeEditorSlot"><div id="ruleEditor" class="rule-editor" hidden></div></div><p id="homeSaveStatus" class="notice rule-message" role="status" aria-live="polite" hidden></p><p class="notice">Home follows this assignment. Choosing Vetro here or enabling it on Launcher updates the same shortcut.</p></div><div class="box"><h2>Other shortcuts</h2><label class="switch"><input id="filter" type="checkbox" role="switch"><span>Enable remote shortcuts</span></label><p class="notice">Controls the other physical remote shortcuts below. Home uses its own assignment above. HTTP and MQTT rules are independent.</p><div id="rules">No saved shortcuts.</div><div id="otherEditorSlot"></div><p id="shortcutsStatus" class="notice rule-message" role="status" aria-live="polite" hidden></p></div></section><section id="control" hidden><div class="box"><h2>Native controls</h2><p class="notice">Send keys directly to the TV.</p><div class="row"><button onclick="k('XF86Home')">Home</button><button onclick="k('XF86Back')">Back</button><button onclick="k('XF86AudioRaiseVolume')">Volume +</button><button onclick="k('XF86AudioLowerVolume')">Volume −</button><button onclick="k('XF86AudioMute')">Mute</button><button onclick="k('Up')">↑</button><button onclick="k('Down')">↓</button><button onclick="k('Left')">←</button><button onclick="k('Right')">→</button><button onclick="k('Return')">OK</button><button onclick="k('XF86PowerOff')">Power</button></div></div></section></div></main><div id="overlay" class="overlay" hidden></div><aside id="detail" class="drawer" role="dialog" aria-modal="true" aria-label="Details" hidden></aside><div id="feedback" role="status" hidden></div><div id="actionToast" aria-hidden="true" hidden></div><script>
 'use strict';
-var rulesRevision=0,rulesReadGeneration=0,homeAssignment={code:'63'},ruleDraft=null,ruleDetection=null;
+var rulesRevision=0,rulesReadGeneration=0,rulesStatusTimer=null,homeAssignment={code:'63'},ruleDraft=null,ruleDetection=null;
 var inventory=[], appNameCount={}, rules=[], selected=null, feedbackTimer, lastSeq=0, lastDevice='', closeFocus=null;
 var $=function(id){return document.getElementById(id)};
 function appLabel(a){var n=a.name||a.appId;return appNameCount[n]>1?n+' ('+a.appId+')':n}
 function esc(s){return String(s==null?'—':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function say(s){$('feedback').textContent=s;$('feedback').hidden=false;clearTimeout(feedbackTimer);feedbackTimer=setTimeout(function(){$('feedback').hidden=true},6000)}
-function api(url,body){return fetch(url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){if(!r.ok||d.ok===false){var error=Error(d.error||'Action failed');error.code=d.code;throw error;}return d})})}
+function api(url,body){return fetch(url,body===undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(d){if(!r.ok||d.ok===false){var error=Error(d.error||'Action failed');error.code=d.code;error.fromService=true;throw error;}return d})})}
 function bytes(n){return n==null?'Unavailable':n<1048576?Math.round(n/1024)+' KB':(n/1048576).toFixed(1)+' MB'}
 function icon(a){var initial=(a.name||a.appId||'').trim().slice(0,1).toUpperCase(),fallback=a.show?'<span>'+esc(initial)+'</span>':'<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m12 3 8 4v10l-8 4-8-4V7Z M4 7l8 4 8-4 M12 11v10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';return '<span class="icon">'+fallback+(a.iconPath?'<img alt="" loading="lazy" src="/apps/icon?appId='+encodeURIComponent(a.appId)+'" onerror="this.remove()">':'')+'</span>';}
 
@@ -421,7 +421,7 @@ function ruleMessage(id,message,warning){var node=$(id);node.textContent=message
 function updateShortcutBuilder(){
  var code=$('inputCode').value,valid=/^[0-9]{1,3}$/.test(code),isHome=valid&&String(+code)===homeCode();
  var existing=valid&&rules.find(function(r){return r.trigger.type==='physical'&&r.trigger.value===String(+code)});
- $('newShortcutFields').disabled=!!ruleDraft;
+ $('newShortcutFields').disabled=!!ruleDraft||!!uiOperationBusy.rules||!!homeAssignment.busy;
  $('newShortcutHelp').textContent=ruleDraft?'Editing '+(ruleDraft.home?'Home':'a saved shortcut')+' below. Save or cancel that edit to add a new shortcut.':'Add a new shortcut with Steps 1 and 2. To change a saved shortcut, choose Edit below.';
  $('shortcutAction').disabled=isHome||!!existing;$('targetApp').disabled=isHome||!!existing;
  $('saveRule').textContent=isHome?'Edit Home below':existing?'Edit saved shortcut':'Add shortcut';
@@ -430,21 +430,21 @@ function updateShortcutBuilder(){
 function positionRuleEditor(){if(ruleDraft)$(ruleDraft.home?'homeEditorSlot':'otherEditorSlot').appendChild($('ruleEditor'))}
 function showRules(){
  renderMqttRules();
- var home=rules.find(isHomeRule),active=home&&home.enabled,locked=!!ruleDraft||!!uiOperationBusy.rules;
+ var home=rules.find(isHomeRule),active=home&&home.enabled,locked=!!ruleDraft||!!uiOperationBusy.rules||!!homeAssignment.busy;
  $('filter').disabled=locked;
  $('homeRule').hidden=!!ruleDraft&&ruleDraft.home;
- $('homeRule').innerHTML='<div class="rule"><span>Home → '+esc(active?home.actions.map(actionLabel).join(', '):'Samsung Home')+'</span><button data-edit-home '+(locked?'disabled':'')+'>Edit</button>'+(home?'<button data-reset-home '+(locked?'disabled':'')+'>Restore default</button>':'')+'</div>'+(active&&!homeAssignment.ready?'<p class="notice">'+esc(homeAssignment.error||(homeAssignment.listening?'Paused while listening':homeAssignment.device?'Waiting for the remote connection':'Choose Edit, then Detect Home to set up this remote.'))+'</p>':'');
+ $('homeRule').innerHTML='<div class="rule"><span>Home → '+esc(active?home.actions.map(actionLabel).join(', '):'Samsung Home')+'</span><button data-edit-home '+(locked?'disabled':'')+'>Edit</button>'+(home?'<button data-reset-home '+(locked?'disabled':'')+'>Restore default</button>':'')+'</div>'+(homeAssignment.busy||active&&!homeAssignment.ready?'<p class="notice">'+esc(homeAssignment.busy?ruleSaveProgress(homeAssignment):homeAssignment.error||(homeAssignment.listening?'Paused while listening':homeAssignment.device?'Waiting for the remote connection':'Choose Edit, then Detect Home to set up this remote.'))+'</p>':'');
  var other=rules.filter(function(r){return !isHomeRule(r)});
  $('rules').innerHTML=other.map(function(r){return '<div class="rule"><div><code>'+esc(r.trigger.type+' / '+r.trigger.value)+'</code> → '+esc(r.actions.map(actionLabel).join(', '))+(r.enabled?'':' (off)')+'</div><button data-edit="'+esc(r.id)+'" '+(locked?'disabled':'')+'>Edit</button><button class="danger" data-delete="'+esc(r.id)+'" '+(locked?'disabled':'')+'>Delete</button></div>'}).join('')||'No other shortcuts.';
  updateShortcutBuilder();
 }
-function loadRules(){var generation=++rulesReadGeneration;return api('/remap').then(function(d){if(generation!==rulesReadGeneration)return;rules=d.rules;rulesRevision=d.revision||0;homeAssignment=d.home||homeAssignment;showRules()})}
+function loadRules(){clearTimeout(rulesStatusTimer);var generation=++rulesReadGeneration;return api('/remap').then(function(d){if(generation!==rulesReadGeneration)return;rules=d.rules;rulesRevision=d.revision||0;homeAssignment=d.home||homeAssignment;showRules();if(ruleDraft)syncRuleEditor()}).finally(function(){if(generation===rulesReadGeneration&&homeAssignment.busy)rulesStatusTimer=setTimeout(function(){loadRules().catch(function(){})},1000)})}
 function deleteRule(id,button){if(ruleDraft)return Promise.resolve(false);var home=rules.find(function(r){return r.id===id&&isHomeRule(r)}),notice=home?'homeSaveStatus':'shortcutsStatus';return saveRuleSet(rules.filter(function(r){return r.id!==id}),home?'Restore Samsung Home':'Delete shortcut',button,null,function(error){ruleMessage(notice,error?'Change not confirmed: '+error.message:home?'Samsung Home restored.':'Shortcut deleted.',!!error)})}
 $('rules').onclick=function(e){if(e.target.dataset.edit)return editRule(e.target.dataset.edit);if(e.target.dataset.delete)return deleteRule(e.target.dataset.delete,e.target)};
 $('homeRule').onclick=function(e){var r=rules.find(isHomeRule);if(e.target.dataset.editHome!=null)return editRule(r?r.id:null,true);if(e.target.dataset.resetHome!=null&&r)return deleteRule(r.id,e.target)};
 function appOptions(value){var apps=inventory.filter(function(a){return a.show&&!a.disabled});if(value&&!apps.some(function(a){return a.appId===value}))apps=apps.concat([{appId:value,name:value+' (unavailable)'}]);return '<option value="">Select an app…</option>'+apps.map(function(a){return '<option value="'+esc(a.appId)+'" '+(a.appId===value?'selected':'')+'>'+esc(a.name||a.appId)+'</option>'}).join('')}
 function editRule(id,home){
- if(ruleDraft||uiOperationBusy.rules)return;
+ if(ruleDraft||uiOperationBusy.rules||homeAssignment.busy)return;
  var r=id?rules.find(function(x){return x.id===id}):null;if(id&&!r)return;
  ruleDraft={originalId:id,revision:rulesRevision,home:!!home||!!r&&isHomeRule(r),error:null,notice:'',saving:false,rule:r?JSON.parse(JSON.stringify(r)):{id:'physical_'+homeCode(),enabled:true,trigger:{type:'physical',value:homeCode()},actions:[{type:'native'}]}};
  if(currentPanel!=='remote')switchPanel('remote');
@@ -455,11 +455,11 @@ function editRule(id,home){
 function ruleField(label,control){return '<label class="field"><span>'+label+'</span>'+control+'</label>'}
 function syncRuleEditor(){
  if(!ruleDraft)return;
- var draft=ruleDraft,detecting=ruleDetection&&ruleDetection.draft===draft,locked=draft.saving||!!detecting;
+ var draft=ruleDraft,detecting=ruleDetection&&ruleDetection.draft===draft,locked=draft.saving||!!detecting||!!homeAssignment.busy;
  $('ruleEditFields').disabled=locked;$('saveRuleEdit').disabled=locked;$('cancelRuleEdit').disabled=draft.saving;
  $('saveRuleEdit').textContent=draft.saving?'Saving…':draft.home?'Save Home':'Save shortcut';
  $('ruleEditDetection').hidden=!draft.home||draft.rule.actions[0].type==='native';
- $('ruleDetectHome').disabled=draft.saving;
+ $('ruleDetectHome').disabled=draft.saving||!!homeAssignment.busy;
  $('ruleDetectHome').textContent=detecting?(ruleDetection.phase==='restore-failed'?'Retry remote restore':'Stop detection'):'Detect Home';
  $('ruleRemoteState').textContent=draft.device?'Home remote detected.':homeAssignment.device?'Using the saved Home remote: '+homeAssignment.device:'Detect Home once to identify your remote.';
  ruleMessage('ruleEditStatus',draft.error||draft.notice,!!draft.error);
@@ -490,7 +490,7 @@ $('ruleEditor').onclick=function(e){var d=e.target.dataset;if(!ruleDraft||ruleDr
   if(!draft.home&&draft.rule.trigger.type==='physical'&&String(+draft.rule.trigger.value)===homeCode()){draft.error='Home has its own section. Cancel this edit, then choose Edit under Home button.';syncRuleEditor();return Promise.resolve(false)}
   if(draft.rule.actions[0].type!=='native')next.push(draft.rule);
   draft.saving=true;draft.error=null;draft.notice=draft.home?'Saving Home…':'Saving shortcut…';syncRuleEditor();
-  return saveRuleSet(next,draft.home?'Save Home':'Save shortcut',e.target,{expectedRevision:draft.revision,device:draft.home?draft.device:undefined},function(error){if(error&&ruleDraft===draft){draft.error='Save not confirmed: '+error.message;draft.notice='';syncRuleEditor()}}).then(function(ok){
+  return saveRuleSet(next,draft.home?'Save Home':'Save shortcut',e.target,{expectedRevision:draft.revision,device:draft.home?draft.device:undefined},function(error){if(error&&ruleDraft===draft){draft.error='Save not confirmed: '+error.message;draft.notice='';syncRuleEditor()}},function(message){if(ruleDraft===draft){draft.notice=message;syncRuleEditor()}}).then(function(ok){
    if(ok&&ruleDraft===draft){ruleDraft=null;renderRuleEditor();ruleMessage(draft.home?'homeSaveStatus':'shortcutsStatus',draft.home?'Home saved.':'Shortcut saved.')}
    return ok;
   }).finally(function(){draft.saving=false;if(ruleDraft===draft)syncRuleEditor()});
@@ -634,11 +634,41 @@ function runUiOperation(key,label,target,button,work){
  }).finally(function(){delete uiOperationBusy[key];if(button){button.disabled=oldDisabled;button.textContent=oldText}});
 }
 function ruleShape(list){return list.map(function(r){return {id:r.id,enabled:r.enabled!==false,trigger:{type:r.trigger.type,value:r.trigger.type==='physical'?String(+r.trigger.value):r.trigger.value,payload:r.trigger.payload==null?null:r.trigger.payload},actions:r.actions.map(function(a){return [a.type,a.appId||null,a.key||null,a.topic||null,a.type==='mqtt'?String(a.payload==null?'':a.payload):null]})}})}
-function saveRuleSet(next,label,button,extra,feedback){
+function ruleSaveProgress(home){return {'preparing':'Checking the remote…','starting-launcher':'Starting Vetro launcher…','applying-remote':'Applying the Home and remote shortcuts…','stopping-launcher':'Stopping Vetro launcher…','restoring':'Restoring the previous assignment…'}[home.phase]||'Applying the shortcut change…'}
+function confirmRuleSave(body,progress){
+ return new Promise(function(resolve,reject){
+  var done=false,timer,deadline,sawBusy=false;
+  function message(text){if(!done&&progress)progress(text)}
+  function finish(error,data){if(done)return;done=true;clearTimeout(timer);clearTimeout(deadline);if(error)reject(error);else resolve(data)}
+  function matches(data){return data.revision===body.expectedRevision+1&&Array.isArray(data.rules)&&JSON.stringify(ruleShape(data.rules))===JSON.stringify(ruleShape(body.rules))}
+  function check(){
+   if(done)return;
+   api('/remap').then(function(data){
+    if(done)return;
+    if(data.home&&data.home.busy){sawBusy=true;message(ruleSaveProgress(data.home));return}
+    // Rules are persisted before input is applied. A busy transaction can still roll back.
+    if(data.home&&data.home.busy===false&&data.home.ready===true&&!data.home.error&&matches(data)){finish(null,Object.assign({},data,{persisted:true}));return}
+    if(matches(data)&&data.home&&!data.home.error){message('Waiting for the remote connection to confirm the assignment…');return}
+    if(data.revision>body.expectedRevision){finish(Error('Shortcuts changed while confirming the save. Reload the saved assignments before editing again.'));return}
+    if(sawBusy&&data.home&&data.home.error){finish(Error(data.home.error));return}
+    message('Waiting for the TV to confirm the saved assignment…');
+   }).catch(function(){message('Reconnecting to check the saved assignment…')}).finally(function(){if(!done)timer=setTimeout(check,1000)});
+  }
+  deadline=setTimeout(function(){finish(Error('The TV has not confirmed completion. Refresh status before trying again; the save was sent only once.'))},120000);
+  timer=setTimeout(check,1000);
+  // Send one write only. Read-back can finish even if its HTTP reply is lost.
+  api('/remap',body).then(function(data){
+   if(done)return;
+   if(data.persisted!==true||!matches(data)){finish(Error('Saved rules do not match the requested change'));return}
+   if(data.home&&(data.home.busy||data.home.error)){message('Checking the saved assignment…');return}
+   finish(null,data);
+  }).catch(function(error){if(error.fromService)finish(error);else message('Save response unavailable. Checking the saved assignment…')});
+ });
+}
+function saveRuleSet(next,label,button,extra,feedback,progress){
  if(uiOperationBusy.rules){if(feedback)feedback(Error('Another shortcut change is in progress. Wait for it to finish.'));return Promise.resolve(false)}
  ++rulesReadGeneration;
- return runUiOperation('rules',label,'Remapper',button,function(){return api('/remap',Object.assign({rules:next,expectedRevision:rulesRevision},extra||{})).then(function(d){
-  if(d.persisted!==true||!Array.isArray(d.rules)||JSON.stringify(ruleShape(d.rules))!==JSON.stringify(ruleShape(next)))throw Error('Saved rules do not match the requested change');
+ return runUiOperation('rules',label,'Remapper',button,function(){showRules();return confirmRuleSave(Object.assign({rules:next,expectedRevision:rulesRevision},extra||{}),progress).then(function(d){
   ++rulesReadGeneration;rules=d.rules;rulesRevision=d.revision||0;homeAssignment=d.home||homeAssignment;showRules();
   ++dockReadGeneration;dockData=null;pollInput();
   return {resultLabel:'Saved',message:'Shortcut saved. Home follows its assignment; other physical shortcuts use their enable switch.'};

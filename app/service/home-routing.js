@@ -26,14 +26,14 @@ function validate(rules, homeCode) {
     if (homes.length && homes[0].actions.length !== 1) throw Error('Choose one action for Home');
     return result;
 }
-function HomeRouting(options) { this.o = options; this.busy = false; this.error = null; }
+function HomeRouting(options) { this.o = options; this.busy = false; this.phase = null; this.error = null; }
 HomeRouting.prototype.status = function () {
     var store = this.o.get(), r = rule(store), action = r && r.enabled ? r.actions[0] : null;
     var p = this.o.inputStatus().policy, b = binding(store);
     return {code: code(store), ruleId: r ? r.id : null, action: action, launcher: !!action && action.type === 'launcher',
         device: b && b.device || null, node: b && b.node || null,
         ready: !this.busy && (!action || !!b && p.mode === 'filter' && p.connected && (p.blocked || []).indexOf(code(store)) >= 0),
-        listening: p.mode === 'observe', busy: this.busy, error: this.error};
+        listening: p.mode === 'observe', busy: this.busy, phase: this.phase, error: this.error};
 };
 HomeRouting.prototype.device = function (store, explicit) {
     var self=this;
@@ -60,7 +60,7 @@ HomeRouting.prototype.device = function (store, explicit) {
 HomeRouting.prototype.change = function (rules, options) {
     options=options||{};
     if(this.busy)return Promise.reject(Error('A remote shortcut change is already in progress'));
-    this.busy=true;this.error=null;
+    this.busy=true;this.phase='preparing';this.error=null;
     var self=this,o=this.o,previous,next,wanted,wasRunning,committed=false,runtimeTouched=false;
     return Promise.resolve().then(function(){
         previous=o.get();wasRunning=o.dock.readState().enabled;
@@ -69,9 +69,13 @@ HomeRouting.prototype.change = function (rules, options) {
         var before=rule(previous),after=rule(next),changed=JSON.stringify(before)!==JSON.stringify(after);
         if(after&&after.enabled&&(changed||options.device||!binding(previous))){
             return self.device(previous,options.device).then(function(remote){
-                if(previous.input&&previous.input.enabled&&previous.input.device&&previous.input.device!==remote.name)throw Error('Home and the other remote shortcuts must use the same remote');
-                if(options.device&&remote.unique===false&&previous.input&&previous.input.enabled&&previous.input.node!==remote.node)throw Error('Pause other remote shortcuts before assigning Home to a different remote interface');
+                var input=previous.input||{},otherActive=input.enabled&&next.rules.some(function(r){return r.enabled&&r.trigger.type==='physical'&&r.trigger.value!==code(previous);});
+                if(otherActive&&input.device&&input.device!==remote.name)throw Error('Home and the other remote shortcuts must use the same remote');
+                if(otherActive&&options.device&&remote.unique===false&&input.node!==remote.node)throw Error('Pause other remote shortcuts before assigning Home to a different remote interface');
                 next.home={code:code(previous),device:remote.name,node:remote.node};
+                // A switch with no active shortcuts does not own a different remote.
+                // Keep its preference enabled and reuse Home's remote for future shortcuts.
+                if(input.enabled&&!otherActive)next.input=Object.assign({},input,{device:remote.name,node:remote.node});
                 if(after.actions[0].type==='launch')return o.apps().then(function(apps){
                     if(apps.registryError||!apps.apps.some(function(a){return a.appId===after.actions[0].appId&&a.show===true&&a.disabled===false;}))throw Error('Choose an installed, enabled app with a launcher entry');
                 });
@@ -80,14 +84,15 @@ HomeRouting.prototype.change = function (rules, options) {
         if(binding(previous))next.home=Object.assign({},binding(previous),{code:code(previous)});
     }).then(function(){
         wanted=launcher(next.rules);
-        if(wanted&&!wasRunning){runtimeTouched=true;return o.dock.enable();}
+        if(wanted&&!wasRunning){self.phase='starting-launcher';runtimeTouched=true;return o.dock.enable();}
     }).then(function(){
         // Persist before changing input. Failed runtime changes restore the assignment.
-        o.save(next);committed=true;runtimeTouched=true;return o.applyInput();
+        o.save(next);committed=true;runtimeTouched=true;self.phase='applying-remote';return o.applyInput();
     }).then(function(){
-        if(!wanted&&wasRunning)return o.dock.disable();
+        if(!wanted&&wasRunning){self.phase='stopping-launcher';return o.dock.disable();}
     }).then(function(){return {ok:true,persisted:true,rules:next.rules,revision:next.revision};})
         .catch(function(e){
+            self.phase='restoring';
             var restoreErrors=[];
             if(committed){try{o.save(previous);}catch(restore){restoreErrors.push('saved assignment: '+restore.message);}}
             return Promise.resolve().then(function(){
@@ -100,7 +105,7 @@ HomeRouting.prototype.change = function (rules, options) {
                 self.error=e.message+(restoreErrors.length?'. Restore not confirmed: '+restoreErrors.join('; '):'');
                 e.message=self.error;throw e;
             });
-        }).finally(function(){self.busy=false;});
+        }).finally(function(){self.busy=false;self.phase=null;});
 };
 HomeRouting.prototype.setLauncher = function (enabled, options) {
     var store = this.o.get(), current = rule(store);

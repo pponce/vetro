@@ -41,6 +41,17 @@ before you choose **Save Home** to apply the new action. Cancel leaves the saved
 assignment unchanged. If a save fails, its reason appears beside the save controls
 and the selected values remain available for correction.
 
+You can leave **Enable remote shortcuts** on while saving Home. Detection pauses
+interception temporarily and restores the saved settings automatically. A different
+remote or interface is blocked only when it conflicts with other active physical
+mappings. When Home is the only active mapping, its detected remote is used without
+turning that switch off.
+
+While saving, the editor shows progress as Vetro starts the launcher and applies
+the remote assignment. It also checks the saved state, so a missing save response
+does not require another save. **Home saved** appears after the change finishes;
+an unconfirmed result keeps the draft and asks you to check the current status.
+
 Keep an alternative launcher's own Home takeover off when Vetro manages the key.
 For AeroTizen builds with App mode, leave that mode on.
 

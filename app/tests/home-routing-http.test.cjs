@@ -1,11 +1,11 @@
 'use strict';
 const assert=require('assert').strict, path=require('path'), EventEmitter=require('events');
 const load=require('./service-harness.cjs');
-let files={},running=false,failSave=false;
+let files={},running=false,failSave=false,devices=[{name:'Smart Control',node:'/dev/input/event6',selectable:true,unique:true}];
 const commands=[],bridges=[];
 class Bridge {
  constructor(execute,onEvent){this.onEvent=onEvent;this.policy={mode:'off',connected:false};bridges.push(this);}
- inventory(){return Promise.resolve([{name:'Smart Control',node:'/dev/input/event6',selectable:true,unique:true}]);}
+ inventory(){return Promise.resolve(devices);}
  status(){return {policy:this.policy,events:[]};}
  stop(){this.policy={mode:'off',connected:false};}
  async start(node,mode,blocked){this.policy={device:'Smart Control',node,mode,connected:true,blocked};return this.status();}
@@ -47,6 +47,16 @@ const home=(type,appId)=>({id:'physical_63',enabled:true,trigger:{type:'physical
  const before=(await request('/remap')).body;
  failSave=true;r=await request('/remap',{rules:[],expectedRevision:3});assert.equal(r.code,409);assert.equal((await request('/remap')).body.rules[0].actions[0].type,'launcher');assert.equal(running,true);failSave=false;
  r=await request('/remap',{rules:[],expectedRevision:before.revision});assert.equal(r.code,200);assert.equal(running,false);assert.equal((await request('/input')).body.status.policy.mode,'off');
+ await request('/input',{mode:'filter',device:'/dev/input/event6'});
+ files['/sys/class/input/event6/device/capabilities/key']='1';files['/sys/class/input/event16/device/capabilities/key']='1';
+ devices=[{name:'Smart Control',node:'/dev/input/event6',selectable:true,unique:false},{name:'Smart Control',node:'/dev/input/event16',selectable:true,unique:false}];
+ await request('/input',{mode:'observe',device:'auto'});
+ assert.equal((await request('/input')).body.status.preference.enabled,true,'Home detection keeps the switch enabled');
+ await request('/input',{mode:'resume'});
+ r=await request('/remap',{rules:[home('launcher')],device:'/dev/input/event16',expectedRevision:(await request('/remap')).body.revision});
+ assert.equal(r.code,200,r.body.error);assert.equal(r.body.home.busy,false);assert.equal(r.body.home.phase,null);assert.equal(r.body.home.ready,true);
+ const input=(await request('/input')).body.status;
+ assert.equal(input.preference.enabled,true);assert.equal(input.preference.node,'/dev/input/event16');assert.deepEqual(input.policy.blocked,['63']);
  r=await request('/remap',null);assert.equal(r.code,400);
  r=await request('/dock',null);assert.equal(r.code,400);
  r=await request('/input',null);assert.equal(r.code,400);

@@ -8,7 +8,7 @@ function fixture(){
  const dock={readState:()=>({enabled:f.running}),enable:async()=>{f.starts++;f.running=true;},disable:async()=>{f.stops++;f.running=false;}};
  f.routing=new HomeRouting({get:()=>f.store,save:s=>{if(f.failSave)throw Error('disk full');f.store=s;f.saves++;},dock,
   devices:async()=>f.devices,hasKeys:()=>true,apps:async()=>({apps:f.apps}),inputStatus:()=>({policy:f.policy}),
-  applyInput:async()=>{if(f.failInput-->0)throw Error('helper unavailable');const p=plan(f.store);f.policy={mode:p.tokens.length?'filter':'off',connected:!!p.tokens.length,blocked:p.tokens};}});
+  applyInput:async()=>{if(f.inputWait)await f.inputWait;if(f.failInput-->0)throw Error('helper unavailable');const p=plan(f.store);f.policy={mode:p.tokens.length?'filter':'off',connected:!!p.tokens.length,blocked:p.tokens};}});
  return f;
 }
 (async()=>{
@@ -56,5 +56,30 @@ function fixture(){
  await f.routing.change([other,home({type:'launcher'})]);
  assert.equal(f.store.home.node,'/dev/input/event6');assert.equal(f.store.input.node,'/dev/input/event6');assert.equal(f.store.input.enabled,true);
  assert.deepEqual(f.policy.blocked,['63','115'],'reusing the saved Home identity preserves the other shortcuts');
+ f.devices.push({name:'Other Remote',node:'/dev/input/event20',selectable:true,unique:true});
+ await assert.rejects(f.routing.setLauncher(true,{device:'/dev/input/event20'}),/same remote/);
+ assert.equal(f.store.input.enabled,true,'a real conflict does not silently pause shortcuts');
+ for(const extras of [[],[{...other,enabled:false}],[{id:'web',enabled:true,trigger:{type:'http',value:'open'},actions:[{type:'key',key:'KEY_HOME'}]}]]){
+  f=fixture();f.store.rules=extras;f.store.input={enabled:true,device:'Smart Control',node:'/dev/input/event6'};
+  f.devices=[{name:'Smart Control',node:'/dev/input/event6',selectable:true,unique:false},{name:'Smart Control',node:'/dev/input/event16',selectable:true,unique:false}];
+  await f.routing.setLauncher(true,{device:'/dev/input/event16',expectedRevision:0});
+  assert.equal(f.store.input.enabled,true,'Home saves with the switch on and no other active physical mappings');
+  assert.equal(f.store.home.node,'/dev/input/event16');assert.equal(f.store.input.node,'/dev/input/event16');
+  assert.deepEqual(f.policy.blocked,['63']);assert.deepEqual(f.store.rules.slice(0,-1),extras);
+  assert.equal(f.routing.status().busy,false);assert.equal(f.routing.status().phase,null);
+ }
+ f=fixture();f.store.rules=[];f.store.input={enabled:true,device:'Old Remote',node:'/dev/input/event99'};
+ f.inputWait=new Promise(r=>{release=r});
+ const saving=f.routing.setLauncher(true,{device:'/dev/input/event6',expectedRevision:0});
+ await new Promise(r=>setImmediate(r));
+ assert.equal(f.store.revision,1,'the assignment exists before applying input finishes');
+ assert.equal(f.routing.status().busy,true);assert.equal(f.routing.status().phase,'applying-remote');assert.equal(f.routing.status().ready,false);
+ release();await saving;assert.equal(f.store.input.enabled,true);assert.equal(f.store.input.device,'Smart Control');
+ assert.equal(f.routing.status().phase,null);assert.equal(f.routing.status().ready,true);
+ f=fixture();f.store.rules=[];f.store.input={enabled:true,device:'Old Remote',node:'/dev/input/event99'};
+ const rollback=JSON.stringify(f.store);f.failInput=1;
+ await assert.rejects(f.routing.setLauncher(true,{device:'/dev/input/event6'}),/helper unavailable/);
+ assert.equal(JSON.stringify(f.store),rollback,'failure restores the enabled switch and its original binding too');
+ assert.equal(f.routing.status().phase,null);assert.equal(f.routing.status().busy,false);
  console.log('PASS shared Home: one assignment, native default, paused shortcuts, app edits, re-enable, migration, device identity, rollback, revisions and serialization');
 })().catch(e=>{console.error(e);process.exitCode=1;});
