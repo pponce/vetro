@@ -8,7 +8,7 @@ var Foreground = require('./foreground-state.js');
 var COMMAND = Foreground.COMMAND, parse = Foreground.parse;
 var TV_SIDE = /^(org\.tizen\.tv-viewer|com\.samsung\.tv\.csfs)$/;
 var SYSTEM = /^(com\.samsung\.tv\.coba\.|org\.tizen\.menu|vetrotvapp(?:\.|$)|com\.samsung\.tv\.(screeneffectorapp|multiscreen|quickpanel)|org\.tizen\.(hbbtv|welcome-mode))/;
-var SETTLE_MS = 1000, EXPIRE_MS = 10000, GAP_MS = 6000;
+var POLL_MS = 1000, SETTLE_MS = 300, EXPIRE_MS = 10000, GAP_MS = 6000;
 
 function fallback(state) { return TV_SIDE.test(state.full) && (!state.partial || TV_SIDE.test(state.partial)); }
 function ordinary(state, target) {
@@ -48,6 +48,12 @@ function ReturnApp(options) {
 ReturnApp.prototype.status = function () {
     return {appId: this.config.appId, revision: this.config.revision, pending: !!this.pending,
         lastResult: this.lastResult, error: this.error};
+};
+ReturnApp.prototype.nextDelay = function () {
+    // Recheck a possible exit as soon as it settles, without waiting for the idle poll.
+    var event = this.pending;
+    if (event && event.stage === 'waiting') return Math.max(0, SETTLE_MS - (this.now() - event.started));
+    return POLL_MS;
 };
 ReturnApp.prototype.reset = function () { this.previous = null; this.lastClock = null; this.lastAt = null; this.pending = null; };
 ReturnApp.prototype.configure = function (id, expected, rows) {

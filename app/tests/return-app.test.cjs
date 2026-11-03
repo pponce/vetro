@@ -37,6 +37,26 @@ function fixture() {
     assert.ok(!/\b(set|app_launcher|kill)\b/.test(COMMAND),'snapshot is read-only');
 
     let f=fixture();await f.tick();assert.equal(f.reads,0,'disabled feature does no polling');
+    assert.equal(f.app.nextDelay(), 1000);
+    const fast=fixture();fast.choose('home.app');
+    await fast.tick('video.one',1000);await fast.tick(HOME,1000);
+    assert.equal(fast.app.nextDelay(),300);
+    await fast.tick(undefined,299);assert.equal(fast.launches.length,0,'fallback must settle before returning');
+    assert.equal(fast.app.nextDelay(),1);
+    await fast.tick(undefined,1);assert.deepEqual(fast.launches,['home.app'],'return is requested at the short settling deadline');
+    assert.equal(fast.app.nextDelay(),1000,'verification uses the normal interval');
+    await fast.tick('home.app',1000);assert.match(fast.app.status().lastResult,/confirmed/);
+    for(const cause of ['app','overlay','source','power']) {
+        const quick=fixture();quick.choose('home.app');
+        await quick.tick('video.one',1000);await quick.tick(HOME,1000);
+        if(cause==='app')quick.state.full='video.two';
+        if(cause==='overlay')quick.state.partial='org.tizen.menu';
+        if(cause==='source')quick.state.sourceType=13;
+        if(cause==='power')quick.power='standby';
+        await quick.tick(undefined,300);
+        assert.equal(quick.launches.length,0,'fast recheck cancels for '+cause);
+        assert.equal(quick.app.nextDelay(),1000,'cancellation restores normal polling');
+    }
     const tv=fixture();tv.choose('home.app');
     tv.app.snapshot=async()=>parse(typed(tv.state.full,tv.state.partial,tv.state.sourceType));
     await tv.exit();assert.deepEqual(tv.launches,['home.app'],'typed TV output detects the app exit and passes the launch guard');
@@ -98,5 +118,5 @@ function fixture() {
     assert.throws(()=>f.choose('home.other'),/disk failure/);assert.equal(f.app.status().appId,before.appId);
     assert.equal(new ReturnApp(f.options).status().appId,'home.app','failed atomic write preserves saved choice');
     assert.deepEqual(rows.slice(0,2).map(r=>r.appId),['home.app','home.other']);
-    console.log('PASS return app: fallback detection, one choice, source/app/overlay guards, boot and suspend suppression, queue cancellation, no replay, persistence, and off');
+    console.log('PASS return app: short settling recheck, fallback detection, one choice, source/app/overlay guards, boot and suspend suppression, queue cancellation, no replay, persistence, and off');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>fs.rmSync(directory,{recursive:true,force:true}));

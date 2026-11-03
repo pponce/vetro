@@ -807,7 +807,12 @@ platform.start();
 // Explicit power transitions and actual Linux resume, never a root-agent reconnect alone.
 // With no selected app tick() returns without polling or sending a TV command.
 var startupAppTimer=setInterval(function(){startupApp.tick();},2000);if(startupAppTimer.unref)startupAppTimer.unref();
-var returnAppTimer=setInterval(function(){returnApp.tick();},2000);if(returnAppTimer.unref)returnAppTimer.unref();
+// One read at a time; a possible exit schedules its own short settling check.
+function pollReturnApp() { return returnApp.tick().then(scheduleReturnApp, scheduleReturnApp); }
+function scheduleReturnApp() {
+    var timer=setTimeout(pollReturnApp,returnApp.nextDelay());if(timer.unref)timer.unref();
+}
+scheduleReturnApp();
 // The dock is started again after a boot or a crash while its switch is on.
 // A short tick notices the moment the root agent connects, so after a boot the dock starts at once
 // instead of waiting for the next 10 s round.
