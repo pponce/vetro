@@ -556,20 +556,22 @@ function handleRemap(req, res) {
 }
 
 function runActions(actions) {
-    var sent=0, skipped=[],mqttSent=0;
+    var sent=0, skipped=[],mqttSent=0, launcherFallback=null;
     return actions.reduce(function(chain,a){return chain.then(function(){
         var command;
         if(a.type==='mqtt'){bridge.publish(a.topic,a.payload);sent++;mqttSent++;return;}
         if(a.type==='launcher'){
-            if(dock.toggle()){sent++;return;}
-            // Keep Home usable when the dock is off, restarting, or unavailable.
-            command=control.injectCommand('XF86Home');
+            return Promise.resolve(dock.toggle()).then(function(delivered){
+                if(delivered){sent++;return;}
+                launcherFallback='Launcher unavailable; sent Samsung Home instead: '+(dock.lastControl&&dock.lastControl.reason||'unavailable');
+                return agentExecute(control.injectCommand('XF86Home'),10000).then(function(r){if(r.exit_code||r.timed_out)throw Error('Native Home fallback failed');sent++;});
+            });
         }
         else if(a.type==='launch')command='/usr/bin/app_launcher -s '+a.appId;
         else if(a.type==='key'){var key=control.nativeKey(a.key);command=key&&control.injectCommand(key);if(!command)throw new Error('unsupported native key: '+a.key);}
         else {skipped.push(a.type);return;}
         return agentExecute(command,10000).then(function(r){if(r.exit_code||r.timed_out)throw new Error(r.stderr||'native action failed');sent++;});
-    });},Promise.resolve()).then(function(){return {ok:true,sent:sent,skipped:skipped,transport:mqttSent?(mqttSent===sent?'mqtt':'mixed'):'native'};});
+    });},Promise.resolve()).then(function(){var result={ok:true,sent:sent,skipped:skipped,transport:mqttSent?(mqttSent===sent?'mqtt':'mixed'):'native'};if(launcherFallback)result.launcherFallback=launcherFallback;return result;});
 }
 var actionQueue=Promise.resolve(), pendingActions=0, inputError=null;
 var physical=new PhysicalInput(agentExecute,function(event){
@@ -577,7 +579,7 @@ var physical=new PhysicalInput(agentExecute,function(event){
     var actions=remap.resolve(remapStore.rules,'physical',String(event.code));
     if(pendingActions>=8){inputPaused=true;physical.stop();inputError='input action queue exceeded';return;}
     pendingActions++;
-    actionQueue=actionQueue.then(function(){return runActions(actions);}).catch(function(e){inputError=e.message;inputPaused=true;physical.stop();}).finally(function(){pendingActions--;});
+    actionQueue=actionQueue.then(function(){return runActions(actions);}).then(function(r){inputError=r.launcherFallback||null;}).catch(function(e){inputError=e.message;inputPaused=true;physical.stop();}).finally(function(){pendingActions--;});
 });
 var inputObservers=[], inputPaused=false, inputRestoring=false;
 function inputPreference(){var p=remapStore.input;return p&&p.enabled===true&&typeof p.device==='string'?p:{enabled:false};}

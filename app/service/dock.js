@@ -11,7 +11,6 @@
 // changed: no package is disabled and the default Home is untouched.
 
 var fs = require('fs');
-var constants = require('constants');
 var os = require('os');
 var path = require('path');
 var catalog = require('./dock-catalog.js');
@@ -43,7 +42,6 @@ function Dock(options) {
     this.dir = options.dir || path.join(__dirname, '..', 'native', 'dock');
     this.stateFile = options.stateFile || STATE_FILE;
     this.appsFile = options.appsFile || APPS_FILE;
-    this.fifo = options.fifo || FIFO;
     this.sleep = options.sleep || function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
     this.now = options.now || Date.now;
     this.uptime = options.uptime || function () { return os.uptime(); };
@@ -53,25 +51,33 @@ function Dock(options) {
     this.lastError = null;
     this.lastCatalog = null;
     this.refreshPending = false;
+    this.lastControl = null;
 }
 
-// The native launcher accepts toggle without arming its Samsung Home close
-// guard. A filtered remote key can use this channel without injecting Home.
-// Nonblocking open fails immediately when no launcher is reading the FIFO.
+// The app service cannot assume access to the root launcher's private files.
+// Run the headless, nonblocking pipe client through the existing root adapter.
+// Only an explicit not-sent result permits falling back to the native Home key.
 Dock.prototype.toggle = function () {
-    var fd;
-    try {
-        if (this.busy || !this.readState().enabled || !this.installed()) return false;
-        fd = fs.openSync(this.fifo, constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
-        if (!fs.fstatSync(fd).isFIFO()) return false;
-        var command = Buffer.from('toggle\n');
-        return fs.writeSync(fd, command, 0, command.length) === command.length;
-    } catch (e) { return false; }
-    finally {
-        // A completed write must not be replayed as a native Home key if close
-        // reports an error. The short FIFO write is atomic (below PIPE_BUF).
-        if (fd !== undefined) { try { fs.closeSync(fd); } catch (ignored) {} }
+    var self = this;
+    function record(state, reason) {
+        self.lastControl = {at: self.now(), state: state, reason: reason};
+        return state === 'sent';
     }
+    if (this.busy) return Promise.resolve(record('not-sent', 'launcher restarting'));
+    if (!this.readState().enabled) return Promise.resolve(record('not-sent', 'launcher disabled'));
+    if (!this.installed()) return Promise.resolve(record('not-sent', 'launcher files unavailable'));
+    var command = '/usr/bin/dotnet ' + q(path.join(this.dir, DLL)) + ' --control toggle --dir ' + q(RUN_DIR);
+    return Promise.resolve().then(function () { return self.execute(command, 5000); }).then(function (r) {
+        var frames = String(r && r.stdout || '').split(/\r?\n/).filter(function (line) { return line.indexOf('VETRO_LAUNCHER_CONTROL_V1\t') === 0; });
+        var match = frames.length === 1 && /^VETRO_LAUNCHER_CONTROL_V1\t(sent|not-sent|unknown)\t([a-z-]+)\t(\d+)$/.exec(frames[0]);
+        if (!r || r.timed_out || !match) throw Error('Launcher command outcome unknown; Home was not replayed');
+        if (match[1] === 'sent' && match[2] === 'ok' && match[3] === '0' && r.exit_code === 0) return record('sent', 'toggle delivered');
+        if (match[1] === 'not-sent' && r.exit_code === 3) return record('not-sent', match[2] + (match[3] === '0' ? '' : ' (errno ' + match[3] + ')'));
+        throw Error('Launcher command outcome unknown; Home was not replayed');
+    }).catch(function (error) {
+        record('unknown', 'Launcher command was not confirmed; Home was not replayed');
+        throw Error(self.lastControl.reason);
+    });
 };
 
 Dock.prototype.installed = function () {
@@ -169,7 +175,7 @@ Dock.prototype.status = function (options) {
 
 Dock.prototype.statusNow = function () {
     var self = this, state = this.readState();
-    var base = {homeShortcut: state.homeShortcut, homeLabelMax: catalog.HOME_LABEL_MAX, installed: this.installed(), enabled: state.enabled, since: state.since, busy: this.busy,
+    var base = {homeShortcut: state.homeShortcut, homeLabelMax: catalog.HOME_LABEL_MAX, installed: this.installed(), enabled: state.enabled, since: state.since, busy: this.busy, lastControl: this.lastControl,
         error: this.lastError, failures: this.failures, apps: this.lastCatalog, fixTizenTube: state.fixTizenTube, autorunSwitchedOff: state.autorunWas === 1,
         entries: this.entries(), inputs: this.inputEntries()};
     return this.probe().then(function (p) {

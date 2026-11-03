@@ -6,6 +6,7 @@ on:
       - dock/src/**
       - dock/tests/**
       - dock/native-tests/**
+      - dock/control-tests/**
       - dock/Launcher.csproj
       - .github/workflows/build-combined-launcher.yml
 permissions:
@@ -37,11 +38,13 @@ jobs:
           dotnet build dock/Launcher.csproj --configuration Release -p:UseAppHost=false
           cp dock/bin/Release/netcoreapp3.1/tvlauncher-dotnet.dll app/native/dock/tvlauncher-dotnet.dll
           cp dock/bin/Release/netcoreapp3.1/tvlauncher-dotnet.runtimeconfig.json app/native/dock/tvlauncher-dotnet.runtimeconfig.json
+      - name: Headless launcher control and privilege boundary
+        run: sudo env DOTNET_ROLL_FORWARD=Major python3 dock/control-tests/test_control.py "$(command -v dotnet)" dock/bin/Release/netcoreapp3.1/tvlauncher-dotnet.dll
       - name: Commit the compiled launcher on the combined branch
         run: |
           git add app/native/dock/tvlauncher-dotnet.dll app/native/dock/tvlauncher-dotnet.runtimeconfig.json
           if git diff --cached --quiet; then exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'build: compile launcher with Ecore-owned Home close commands'
+          git commit -m 'build: compile launcher with root control command support'
           git push origin HEAD:refs/heads/combined/startup-return-launcher

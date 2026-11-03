@@ -1,5 +1,9 @@
 # Direct launcher remap checkpoint
 
+The first direct-write implementation was installed but did not deliver toggles
+on the S95C despite confirmed interception. The current correction and evidence
+are in [root-launcher-control-handoff.md](root-launcher-control-handoff.md).
+
 ## Objective and recovered state
 
 Preserve the combined startup, return-app, Home debounce, configurable shortcut,

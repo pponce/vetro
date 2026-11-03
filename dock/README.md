@@ -51,3 +51,21 @@ dotnet build -c Release Launcher.csproj   # targets netcoreapp3.1, the runtime o
 ```
 
 Vetro's package build copies the result into `app/native/dock/`.
+
+## Remote control
+
+Vetro's **Toggle Vetro launcher** remapper action uses the existing root adapter
+to run `dotnet tvlauncher-dotnet.dll --control toggle --dir /home/owner`.
+The command writes to the resident launcher's control pipe and returns immediately
+without opening a display, starting a second launcher, or sending Samsung Home.
+It also accepts `show` and `hide`.
+
+The client returns a `VETRO_LAUNCHER_CONTROL_V1` result with `sent`, `not-sent`, or
+`unknown`, a reason, and an errno. Exit codes are 0, 3, and 4 respectively.
+`sent` confirms the pipe accepted the command; it is not proof that a frame was
+displayed. Do not repeat an operation whose delivery is unknown.
+
+`control-tests/test_control.py` exercises the compiled TV executable with actual
+FIFOs, a private directory, separate Unix identities, missing readers, a full
+pipe, and invalid targets. CI runs this suite as root so the privilege boundary
+is tested as well as the command itself.

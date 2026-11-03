@@ -866,6 +866,13 @@ namespace Launcher
 
         private static int Main(string[] args)
         {
+            // Handle control before instance acquisition, logging, or EFL setup.
+            // An absent directory must not redirect a control write to /tmp.
+            if (Flag(args, "--control"))
+            {
+                string directory = Arg(args, "--dir") ?? Environment.GetEnvironmentVariable("TVLAUNCHER_DIR") ?? "/home/owner";
+                return ControlPipe.Send(Path.Combine(directory, "tvlauncher.fifo"), Arg(args, "--control"));
+            }
             if (Flag(args, "--get-home")) return GetHome();
             _perf = Flag(args, "--perf");
             _dir = ResolveDir(args);

@@ -20,9 +20,10 @@ Vetro starts. Listening temporarily pauses interception; resume interception
 before testing the shortcut. Other keys retain their native behavior unless
 you have mapped them separately.
 
-The action sends the TV's native Home key if the launcher is disabled, restarting,
-or its control channel is unavailable. The existing remote bridge releases the
-physical device when it disconnects. Turn off **Remote interception** to restore
+If the launcher is disabled, restarting, or confirms that it did not receive the
+command, the action sends the TV's native Home key. The Remapper status reports
+when this fallback is used. An unconfirmed command releases interception and
+shows an error; it is not repeated. Turn off **Remote interception** to restore
 the remote's normal key delivery.
 
 Interception applies to the selected physical device. Home commands from HDMI-CEC,
