@@ -35,6 +35,29 @@ var privacy = new (require('./privacy.js').Privacy)(agentExecute);
 var menuSettings = new (require('./menu-settings.js').Catalog)(agentExecute);
 var quickSettings = require('./quick-settings.js');
 var leftovers = new (require('./leftovers.js').Leftovers)(agentExecute);
+var StartupApp = require('./startup-app.js');
+var Foreground = require('./foreground-state.js');
+var appPowerReader = new (require('./power-state.js').Reader)();
+function launchVisibleApp(appId, guard) {
+    return agentExecute('/usr/bin/app_launcher -s ' + appId, 10000, guard).then(function (r) {
+        if (r.exit_code || r.timed_out) throw Error('TV did not confirm the launch command');
+    });
+}
+function foregroundSnapshot(insideLaunchGuard) {
+    // A guard already owns the queue slot. Queuing its read again would deadlock.
+    var request = insideLaunchGuard ? platform.execute(Foreground.COMMAND, 4000) : agentExecute(Foreground.COMMAND, 4000);
+    return request.then(function (r) {
+        if (r.exit_code || r.timed_out) throw Error('Foreground/source state unavailable');
+        return Foreground.parse(r.stdout);
+    });
+}
+var startupApp = new StartupApp.StartupApp({
+    readPower: appPowerReader.read.bind(appPowerReader),
+    ready: function () { return platform.status().agent.connected === true; },
+    inventory: function () { return inventory(true); },
+    presence: function () { return presence.read(); },
+    launch: launchVisibleApp, snapshot: foregroundSnapshot, activity: remoteActivity
+});
 // Components whose disabled flag Vetro may change: verified ACR set plus Quick Settings groups.
 var TOGGLE_IDS = debloat.VERIFIED_GLOBAL_IDS.concat(quickSettings.ALLOWED_IDS);
 // The package builder writes a non-default port into build-info.js (VETRO_PORT=... node build.cjs);
@@ -491,6 +514,26 @@ function handleLaunch(req,res) {readJsonBody(req,res,function(p){
         .then(function(r){serveJson(res,r);}).catch(function(e){serveJson(res,{error:e.message},503);});
 });}
 
+var choiceConfigBusy = {};
+function handleAppChoice(req, res, choice, label) {
+    if (req.method === 'GET') return serveJson(res, choice.status());
+    if (req.method !== 'POST') return serveJson(res, {error: 'Use GET or POST'}, 405);
+    readJsonBody(req, res, function (p) {
+        if (!StartupApp.validId(p.appId) || !Number.isInteger(p.expectedRevision) || p.expectedRevision < 0 ||
+            Object.keys(p).some(function (key) { return key !== 'appId' && key !== 'expectedRevision'; })) {
+            return serveJson(res, {error: 'Expected appId (or null) and expectedRevision'}, 400);
+        }
+        if (choiceConfigBusy[label]) return serveJson(res, {error: label + ' choice is being saved'}, 409);
+        choiceConfigBusy[label] = true;
+        (p.appId ? inventory(true) : Promise.resolve({apps: []})).then(function (data) {
+            if (data.registryError) throw Error('App registry unavailable; selection was not changed');
+            return choice.configure(p.appId, p.expectedRevision, data.apps);
+        }).then(function (data) { choiceConfigBusy[label] = false; serveJson(res, data); })
+            .catch(function (e) { choiceConfigBusy[label] = false; serveJson(res, {error: e.message}, 409); });
+    }, 2048);
+}
+function handleStartupApp(req, res) { return handleAppChoice(req, res, startupApp, 'Startup'); }
+
 function handleBlocklist(req, res) {
     var q = (req.url || '').split('?')[1] || '';
     var m = /(?:^|&)format=(hosts|domains)(?:&|$)/.exec(q);
@@ -677,6 +720,7 @@ function handleRemapRun(req,res){readJsonBody(req,res,function(p){
 
 http.createServer(function (req, res) {
     var url = (req.url || '/').split('?')[0];
+    if (url === '/startup-app') return handleStartupApp(req, res);
     if (url === '/diagnostics/download') {
         if (req.method !== 'GET') return serveJson(res, {error:'Use GET to download diagnostics'}, 405);
         return downloadDiagnostics(res);
@@ -725,7 +769,7 @@ http.createServer(function (req, res) {
     if (url === '/privacy') return privacy.read().then(function(d){serveJson(res,d)}).catch(function(e){serveJson(res,{error:e.message},503)});
     if (url === '/tv-menu') { var q=/[?&]id=([^&]+)/.exec(req.url||''), menuId=null; try { if(q)menuId=decodeURIComponent(q[1]); } catch(e) { return serveJson(res,{error:'Invalid menu ID'},400); } return (q?menuSettings.read(menuId):menuSettings.load()).then(function(d){serveJson(res,d)}).catch(function(e){serveJson(res,{error:e.message},503)}); }
     if (url === '/monitor') { var scope=/[?&]scope=([^&]*)/.exec(req.url||'');if(scope&&!/^(summary|full)$/.test(scope[1]))return serveJson(res,{error:'Unsupported monitor scope'},400);return monitor.snapshot(scope?scope[1]:'full').then(function(d){d.telemetry=readTelemetry();serveJson(res,d);}).catch(function(e){serveJson(res,{error:e.message},503);}); }
-    if (url === '/startup') return Promise.all([inventory(false),monitor.startup().catch(function(e){return {error:e.message};})]).then(function(d){serveJson(res,{apps:d[0].apps,services:Array.isArray(d[1])?d[1]:[],serviceError:d[1].error||null});});
+    if (url === '/startup') return Promise.all([inventory(false),monitor.startup().catch(function(e){return {error:e.message};})]).then(function(d){serveJson(res,{apps:d[0].apps,services:Array.isArray(d[1])?d[1]:[],serviceError:d[1].error||null,foreground:startupApp.status()});});
     if (url === '/telemetry') return serveJson(res, readTelemetry());
     if (url === '/leftovers') return handleLeftovers(req,res);
     if (url === '/status') return serveJson(res, Object.assign({}, platform.status(), {app: buildInfo}));
@@ -749,6 +793,8 @@ http.createServer(function (req, res) {
 });
 
 platform.start();
+// Explicit power transitions and actual Linux resume, never a root-agent reconnect alone.
+var startupAppTimer=setInterval(function(){startupApp.tick();},2000);if(startupAppTimer.unref)startupAppTimer.unref();
 // The dock is started again after a boot or a crash while its switch is on.
 // A short tick notices the moment the root agent connects, so after a boot the dock starts at once
 // instead of waiting for the next 10 s round.
