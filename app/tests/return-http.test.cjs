@@ -2,6 +2,8 @@
 const assert = require('assert').strict, path = require('path'), EventEmitter = require('events');
 const load = require('./service-harness.cjs');
 const Real = require('../service/return-app.js');
+const Navigation = require('../service/return-navigation.js');
+const snapshotCommand = '(' + Real.COMMAND + ') && { ' + Navigation.COMMAND + '; }';
 let selected = null, revision = 0, registryError = null, launchOptions;
 let tick = () => Promise.resolve(), nextDelay = 1000;
 const timers = [];
@@ -11,7 +13,7 @@ const service = load(path.resolve(__dirname, '..'), {setInterval: () => ({unref(
     './return-app.js': {...Real, ReturnApp: function (options) {
         launchOptions = options;
         this.status = () => ({appId: selected, revision}); this.tick = () => tick();
-        this.nextDelay = () => nextDelay;
+        this.nextDelay = () => nextDelay; this.noteActions = () => {};
         this.configure = (id, expected, apps) => {
             if (expected !== revision) throw Error('Return choice changed');
             if (id && !apps.some(a => a.appId === id)) throw Error('App unavailable');
@@ -36,6 +38,8 @@ function request(method, body, raw = false) {
     tick = () => new Promise(resolve => {release=resolve;});
     const count = timers.length, checking = first.callback();
     assert.equal(timers.length, count, 'no next poll while the current TV read is pending');
+    nextDelay = 150; service.context.noteReturnActions([{type:'key',key:'XF86Back'}]);
+    assert.equal(timers.length, count, 'Back during an active read does not start overlapping work');
     nextDelay = 300; release(); await checking;
     assert.equal(timers.length, count + 1);
     assert.equal(timers[timers.length - 1].delay, 300, 'an exit recheck does not wait for the idle interval');
@@ -69,7 +73,7 @@ function request(method, body, raw = false) {
     commands.length=0;
     service.context.platform.execute = async command => {
         commands.push(command);
-        return {exit_code:0,stdout: command===Real.COMMAND ? 'value = com.samsung.tv.csfs\nvalue = \nvalue = 0' : ''};
+        return {exit_code:0,stdout: command===snapshotCommand ? 'value = com.samsung.tv.csfs\nvalue = \nvalue = 0' : ''};
     };
     let timeout;
     try {
@@ -78,6 +82,6 @@ function request(method, body, raw = false) {
             new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('launch guard deadlocked the root queue')),1500);})
         ]);
     } finally { clearTimeout(timeout); }
-    assert.deepEqual(commands,[Real.COMMAND,'foreground-launch'],'fresh snapshot executes within the occupied queue slot');
+    assert.deepEqual(commands,[snapshotCommand,'foreground-launch'],'fresh snapshot executes within the occupied queue slot');
     console.log('PASS return API: adaptive polling without overlap, bounded body, one selected app, stale writes, readback, offline disable, and guarded command dispatch');
 })().catch(error => {console.error(error); process.exitCode=1;});

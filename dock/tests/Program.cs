@@ -68,6 +68,7 @@ namespace Launcher.Tests
         private static int Main()
         {
             HomeCloseGuardTests.Run();
+            NavigationStateTests.Run();
             T.Run("custom Home shortcut preserves its system position and Samsung fallback", () =>
             {
                 var result = Catalog.Parse("customhome\tAeroTizen\tsys:DclHome001.Home\tcom.samsung.tv.csfs\n");

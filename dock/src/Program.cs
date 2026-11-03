@@ -31,6 +31,7 @@ namespace Launcher
         private static readonly Efl.FdCb InputCb = OnInput;
 
         private static string _dir, _logPath, _pidPath, _fifoPath;
+        private static NavigationState _navigation;
         private static IntPtr _win, _anim, _idle, _fifoHandler;
         private static int _fifoFd = -1;
         private static double _lastFrame;
@@ -292,11 +293,23 @@ namespace Launcher
 
         // ------------------------------------------------------------------ show / hide
 
+        private static void NoteNavigation(string kind, string appId = null, int source = -1)
+        {
+            try { _navigation?.SetIntent(kind, appId, source); }
+            catch (Exception ex) { Log("navigation: " + ex.Message); }
+        }
+        private static void NoteVisibility(bool visible)
+        {
+            try { _navigation?.SetVisible(visible); }
+            catch (Exception ex) { Log("navigation: " + ex.Message); }
+        }
+
         private static void ShowDock()
         {
             // A dock that was closed from the inputs panel opens on the apps again.
             if (_ctl != _appsCtl && !_ctl.IsActive) ActivatePage(_appsCtl, _appsDock);
             if (!_ctl.Show()) { ResetIdle(); return; }
+            NoteVisibility(true);
             Efl.evas_object_show(_win);
             Efl.elm_win_activate(_win);
             StartClock();
@@ -308,7 +321,7 @@ namespace Launcher
         {
             CancelIdle();
             StopClock();
-            if (_ctl.Hide()) StartAnimator();
+            if (_ctl.Hide()) { NoteVisibility(false); StartAnimator(); }
         }
 
         private static void ApplyHome(HomeKeyAction action)
@@ -708,6 +721,7 @@ namespace Launcher
         /// </summary>
         private static void SwitchSource(AppEntry e)
         {
+            NoteNavigation("input", "org.tizen.tv-viewer", e.SourceType);
             IntPtr ac = IntPtr.Zero;
             try
             {
@@ -753,6 +767,7 @@ namespace Launcher
         {
             if (e.Key != null)
             {
+                NoteNavigation(e.Key == "XF86Home" ? "home" : "system");
                 _pendingKey = e;
                 Efl.ecore_timer_add(0.30, KeyTimerCb, IntPtr.Zero);
                 return;
@@ -762,6 +777,7 @@ namespace Launcher
 
         private static void LaunchApp(AppEntry e)
         {
+            NoteNavigation(e.AppId == "com.samsung.tv.csfs" ? "home" : e.AppId == "org.tizen.tv-viewer" ? "input" : "app", e.AppId);
             if (_guardApp != null && e.AppId == _guardApp)
             {
                 Log("guard: explicit Home selected; cancelling pending closes");
@@ -798,6 +814,7 @@ namespace Launcher
                     LaunchApp(new AppEntry("samsunghome", "Samsung Home", e.FallbackAppId, null));
                     return;
                 }
+                if (e.FallbackAppId != null) NoteNavigation(e.FallbackAppId == "org.tizen.tv-viewer" ? "input" : "app", e.FallbackAppId);
                 if (e.FallbackAppId != null && SendLaunch(e.FallbackAppId)) { Log("launch " + e.FallbackAppId + " (fallback)"); return; }
                 // Last resort: the platform's command line launcher.
                 if (Efl.ecore_exe_run("exec /usr/bin/app_launcher -s " + (e.FallbackAppId ?? e.AppId) + " >/dev/null 2>&1", IntPtr.Zero) == IntPtr.Zero)
@@ -883,6 +900,8 @@ namespace Launcher
             TrimLog();
 
             if (!AcquireInstance()) return 0;
+            _navigation = new NavigationState(Path.Combine(_dir, "tvlauncher.navigation"), Libc.getpid(), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            NoteVisibility(false);
             AppDomain.CurrentDomain.ProcessExit += (s, e) => CleanupFiles();
 
             try

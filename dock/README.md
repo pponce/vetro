@@ -76,3 +76,7 @@ displayed. Do not repeat an operation whose delivery is unknown.
 FIFOs, a private directory, separate Unix identities, missing readers, a full
 pipe, and invalid targets. CI runs this suite as root so the privilege boundary
 is tested as well as the command itself.
+
+## Navigation coordination
+
+The resident launcher atomically publishes `tvlauncher.navigation` next to its pid and control pipe before opening a tile or showing its window. The record includes a process incarnation, request sequence, timestamp, visibility, and app or input destination. The service reads this bounded record through its existing root adapter and ignores records without a matching live launcher pid. This lets automatic app return respect the user's selection and avoid interrupting a slow launch. Hiding the dock preserves the selected destination; a new process starts with no pending intent. No network endpoint or additional key grab is used.

@@ -57,6 +57,49 @@ function fixture() {
         assert.equal(quick.launches.length,0,'fast recheck cancels for '+cause);
         assert.equal(quick.app.nextDelay(),1000,'cancellation restores normal polling');
     }
+    // Known requests cancel an already queued return, and suppress slow launch gaps.
+    for (const kind of ['app','home','input','launcher']) {
+        const known=fixture();known.choose('home.app');
+        await known.tick('video.one',1000);await known.tick(HOME,1000);
+        const action=kind==='app'?{type:'launch',appId:'video.two'}:kind==='home'?{type:'key',key:'KEY_HOME'}:kind==='input'?{type:'key',key:'KEY_TV'}:{type:'launcher'};
+        known.app.noteActions([action]);
+        assert.equal(known.app.status().pending,false,kind+' cancels a waiting exit immediately');
+        await known.tick(undefined,300);await known.tick(undefined,1000);
+        assert.equal(known.launches.length,0,'do not interrupt known '+kind+' selection');
+        if (kind==='app') {
+            await known.tick('video.two',1000);await known.tick(HOME,1000);await known.tick(undefined,300);
+            assert.deepEqual(known.launches,['home.app'],'observed requested app rearms normal return');
+        }
+    }
+    const expire=fixture();expire.choose('home.app');await expire.tick('video.one',1000);
+    expire.app.noteActions([{type:'launch',appId:'video.two'}]);
+    for(let i=0;i<32;i++)await expire.tick(HOME,1000);
+    assert.equal(expire.launches.length,0,'expired/failed launch never causes a deferred return');
+    await expire.tick('video.one',1000);await expire.tick(HOME,1000);await expire.tick(undefined,300);
+    assert.equal(expire.launches.length,1,'a new observed app after expiry rearms return');
+    const native=fixture();native.choose('home.app');await native.tick('video.one',1000);
+    native.state.navigation={token:'instance:1',at:native.time,kind:'launcher',visible:true};
+    await native.tick(HOME,1000);await native.tick(undefined,300);
+    assert.equal(native.launches.length,0,'visible native dock takes priority even over fallback');
+    native.state.navigation={token:'instance:2',at:native.time,kind:'app',appId:'video.two',visible:false};
+    await native.tick(undefined,1000);await native.tick(undefined,1000);
+    assert.equal(native.launches.length,0,'native tile publishes its launch before leaving the dock');
+    await native.tick('video.two',1000);await native.tick(HOME,1000);await native.tick(undefined,300);
+    assert.equal(native.launches.length,1,'native selected app can return after exiting');
+    for(const source of ['service','native']) {
+        const race=fixture();race.choose('home.app');
+        race.beforeLaunch=async()=>{
+            if(source==='service')race.app.noteActions([{type:'launch',appId:'video.two'}]);
+            else race.state.navigation={token:'native:new',at:race.time,kind:'home',visible:false};
+        };
+        await race.exit();assert.equal(race.launches.length,0,source+' intent cancels inside occupied command slot');
+    }
+    const back=fixture();back.choose('home.app');await back.tick('video.one',1000);
+    back.app.noteActions([{type:'key',key:'XF86Back'}]);assert.equal(back.app.nextDelay(),150);
+    await back.tick(HOME,150);assert.equal(back.app.nextDelay(),300,'Back still requires confirmation');
+    await back.tick(undefined,300);assert.equal(back.launches.length,1);
+    await back.tick('home.app',2000);assert.equal(back.app.nextDelay(),1000,'brief Back checks stop');
+
     const tv=fixture();tv.choose('home.app');
     tv.app.snapshot=async()=>parse(typed(tv.state.full,tv.state.partial,tv.state.sourceType));
     await tv.exit();assert.deepEqual(tv.launches,['home.app'],'typed TV output detects the app exit and passes the launch guard');

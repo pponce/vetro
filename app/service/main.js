@@ -37,6 +37,7 @@ var quickSettings = require('./quick-settings.js');
 var leftovers = new (require('./leftovers.js').Leftovers)(agentExecute);
 var StartupApp = require('./startup-app.js');
 var ReturnApp = require('./return-app.js');
+var ReturnNavigation = require('./return-navigation.js');
 var appPowerReader = new (require('./power-state.js').Reader)();
 function launchVisibleApp(appId, guard) {
     return agentExecute('/usr/bin/app_launcher -s ' + appId, 10000, guard).then(function (r) {
@@ -58,13 +59,22 @@ var startupApp = new StartupApp.StartupApp({
     presence: function () { return presence.read(); },
     launch: launchVisibleApp, snapshot: foregroundSnapshot, activity: remoteActivity
 });
+function returnSnapshot(insideLaunchGuard) {
+    // Foreground failure must still reject even though the optional native read succeeds.
+    var command = '(' + ReturnApp.COMMAND + ') && { ' + ReturnNavigation.COMMAND + '; }';
+    var request = insideLaunchGuard ? platform.execute(command, 4000) : agentExecute(command, 4000);
+    return request.then(function (r) {
+        if (r.exit_code || r.timed_out) throw Error('Foreground/source state unavailable');
+        return Object.assign(ReturnApp.parse(r.stdout), {navigation:ReturnNavigation.parse(r.stdout)});
+    });
+}
 var returnApp = new ReturnApp.ReturnApp({
     readPower: appPowerReader.read.bind(appPowerReader),
     ready: function () { return platform.status().agent.connected === true; },
     paused: function () { return startupApp.status().pending; },
     inventory: function () { return inventory(true); },
     launch: launchVisibleApp,
-    snapshot: foregroundSnapshot
+    snapshot: returnSnapshot
 });
 // Components whose disabled flag Vetro may change: verified ACR set plus Quick Settings groups.
 var TOGGLE_IDS = debloat.VERIFIED_GLOBAL_IDS.concat(quickSettings.ALLOWED_IDS);
@@ -319,6 +329,7 @@ function handleControl(req, res) {
             return serveJson(res, { error: 'unknown key ' + key, keys: control.KEYS }, 400);
         }
         if(key!=='XF86PowerOff')noteRemoteActivity();
+        noteReturnActions([{type:'key',key:key}]);
         agentExecute(cmd, 10000).then(function (r) {
             serveJson(res, { ok: r.exit_code === 0, key: key, exit_code: r.exit_code, output: r.stdout, stderr: r.stderr });
         }).catch(function (e) {
@@ -518,6 +529,7 @@ function handleIcon(req,res) {
 }
 function handleLaunch(req,res) {readJsonBody(req,res,function(p){
     if(typeof p.appId!=='string'||! /^[A-Za-z0-9_.-]{1,120}$/.test(p.appId))return serveJson(res,{error:'invalid appId'},400);
+    noteReturnActions([{type:'launch',appId:p.appId}]);
     inventory(false).then(function(data){if(!data.apps.some(function(r){return r.appId===p.appId;}))throw new Error('application not installed');return runActions([{type:'launch',appId:p.appId}]);})
         .then(function(r){serveJson(res,r);}).catch(function(e){serveJson(res,{error:e.message},503);});
 });}
@@ -587,16 +599,23 @@ function handleDock(req, res) {
     });
 }
 
+function noteReturnActions(actions) {
+    returnApp.noteActions(actions);
+    scheduleReturnApp(true);
+}
 function runActions(actions) {
+    noteReturnActions(actions);
     if(actions.some(function(a){return a.type!=='key'||a.key!=='KEY_POWER';}))noteRemoteActivity();
     var sent=0, skipped=[],mqttSent=0, launcherFallback=null;
     return actions.reduce(function(chain,a){return chain.then(function(){
+        noteReturnActions([a]);
         var command;
         if(a.type==='mqtt'){bridge.publish(a.topic,a.payload);sent++;mqttSent++;return;}
         if(a.type==='launcher'){
             return Promise.resolve(dock.toggle()).then(function(delivered){
                 if(delivered){sent++;return;}
                 launcherFallback='Launcher unavailable; sent Samsung Home instead: '+(dock.lastControl&&dock.lastControl.reason||'unavailable');
+                noteReturnActions([{type:'key',key:'XF86Home'}]);
                 return agentExecute(control.injectCommand('XF86Home'),10000).then(function(r){if(r.exit_code||r.timed_out)throw Error('Native Home fallback failed');sent++;});
             });
         }
@@ -611,6 +630,7 @@ var remoteActivitySequence=0, remoteActivityAt=0;
 function noteRemoteActivity(event) {
     if(event && (event.action!=='down'||event.key==='XF86PowerOff'||event.code===116))return;
     remoteActivitySequence++;remoteActivityAt=Date.now();
+    if (event && event.decision !== 'blocked') noteReturnActions([{type:'key',key:event.key}]);
 }
 function remoteActivity() {
     var p=physical && physical.status().policy;
@@ -623,6 +643,7 @@ var physical=new PhysicalInput(agentExecute,function(event){
     if (homeRouting && homeRouting.busy) return;
     var actions=remap.resolve(remapStore.rules,'physical',String(event.code)), generation=inputGeneration;
     if(pendingActions>=8){inputPaused=true;physical.stop();inputError='input action queue exceeded';return;}
+    noteReturnActions(actions);
     pendingActions++;
     actionQueue=actionQueue.then(function(){return generation===inputGeneration?runActions(actions):{ok:true};}).then(function(r){inputError=r.launcherFallback||null;}).catch(function(e){inputError=e.message;inputPaused=true;physical.stop();}).finally(function(){pendingActions--;});
 });
@@ -807,9 +828,21 @@ platform.start();
 // With no selected app tick() returns without polling or sending a TV command.
 var startupAppTimer=setInterval(function(){startupApp.tick();},2000);if(startupAppTimer.unref)startupAppTimer.unref();
 // One read at a time; a possible exit schedules its own short settling check.
-function pollReturnApp() { return returnApp.tick().then(scheduleReturnApp, scheduleReturnApp); }
-function scheduleReturnApp() {
-    var timer=setTimeout(pollReturnApp,returnApp.nextDelay());if(timer.unref)timer.unref();
+var returnAppTimer = null, returnPolling = false, returnDue = 0;
+function pollReturnApp() {
+    returnAppTimer = null; returnPolling = true;
+    return returnApp.tick().then(done, done);
+    function done() { returnPolling = false; scheduleReturnApp(); }
+}
+function scheduleReturnApp(earlier) {
+    if (returnPolling) return;
+    var delay = returnApp.nextDelay(), due = Date.now() + delay;
+    if (returnAppTimer) {
+        if (earlier && returnDue <= due) return;
+        clearTimeout(returnAppTimer);
+    }
+    returnDue = due; returnAppTimer = setTimeout(pollReturnApp, delay);
+    if(returnAppTimer.unref)returnAppTimer.unref();
 }
 scheduleReturnApp();
 // The dock is started again after a boot or a crash while its switch is on.
@@ -826,6 +859,7 @@ var mqttLastTrigger=Object.create(null);
 var bridge = new MqttBridge(readTelemetry,function(m){
  var actions=remap.resolve(remapStore.rules,'mqtt',m.topic,m.payload.toString('utf8'));if(!actions.length)return;
  var now=Date.now();if(pendingActions>=8||now-(mqttLastTrigger[m.topic]||0)<500){bridge.event('throttled','Trigger rate limited: '+m.topic);return;}
+ noteReturnActions(actions);
  mqttLastTrigger[m.topic]=now;pendingActions++;
  actionQueue=actionQueue.then(function(){return runActions(actions);}).then(function(r){bridge.event('trigger','Rule executed: '+m.topic+' · '+r.sent+' action(s)');}).catch(function(e){bridge.event('error','MQTT rule: '+e.message);}).finally(function(){pendingActions--;});
 });
