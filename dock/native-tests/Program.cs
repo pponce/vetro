@@ -121,10 +121,10 @@ internal static class Program
             child.Start("exec /bin/sh -c 'exit 7'");
             int pid = child.Pid;
             Check(pid > 0, "A real child PID is returned");
-            Check(Efl.ecore_exe_run("exec /bin/true", IntPtr.Zero) != IntPtr.Zero, "Unrelated Ecore child starts");
+            Check(Efl.ecore_exe_run("/bin/true", IntPtr.Zero) != IntPtr.Zero, "Unrelated Ecore child starts");
             ChildExit failed = Complete(child);
             Check(failed.Pid == pid && failed.Code == 7 && failed.Signal == 0, "Read the correct process and exit status");
-            child.Start("exec /bin/sleep 10");
+            child.Start("/bin/sleep 10");
             child.Kill();
             Check(child.IsRunning, "Sending a kill is not proof of exit");
             ChildExit killed = Complete(child);
