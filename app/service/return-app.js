@@ -3,6 +3,7 @@
 var fs = require('fs');
 var Power = require('./power-state.js');
 var Choice = require('./startup-app.js');
+var Navigation = require('./return-navigation.js');
 var FILE = '/opt/usr/home/owner/share/vetro-return-app.json';
 var Foreground = require('./foreground-state.js');
 var COMMAND = Foreground.COMMAND, parse = Foreground.parse;
@@ -36,6 +37,8 @@ function ReturnApp(options) {
     this.snapshot = options.snapshot;
     this.inventory = options.inventory;
     this.launch = options.launch;
+    this.navigation = new Navigation.Navigation(this.now);
+    this.quickUntil = 0;
     this.config = {version: 1, appId: null, revision: 0};
     this.previous = null; this.lastClock = null; this.lastAt = null;
     this.pending = null; this.busy = false; this.error = null; this.lastResult = null;
@@ -47,15 +50,23 @@ function ReturnApp(options) {
 }
 ReturnApp.prototype.status = function () {
     return {appId: this.config.appId, revision: this.config.revision, pending: !!this.pending,
-        lastResult: this.lastResult, error: this.error};
+        lastResult: this.lastResult, error: this.error, navigation: this.navigation.intent};
 };
 ReturnApp.prototype.nextDelay = function () {
     // Recheck a possible exit as soon as it settles, without waiting for the idle poll.
     var event = this.pending;
     if (event && event.stage === 'waiting') return Math.max(0, SETTLE_MS - (this.now() - event.started));
-    return POLL_MS;
+    return this.now() < this.quickUntil ? 150 : POLL_MS;
 };
-ReturnApp.prototype.reset = function () { this.previous = null; this.lastClock = null; this.lastAt = null; this.pending = null; };
+ReturnApp.prototype.noteActions = function (actions) {
+    var self = this;
+    actions.forEach(function (action) {
+        var intent = Navigation.actionIntent(action);
+        if (intent) { self.navigation.note(intent); self.pending = null; self.previous = null; }
+        if (action.type === 'key' && /^(KEY_RETURN|KEY_EXIT|XF86Back|XF86Exit)$/.test(action.key)) self.quickUntil = self.now() + 2000;
+    });
+};
+ReturnApp.prototype.reset = function () { this.navigation.reset(); this.quickUntil = 0; this.previous = null; this.lastClock = null; this.lastAt = null; this.pending = null; };
 ReturnApp.prototype.configure = function (id, expected, rows) {
     if (!Choice.validId(id) || !Number.isInteger(expected)) throw Error('Invalid return selection');
     if (expected !== this.config.revision) throw Error('Return choice changed. Refresh and try again.');
@@ -88,6 +99,11 @@ ReturnApp.prototype.tick = function () {
                 typeof clock.suspendOffset === 'number' && typeof self.lastClock.suspendOffset === 'number' && clock.suspendOffset - self.lastClock.suspendOffset > 1;
             if (discontinuity) { old = null; self.pending = null; }
             self.previous = state; self.lastClock = clock; self.lastAt = now; self.error = null;
+            if (self.navigation.observe(state)) {
+                self.pending = null;
+                if (self.navigation.discardBaseline) self.previous = null;
+                return;
+            }
             var event = self.pending;
             if (event && event.stage === 'verifying') {
                 if (state.full === event.appId || state.partial === event.appId) self.finish('Return app confirmed onscreen');
@@ -115,6 +131,7 @@ ReturnApp.prototype.tick = function () {
                         if (power !== 'on' || !self.current(event)) return false;
                         // This read runs inside the existing command-queue slot, not behind it.
                         return self.snapshot(true).then(function (fresh) {
+                            if (self.navigation.observe(fresh)) { self.pending = null; return false; }
                             var currentClock = self.clock();
                             return self.current(event) && fallback(fresh) && fresh.sourceType === event.sourceType &&
                                 currentClock.bootId === event.bootId && self.now() - event.started <= EXPIRE_MS &&
