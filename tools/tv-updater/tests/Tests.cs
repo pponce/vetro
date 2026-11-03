@@ -12,7 +12,7 @@ using VetroUpdate;
 internal static class Tests
 {
     private static int count;
-    private const string Duid = "FAKE-TV-DUID-1234567890";
+    private const string Duid = "TESTTV1234567";
     private static readonly string Before = new string('b', 40), After = new string('a', 40);
     private static void Assert(bool value, string message) { if (!value) throw new Exception(message); }
     private static void Throws(Action operation, string message)
@@ -126,6 +126,21 @@ internal static class Tests
 
     public static int Main()
     {
+        Test("DUID validation matches the signing tool's 10-64 alphanumeric format", () => {
+            foreach (string value in new[] { "TEST123456", Duid, new string('A', 64) }) {
+                Assert(Worker.ParseDuid(value) == value, "Valid DUID length " + value.Length);
+                Assert(Worker.ParseDuid("\r\n  " + value + " \r\n") == value, "Whitespace normalization");
+                Assert(Worker.ParseDuid(value + "\r\nignored second line") == value, "First-line behavior");
+            }
+            foreach (string value in new[] { "", "TEST12345", new string('A', 65), "DUID: " + Duid,
+                "error: command failed", "invalid-command", "No_such_command", Duid + "\0" }) {
+                try { Worker.ParseDuid(value); throw new Exception("Invalid DUID accepted"); }
+                catch (IOException error) {
+                    Assert(error.Message.Contains("first-line length="), "Length-only diagnostic");
+                    if (value.Length > 0) Assert(!error.Message.Contains(value), "Raw response is not logged");
+                }
+            }
+        });
         Test("probe and installed certificate", () => {
             using (var f = new Fixture()) {
                 var info = f.Worker.Probe(); Assert(info.duid == Duid && info.uid == 0 && info.sourceRevision == Before, "Probe identity");

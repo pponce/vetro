@@ -100,16 +100,27 @@ namespace VetroUpdate
                 launcherSha256 = Hash(File.ReadAllBytes(Path.Combine(root, "native/dock/tvlauncher-dotnet.dll"))) };
         }
 
+        internal static string ParseDuid(string output)
+        {
+            string response = (output ?? string.Empty).Trim();
+            string duid = response.Split('\n')[0].Trim();
+            // Match Apps2Samsung.Core/Models/TizenDuid.cs: Samsung IDs can be
+            // shorter than 16 characters. Do not accept error text or labels.
+            bool alphanumeric = Regex.IsMatch(duid, @"\A[A-Za-z0-9]+\z");
+            if (duid.Length < 10 || duid.Length > 64 || !alphanumeric)
+                throw new IOException("Loopback SDB did not return a usable TV DUID"
+                    + " (first-line length=" + duid.Length + ", alphanumeric=" + alphanumeric
+                    + ", response length=" + response.Length + "; expected 10-64 letters/digits)");
+            return duid;
+        }
+
         internal Installed Probe()
         {
             if (uid() != 0) throw new IOException("Updater must be started through Vetro root");
             var info = ReadInstalled();
             using (var session = connect())
             {
-                string duid = session.Execute("shell:0 getduid", 8000).Trim().Split('\n')[0].Trim();
-                if (!Regex.IsMatch(duid, @"\A[A-Za-z0-9+/=._:#-]{16,256}\z"))
-                    throw new IOException("Loopback SDB did not return a usable TV DUID");
-                info.duid = duid;
+                info.duid = ParseDuid(session.Execute("shell:0 getduid", 8000));
             }
             info.uid = uid(); info.updateLocked = Directory.Exists(LockPath) || File.Exists(LockPath);
             info.runtime = Environment.Version.ToString();
