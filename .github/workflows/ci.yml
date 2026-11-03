@@ -18,6 +18,10 @@ jobs:
         run: node rooting/tests/run.cjs
       - name: Diagnostic parser tests
         run: python3 .github/scripts/test_parse_log.py
+      - name: Combined installer checks
+        run: |
+          python3 tools/tests/test_install_combined.py
+          node tools/tests/tv-update-worker.test.cjs
       - name: Release hygiene and architecture
         run: python3 .github/scripts/audit_release.py
   launcher:
@@ -34,3 +38,37 @@ jobs:
         run: dotnet run --project dock/tests/Launcher.Tests.csproj --configuration Release
       - name: Compile TV launcher
         run: dotnet build dock/Launcher.csproj --configuration Release -p:UseAppHost=false
+  combined_package:
+    if: github.repository == 'pponce/vetro' && github.ref == 'refs/heads/combined/startup-return-launcher'
+    needs: [check, launcher]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build full unsigned combined package
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const app = require('./app/build.cjs');
+          const integration = require('./rooting/build.cjs');
+          const files = integration.collectIntegration();
+          const names = files.map(f => decodeURIComponent(f.uri));
+          for (const name of ['service/startup-app.js', 'service/return-app.js', 'service/root-agent.js', 'native/dock/tvlauncher-dotnet.dll']) {
+            if (!names.includes(name)) throw Error('Missing combined package file: ' + name);
+          }
+          fs.mkdirSync('dist', {recursive:true});
+          fs.writeFileSync('dist/vetro-combined-unsigned.wgt', app.zip(files));
+          NODE
+          git rev-parse HEAD > dist/SOURCE_COMMIT.txt
+          sha256sum dist/vetro-combined-unsigned.wgt > dist/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vetro-combined-unsigned
+          path: |
+            dist/vetro-combined-unsigned.wgt
+            dist/SOURCE_COMMIT.txt
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
