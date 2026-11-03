@@ -8,7 +8,7 @@ const assert=require('assert').strict,fixture=require('./app-access-fixture.cjs'
  const remote={appId:'garage.app',sendMessage(data,p){received.push({p,data:JSON.parse(data[0].value)});}};
  ports[APP_PORT].callback(msg('1','apps.list'),remote);await new Promise(r=>setImmediate(r));assert.equal(received.pop().data.ok,true);
  ports[APP_PORT].callback(msg('2','apps.list',{appId:'garage.app'}),{...remote,appId:'imposter.app'});await new Promise(r=>setImmediate(r));assert.equal(received.pop().data.ok,false);
- for(const r of [{...remote,appId:'garage.app',isTrusted:true},{...remote,appId:'vetrotvapp.app',isTrusted:false},null])ports[WIDGET_PORT].callback(msg('3','widget.connect'),r);assert.equal(issuing,0);
+ for(const r of [{...remote,appId:'garage.app',isTrusted:true},{...remote,appId:'garage.app',isTrusted:false},{...remote,appId:'vetrotvapp.app',isTrusted:null},null])ports[WIDGET_PORT].callback(msg('3','widget.connect'),r);assert.equal(issuing,0);
  ports[WIDGET_PORT].callback(msg('4','widget.connect'),{...remote,appId:'vetrotvapp.app',isTrusted:true});assert.equal(issuing,1);assert.equal(received.pop().data.result.token,'secret');
  const forged=JSON.parse(msg('5','apps.list')[0].value);forged.appId='garage.app';ports[APP_PORT].callback([{key:'json',value:JSON.stringify(forged)}],remote);assert.equal(received.length,0);
  ports[APP_PORT].callback([{key:'json',value:'x'.repeat(4097)}],remote);assert.equal(received.length,0);

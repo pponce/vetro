@@ -4,7 +4,7 @@
 var ERROR_NAMES = ['Error','TypeError','SyntaxError','SecurityError','NotFoundError',
     'InvalidAccessError','InvalidValuesError','TypeMismatchError','QuotaExceededError',
     'NotSupportedError','UnknownError','IOError','InvalidStateError'];
-var STAGES = ['not-started','port-create','listener-add','listening','received',
+var STAGES = ['not-started','port-create','reply-port-create','listener-add','listening','received',
     'sender-rejected','frame-rejected','method-rejected','accepted','session-issued',
     'session-error','reply-sent','reply-error','stopped'];
 function errorName(error) {
@@ -42,7 +42,7 @@ Diagnostics.prototype.widget=function(stage,error) {
     var w=this.state.widget;
     w.stage=stage;w.error=error?errorName(error):null;
     if(stage==='port-create'){w.portCreated=false;w.listenerRegistered=false;}
-    if(stage==='listener-add')w.portCreated=true;
+    if(stage==='reply-port-create'||stage==='listener-add')w.portCreated=true;
     if(stage==='listening')w.listenerRegistered=true;
     if(stage==='stopped')w.listenerRegistered=false;
     var counter={'received':'received','sender-rejected':'rejected','frame-rejected':'rejected',

@@ -9,14 +9,18 @@
         this.tizen=options.tizen || (typeof tizen !== 'undefined' ? tizen : null);
         this.trusted=options.widget===true;
         this.port=this.trusted?'VETRO_WIDGET_V1':'VETRO_APP_ACCESS_V1';
+        this.replyPort=this.trusted?'VETRO_WIDGET_REPLY_V1':this.port;
         this.timeout=options.timeout||15000;
         this.pending=Object.create(null);this.sequence=0;this.closed=false;
         var self=this,mp=this.tizen&&this.tizen.messageport;
         if(!mp)throw Error('Tizen MessagePort is unavailable');
         var name='VETRO_REPLY_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,12);
-        this.local=mp[this.trusted?'requestTrustedLocalMessagePort':'requestLocalMessagePort'](name);
+        // Authenticate the request destination through the trusted receiver. Use
+        // regular return ports; response identity still comes from Tizen metadata.
+        this.local=mp.requestLocalMessagePort(name);
+        if(this.trusted&&this.local.isTrusted!==false)throw Error('Widget reply port unavailable');
         this.listener=this.local.addMessagePortListener(function(data,remote){
-            if(!remote||remote.appId!=='vetrotvapp.svc'||remote.messagePortName!==self.port||self.trusted&&remote.isTrusted!==true)return;
+            if(!remote||remote.appId!=='vetrotvapp.svc'||remote.messagePortName!==self.replyPort||self.trusted&&remote.isTrusted!==false)return;
             var p;
             try {
                 if(!Array.isArray(data)||data.length!==1||data[0].key!=='json'||typeof data[0].value!=='string'||data[0].value.length>16384)return;
@@ -38,6 +42,7 @@
                 data=JSON.stringify({version:1,id:id,method:method,params:params||{}});
                 if(encodeURIComponent(data).replace(/%[A-F\d]{2}/g,'x').length>4096)throw Error('Request is too large');
                 remote=self.tizen.messageport[self.trusted?'requestTrustedRemoteMessagePort':'requestRemoteMessagePort']('vetrotvapp.svc',self.port);
+                if(self.trusted&&(!remote||remote.appId!=='vetrotvapp.svc'||remote.messagePortName!==self.port||remote.isTrusted!==true))throw Error('Trusted Vetro service unavailable');
                 self.pending[id]={resolve:resolve,reject:reject,timer:setTimeout(function(){
                     delete self.pending[id];var e=Error('No confirmation from Vetro. Read the current state before retrying.');e.code='timeout';e.submitted=null;reject(e);
                 },self.timeout)};

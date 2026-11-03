@@ -14,20 +14,20 @@ const f=fixture();
 try {
     const auth=new Auth({file:path.join(f.dir,'owner.json')}),d=new Diagnostics({sourceRevision:revision,sourceDirty:false});
     const callbacks={};let setupFailure=false,sendFailure=false,response;
-    function port(name) {return {addMessagePortListener(callback){if(setupFailure&&name===ports.WIDGET_PORT)throw Object.assign(Error('SECRET_SETUP_DETAIL'),{name:'SecurityError'});callbacks[name]=callback;return 0;},removeMessagePortListener(id){assert.equal(id,0);delete callbacks[name];}};}
-    f.tizen.messageport={requestLocalMessagePort:port,requestTrustedLocalMessagePort:port};
+    function port(name,trusted) {return {messagePortName:name,isTrusted:trusted,addMessagePortListener(callback){if(setupFailure&&name===ports.WIDGET_PORT)throw Object.assign(Error('SECRET_SETUP_DETAIL'),{name:'SecurityError'});callbacks[name]=callback;return 0;},removeMessagePortListener(id){assert.equal(id,0);delete callbacks[name];}};}
+    f.tizen.messageport={requestLocalMessagePort:n=>port(n,false),requestTrustedLocalMessagePort:n=>port(n,true)};
     const handle=ports.start(f.tizen,f.access,auth,d);
     assert.equal(handle.ready,true);assert.equal(d.snapshot().widget.listenerRegistered,true);
     function send(data,remote={}) {
         response=undefined;
-        callbacks[ports.WIDGET_PORT](data,{appId:'vetrotvapp.app',isTrusted:true,sendMessage(items){if(sendFailure)throw Object.assign(Error('SECRET_NATIVE_DETAIL'),{name:'UnknownError'});response=JSON.parse(items[0].value);},...remote});
+        callbacks[ports.WIDGET_PORT](data,{appId:'vetrotvapp.app',isTrusted:false,sendMessage(items){if(sendFailure)throw Object.assign(Error('SECRET_NATIVE_DETAIL'),{name:'UnknownError'});response=JSON.parse(items[0].value);},...remote});
     }
     const frame=(method='widget.connect',params={})=>[{key:'json',value:JSON.stringify({version:1,id:'private-request-id',method,params})}];
     send(frame());assert.equal(response.ok,true);const token=response.result.token;
     assert.equal(d.snapshot().widget.received,1);assert.equal(d.snapshot().widget.sessionsIssued,1);
     assert.equal(d.snapshot().widget.repliesSent,1);assert.equal(d.snapshot().widget.sender.expectedApp,true);
     send(frame(),{appId:'private.other.app'});assert.equal(response,undefined);
-    send(frame(),{isTrusted:false});assert.equal(response,undefined);
+    send(frame(),{isTrusted:undefined});assert.equal(response,undefined);
     assert.equal(auth.widgets.length,1,'rejected identities never receive a credential');
     send([{key:'json',value:'SECRET_MALFORMED_PAYLOAD'}]);assert.equal(response,undefined);
     assert.equal(d.snapshot().widget.stage,'frame-rejected');
@@ -76,8 +76,8 @@ try {
 for(const enabled of [false,true]) {
     const f=fixture(),callbacks={};
     try {
-        function port(name){return {addMessagePortListener(fn){callbacks[name]=fn;return 0;},removeMessagePortListener(){delete callbacks[name];}};}
-        f.tizen.messageport={requestLocalMessagePort:port,requestTrustedLocalMessagePort:port};
+        function port(name,trusted){return {messagePortName:name,isTrusted:trusted,addMessagePortListener(fn){callbacks[name]=fn;return 0;},removeMessagePortListener(){delete callbacks[name];}};}
+        f.tizen.messageport={requestLocalMessagePort:n=>port(n,false),requestTrustedLocalMessagePort:n=>port(n,true)};
         const service=require('./service-harness.cjs')(path.resolve(__dirname,'..'),{tizen:f.tizen,
             dependencies:{'./build-info.js':{version:'0.3.5',sourceRevision:revision,sourceDirty:false,connectionDiagnostics:enabled}},setInterval:()=>({unref(){}})});
         let status,body;

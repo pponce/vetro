@@ -18,10 +18,11 @@ function setup(options = {}) {
   };
   f.tizen.package.setPackageInfoEventListener = () => events.push('watch');
   f.tizen.package.unsetPackageInfoEventListener = () => events.push('unwatch');
-  function port(name) {
+  function port(name, trusted) {
     events.push('port:' + name);
     if (name === WIDGET_PORT && failWidget) throw Error('Native API not ready');
     return {
+      messagePortName: name, isTrusted: trusted,
       addMessagePortListener(fn) {
         assert.equal(listeners.has(name), false, 'one listener per port');
         listeners.set(name, fn);
@@ -33,7 +34,7 @@ function setup(options = {}) {
       }
     };
   }
-  f.tizen.messageport = {requestLocalMessagePort: port, requestTrustedLocalMessagePort: port};
+  f.tizen.messageport = {requestLocalMessagePort: name => port(name, false), requestTrustedLocalMessagePort: name => port(name, true)};
   const service = loadService(path.resolve(__dirname, '..'), {
     tizen: options.lateRuntime ? undefined : f.tizen, start: false,
     setTimeout: () => ({unref() {}}), setInterval: () => ({unref() {}})
@@ -44,7 +45,7 @@ function setup(options = {}) {
       {writeHead(code) {status = code;}, end() {}}, '/status');
     return status;
   }
-  function widget(appId = 'vetrotvapp.app', trusted = true) {
+  function widget(appId = 'vetrotvapp.app', trusted = false) {
     let response;
     listeners.get(WIDGET_PORT)([{key: 'json', value: JSON.stringify({version: 1, id: 'lifecycle', method: 'widget.connect', params: {}})}],
       {appId, isTrusted: trusted, sendMessage(data) {response = JSON.parse(data[0].value);}});
@@ -66,14 +67,14 @@ function setup(options = {}) {
     assert.equal(s.pending.length, 1, 'coalesce overlapping lifecycle callbacks');
     assert.equal(s.listeners.size, 0, 'wait for private storage before opening ports');
     s.pending.shift().ok();
-    assert.equal(s.listeners.size, 2);
+    assert.equal(s.listeners.size, 3);
     assert.equal(s.context.appIdentity.tizen, s.f.tizen);
     assert.equal(s.context.appPorts.ready, true);
     assert.equal(s.gate(), 401, 'an unpaired HTTP caller is still refused');
     assert.equal(s.widget('imposter.app'), undefined);
-    assert.equal(s.widget('vetrotvapp.app', false), undefined);
+    assert.equal(s.widget('vetrotvapp.app', null), undefined);
     assert.equal(s.context.auth.widgets.length, 0);
-    assert.equal(s.widget().ok, true, 'trusted widget can bootstrap after startup');
+    assert.equal(s.widget().ok, true, 'widget can bootstrap through a trusted receiver with a regular reply port');
     const before = s.events.slice();
     s.lifecycle.onRequest(); s.lifecycle.onStart();
     assert.deepEqual(s.events, before, 'healthy callbacks do not reopen ports or reread grants');
@@ -81,7 +82,7 @@ function setup(options = {}) {
     assert.equal(s.listeners.size, 0);
     assert.equal(s.events.filter(e => e === 'unwatch').length, 1);
     s.lifecycle.onRequest();
-    assert.equal(s.listeners.size, 2, 'a subsequent lifecycle start can register again');
+    assert.equal(s.listeners.size, 3, 'a subsequent lifecycle start can register again');
     assert.equal(s.events.filter(e => e === 'storage').length, 1);
   } finally {s.close();}
 }
@@ -96,7 +97,7 @@ function setup(options = {}) {
     assert.equal(s.listeners.size, 0);
     assert.equal(s.gate(), 503);
     s.pending.shift().ok();
-    assert.equal(s.listeners.size, 2);
+    assert.equal(s.listeners.size, 3);
     assert.equal(s.widget().ok, true);
   } finally {s.close();}
 }
@@ -121,7 +122,7 @@ function setup(options = {}) {
     s.allowWidget(); s.lifecycle.onRequest();
     assert.equal(s.events.filter(e => e === 'unwatch').length, 1, 'clean partial setup before retry');
     assert.equal(s.context.appPorts.ready, true);
-    assert.equal(s.listeners.size, 2);
+    assert.equal(s.listeners.size, 3);
     assert.equal(s.widget().ok, true);
     assert.equal(s.events.filter(e => e === 'storage').length, 1);
   } finally {s.close();}

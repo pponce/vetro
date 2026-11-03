@@ -3,15 +3,15 @@ const assert=require('assert').strict,http=require('http'),path=require('path');
 const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-ports');
 (async()=>{const f=fixture(),callbacks={};let server;
  try{
-  function port(name){return {addMessagePortListener(fn){callbacks[name]=fn;return 1;},removeMessagePortListener(){}};}
-  f.tizen.messageport={requestLocalMessagePort:port,requestTrustedLocalMessagePort:port};
+  function port(name,trusted){return {messagePortName:name,isTrusted:trusted,addMessagePortListener(fn){callbacks[name]=fn;return 1;},removeMessagePortListener(){}};}
+  f.tizen.messageport={requestLocalMessagePort:n=>port(n,false),requestTrustedLocalMessagePort:n=>port(n,true)};
   const {context:c,router}=require('./service-harness.cjs')(path.resolve(__dirname,'..'),{tizen:f.tizen,setInterval:()=>({unref(){}})});
   c.inventory=async()=>({apps:f.rows});
   server=http.createServer(router);await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
   async function api(route,body,headers={}){const r=await fetch(base+route,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...headers},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json()};}
   function ipc(port,appId,method,params={},trusted=false){return new Promise(resolve=>callbacks[port]([{key:'json',value:JSON.stringify({version:1,id:'http_test',method,params})}],{appId,isTrusted:trusted,sendMessage(data){resolve(JSON.parse(data[0].value));}}));}
   for(const route of ['/startup-app','/return-app','/dock','/remap','/app-access','/exec','/probe','/screen','/status','/monitor','/control','/install','/diagnostics/download'])assert.equal((await api(route)).status,401,route);
-  const widget=await ipc(ports.WIDGET_PORT,'vetrotvapp.app','widget.connect',{},true);assert.equal(widget.ok,true);const wh={'X-Vetro-Widget':widget.result.token,Origin:'null'};
+  const widget=await ipc(ports.WIDGET_PORT,'vetrotvapp.app','widget.connect',{},false);assert.equal(widget.ok,true);const wh={'X-Vetro-Widget':widget.result.token,Origin:'null'};
   assert.equal((await api('/app-access',undefined,wh)).status,403);assert.equal((await api('/status',undefined,wh)).status,200);
   const pairing=await api('/auth/pair',{name:'fixture'});assert.equal(pairing.status,200);
   const pending=await api('/auth/pending',undefined,wh);const confirmation=await api('/auth/confirm',{id:pairing.body.id,code:pending.body.code});assert.equal(confirmation.status,200);

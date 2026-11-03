@@ -78,7 +78,11 @@ Handle `disabled`, `unavailable`, `permission_denied`, `identity_changed`, `not_
 
 Tizen supplies the sender app ID through the callback's `RemoteMessagePort`; Vetro resolves that ID to its installed package and author signing certificate. Grants bind the app ID, package ID, signer fingerprint, version and installation timestamp. A matching name, a supplied app ID, a loopback connection, or an `Origin: null` header is insufficient.
 
-The separate `VETRO_WIDGET_V1` trusted port verifies the same signer and the exact Vetro widget ID. It supplies only an ephemeral credential for status reads, probe submission and the on-TV pairing code. It cannot call administrative or scoped app controls.
+The TV screen sends its requests to the trusted `VETRO_WIDGET_V1` receiver. Tizen enforces the matching author certificate at that receiver, and Vetro also requires the exact sender ID `vetrotvapp.app` from Tizen's callback metadata. A request without sender metadata is refused.
+
+The screen uses a regular reply port. The callback's `remote.isTrusted` describes that reply port, not the authenticity of the sender. Service replies carry `vetrotvapp.svc` and `VETRO_WIDGET_REPLY_V1` as their native source identity; the screen checks both before accepting a pending response. The service also supports clients with trusted reply ports, replying from `VETRO_WIDGET_V1` for those clients. Neither side accepts an identity supplied in message data.
+
+This channel supplies only an ephemeral credential for status reads, probe submission and the on-TV pairing code. It cannot call administrative or scoped app controls.
 
 This boundary assumes the Tizen package manager and MessagePort metadata are trustworthy. It does not sandbox apps that already have root, replace Samsung's OS isolation, secure unrelated root services, or encrypt the owner's HTTP connection. Keep the administrative interface on a trusted network. Firmware-specific identity behavior and TV-side operations still need hardware acceptance testing before release.
 
