@@ -29,3 +29,25 @@ the remote's normal key delivery.
 
 Interception applies to the selected physical device. Home commands from HDMI-CEC,
 network remotes, or other input devices are not covered by that selection.
+
+## Open an installed app with Home
+
+The **Open app** action can assign Home to an installed launcher or another app.
+The **App to open** list comes from the TV's installed, enabled apps with a visible
+app entry. If an app was recently installed, refresh the app list in **Task manager**.
+
+1. In **Remapper**, capture Home or enter its previously captured key code.
+2. Choose **Action → Open app**.
+3. Select the app in **App to open**, then choose **Save shortcut**.
+4. Keep **Remote interception** enabled for the physical device that supplies Home.
+
+Saving a shortcut replaces the existing physical shortcut for that key. Selecting
+an app therefore replaces **Toggle Vetro launcher** as that key's action.
+When using an app as the Home screen, turn off **Vetro launcher** in the Launcher
+tab. Disable the selected app's own Home takeover or automatic return behavior
+so Vetro controls the physical Home press. For AeroTizen builds with **App mode**,
+keep that mode on.
+
+To use Vetro's launcher again, enable **Vetro launcher** and save **Toggle Vetro
+launcher** for the same Home key. Keep Remote interception enabled. An app shortcut
+opens the selected app; it does not toggle that app open and closed.
