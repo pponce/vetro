@@ -1,0 +1,42 @@
+name: Build reviewed launcher
+on:
+  push:
+    branches: [build/pr-home-guard-completion]
+    paths:
+      - dock/**
+      - .github/workflows/build-pr-launcher.yml
+permissions:
+  contents: read
+jobs:
+  launcher:
+    if: github.repository == 'pponce/vetro'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: '10.0.100'
+      - name: Install Ecore test runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libecore1
+      - name: Test and compile launcher
+        env:
+          ECORE_NO_SYSTEM_MODULES: '1'
+        run: |
+          dotnet run --project dock/tests/Launcher.Tests.csproj --configuration Release
+          dotnet run --project dock/native-tests/Launcher.NativeTests.csproj --configuration Release
+          dotnet build dock/Launcher.csproj --configuration Release -p:UseAppHost=false
+          cp dock/bin/Release/netcoreapp3.1/tvlauncher-dotnet.dll app/native/dock/tvlauncher-dotnet.dll
+          cp dock/bin/Release/netcoreapp3.1/tvlauncher-dotnet.runtimeconfig.json app/native/dock/tvlauncher-dotnet.runtimeconfig.json
+      - name: Save compiled launcher on the build branch
+        run: |
+          git add app/native/dock/tvlauncher-dotnet.dll app/native/dock/tvlauncher-dotnet.runtimeconfig.json
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'build: compile reviewed Home guard launcher'
+          git push origin HEAD:refs/heads/build/pr-home-guard-completion
