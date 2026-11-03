@@ -33,6 +33,8 @@ The TV must remain on during the update. The Vetro dashboard can disconnect whil
 
 The existing app is updated in place. The script does not uninstall it, replace its signing identity, create certificates, change Developer Mode/Host PC IP, change startup or return selections, or make configuration backups. New foreground choices default to off if no previous choice is saved.
 
+The TV helper returns one marked, versioned result separately from runtime messages. The installer validates the operation and required identity fields before proceeding. Missing, duplicate, malformed, or failed results stop the update; surrounding runtime output is not treated as result data.
+
 ## If the connection is interrupted
 
 A local attempt record and a TV-side lock prevent duplicate installation. Rerunning the same installation block resumes verification of an unresolved attempt. It does not blindly send another install. Cleanup waits for the detached helper to finish, even if the new Vetro service starts first. Reports stay under the existing `vetro-install/combined-updates` directory; they are not uploaded anywhere.
@@ -41,6 +43,6 @@ If the helper proves that installation was never submitted, the report says so a
 
 ## Validation limits
 
-Automated checks cover the .NET helper's source/file hashes, fragmented SDB packets, zero-sender response variants, protocol failures, transfer integrity, certificate selection, package identity, process detachment, one-time dispatch, lost acknowledgements, revision verification, and launcher restart. Test the update and startup/return behavior on each TV model; automated checks do not establish hardware compatibility.
+Automated checks cover the .NET helper's source/file hashes, fragmented SDB packets, zero-sender response variants, protocol failures, transfer integrity, certificate selection, package identity, process detachment, one-time dispatch, lost acknowledgements, revision verification, and launcher restart. A cross-language check decodes the C# serializer's result with the Python installer, and a simulated host update covers probe, certificate selection, dispatch, verification, and repeat-run behavior with runtime messages around each result. Test the update and startup/return behavior on each TV model; automated checks do not establish hardware compatibility.
 
 The helper source is in `tools/tv-updater/`. `build-update-helper.yml` compiles and tests changes on the combined branch, then commits only the helper DLL, runtime configuration, and hash manifest. It uses a normal fast-forward push and cannot overwrite a newer branch head. `python3 tools/tv-updater/bundle.py` verifies that the checked-in source and helper match the manifest.
