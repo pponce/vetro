@@ -2,13 +2,13 @@
 
 ## Current checkpoint
 
-The user installed and verified `e26dc0c94c5e089fd5ca05b9b27eae43aab97199`.
-Subsequent testing identified the remaining loading transition and Samsung Home
-closing on Home. The current combined change adds a direct launcher remapper
-action through existing remote interception. See
-[direct-launcher-handoff.md](direct-launcher-handoff.md) for the implementation,
-validation, required dashboard setup, and outstanding hardware tests. The older
-installation and repair history below is retained as context.
+The user installed `d4a775ae08c6d7c444fb7d95552070153db648be`, enabled its Home
+mapping, and confirmed physical interception. The direct application-process
+pipe write did not deliver a toggle. The current correction sends the command
+through the existing root adapter and includes a rebuilt native launcher.
+See [root-launcher-control-handoff.md](root-launcher-control-handoff.md) for the
+hardware evidence, compiled checkpoint, validation, and outstanding TV tests.
+The older installation and repair history below is retained as context.
 
 The user explicitly requested one combined fork branch and an installation script containing this conversation's changes and the Vetro changes from the other conversation.
 

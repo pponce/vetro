@@ -66,3 +66,23 @@ no need to recapture Home or recreate its mapping. Test Home over Netflix and
 Samsung Home, repeated toggles, navigation, and standby/wake. Keep return-app
 unselected and AeroTizen App mode on during those checks. Upstream submission
 still awaits hardware confirmation.
+
+## Compiled checkpoint
+
+Source `429b5b8e1e249979b94c46134a0eb2d3c423d675` passed
+[source CI](https://github.com/pponce/vetro/actions/runs/41566996701) and the
+[dedicated native build](https://github.com/pponce/vetro/actions/runs/41566996740).
+Both ran all seven real control-client tests, including distinct process
+identities, as well as the existing launcher logic and four Ecore process suites.
+The native tests run the netcoreapp3.1 TV build on the CI host's .NET runtime;
+they do not reproduce Samsung's SMACK policy or ARM environment.
+
+Builder commit `187c37652aae76128b09b8d5cdb9c1f7608554fd` contains the matching
+launcher DLL, SHA-256
+`30e53ffdbf8609275dec31447d789ccdcefbd10b76a3cef0bbf97b6ca3b69d7a`.
+Local validation passed 72 app suites, 9 integration suites, 17 installer tests,
+17 parser tests, updater bundle verification, and release hygiene. The dashboard
+also provides **Remapper → Refresh status** to read a fallback/error without
+starting observation or changing interception. The final checkpoint commit
+triggers CI with this rebuilt DLL included. The corrected build has not yet
+been tested on the TV.

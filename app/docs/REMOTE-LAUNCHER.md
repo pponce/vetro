@@ -22,7 +22,8 @@ you have mapped them separately.
 
 If the launcher is disabled, restarting, or confirms that it did not receive the
 command, the action sends the TV's native Home key. The Remapper status reports
-when this fallback is used. An unconfirmed command releases interception and
+when this fallback is used; choose **Refresh status** to read the latest result.
+An unconfirmed command releases interception and
 shows an error; it is not repeated. Turn off **Remote interception** to restore
 the remote's normal key delivery.
 
