@@ -88,6 +88,7 @@ class InstallerTests(unittest.TestCase):
                 count[0]+=1
                 if ready and count[0]>1:return {'app':{'sourceRevision':REV,'sourceDirty':False},'agent':{'connected':True}}
                 return {'app':{'sourceRevision':'b'*40},'agent':{'connected':True}}
+            if route == '/app-access':return {'available':True,'enabled':False}
             if route in ('/startup-app','/return-app'):return {'appId':None,'revision':0}
             if route=='/dock':
                 if body=={'action':'refresh'}:dock_pid[0]+=1
@@ -435,7 +436,7 @@ class InstallerTests(unittest.TestCase):
             native.parent.mkdir(parents=True);native.write_bytes(b'native')
             obj=object.__new__(installer.Installer)
             obj.root=root;obj.args=SimpleNamespace(expected_commit=REV)
-            obj.ledger_file=root/'state.json';obj.redactions=[];obj.sent=False;obj.messages=[]
+            obj.ledger_file=root/'state.json';obj.report=root/'install.log';obj.redactions=[];obj.sent=False;obj.messages=[]
             obj.log=obj.messages.append
             stage='/tmp/vetro-update-'+'a'*16
             obj.stage_helper=lambda:stage
@@ -449,6 +450,8 @@ class InstallerTests(unittest.TestCase):
                 if route=='/dock':
                     if body:state['pid']=99
                     return {'enabled':True,'running':True,'pid':state['pid'],'fixTizenTube':False}
+                if route == '/probe?diagnostics=1':return {'service':dict(tizenObject=True,application=True,package=True)}
+                if route == '/app-access':return {'available':True,'enabled':False}
                 if route in ('/startup-app','/return-app'):return {'appId':None,'revision':0}
                 self.assertEqual(route,'/exec');command=body['cmd']
                 if command.startswith('nohup setsid '):

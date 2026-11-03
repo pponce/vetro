@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Reproducible TV workload. No factory reset, power, debloat or network writes."""
+import os
 import argparse, json, pathlib, threading, time, urllib.request, hashlib
 APPS=['com.samsung.tv.cobalt-yt','newslO9NqF.stremio','MCmYXNxgcu.DisneyPlus','org.tizen.primevideo','org.tizen.netflix-app']
 PLAN={'apps':APPS,'settleSeconds':30,'appWaitSeconds':25,'keyIntervalSeconds':0.8,'netflixKeys':['Down']*6+['Up']*6,'samplesEverySeconds':3}
 FPS='busctl --system call org.enlightenment.wm /org/enlightenment/wm org.enlightenment.wm.info get_fps_info'
 FLAGS="sqlite3 -readonly /opt/dbspace/.pkgmgr_parser.db \"SELECT app_id,app_disable,app_onboot,app_autorestart FROM package_app_info WHERE app_disable='true' ORDER BY app_id;\""
 def api(base,path,body=None):
-    req=urllib.request.Request(base+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
+    req=urllib.request.Request(base+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json', **({'Authorization':'Bearer '+os.environ['VETRO_TOKEN']} if os.environ.get('VETRO_TOKEN') else {})})
     with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
 def main():
     p=argparse.ArgumentParser();p.add_argument('--base',default='http://127.0.0.1:8099');p.add_argument('--phase',choices=['A','B'],required=True);p.add_argument('--out',required=True);p.add_argument('--snapshot',required=True);p.add_argument('--expected-boot');p.add_argument('--previous');a=p.parse_args()

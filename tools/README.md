@@ -59,3 +59,11 @@ If a reboot removed the temporary updater directory and no TV update lock remain
 Automated checks cover the .NET helper's source/file hashes, fragmented SDB packets, zero-sender response variants, protocol failures, transfer integrity, certificate selection, package identity, process detachment, one-time dispatch, lost acknowledgements, revision verification, and launcher restart. A cross-language check decodes the C# serializer's result with the Python installer, and a simulated host update covers probe, certificate selection, dispatch, verification, and repeat-run behavior with runtime messages around each result. Test the update and startup/return behavior on each TV model; automated checks do not establish hardware compatibility.
 
 The helper source is in `tools/tv-updater/`. `build-update-helper.yml` compiles and tests changes on the combined branch, then commits only the helper DLL, runtime configuration, and hash manifest. It uses a normal fast-forward push and cannot overwrite a newer branch head. `python3 tools/tv-updater/bundle.py` verifies that the checked-in source and helper match the manifest.
+
+## Combined permissions test build
+
+`update-both.sh` updates the existing Glass Home first and Vetro last. `install-glass-permissions.py` preserves Glass Home configuration, its local service key, and app data; its attempt record checks installed file hashes before any repeat run. Both tools require a pinned, clean source revision and reuse existing signing tools. The Glass Home source revision is pinned in the wrapper.
+
+`vetro_owner.py` handles older unauthenticated Vetro and the new owner-paired API. On an explicit HTTP 401 it prompts for the on-TV pairing code and stores the returned credential in a private host file. It never prints the code or token, uses no proxy, rejects redirects, and never replays a request after a timeout/disconnect. `VETRO_TOKEN` can supply an already paired owner credential. Do not share this maintenance credential with a TV app.
+
+The Vetro installer checks service-side Tizen APIs before installation, saves startup/return observations, and verifies app communication availability after reconnection. App access stays off until the owner enables it. See [combined testing](../notes/combined-permissions-testing.md) and [app permissions](../app/docs/APP-PERMISSIONS.md).

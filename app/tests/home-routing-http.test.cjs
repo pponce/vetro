@@ -22,6 +22,7 @@ const service=load(path.resolve(__dirname,'..'),{setInterval:()=>({unref(){}}),d
  './physical-input.js':{Bridge},'./dock.js':{Dock},
  './platform.js':{start(){},status:()=>({agent:{connected:true}}),execute:async cmd=>{commands.push(cmd);return {exit_code:0,stdout:''};}}
 }});
+service.context.auth.gate=()=>false; // Covered by app-access-http.test.cjs.
 service.context.inventory=async()=>({apps:[{appId:'netflix.app',show:true,disabled:false}]});
 function request(url,body){return new Promise(resolve=>{const req=new EventEmitter();req.url=url;req.method=body===undefined?'GET':'POST';let code;service.router(req,{writeHead(n){code=n;},end(s){resolve({code,body:JSON.parse(s)});}});if(body!==undefined){req.emit('data',Buffer.from(JSON.stringify(body)));req.emit('end');}});}
 const home=(type,appId)=>({id:'physical_63',enabled:true,trigger:{type:'physical',value:'63'},actions:[{type,...(appId?{appId}:{})}]});

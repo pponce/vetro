@@ -14,6 +14,8 @@ Local mode uses the unavailable-device platform adapter. The standalone package
 has no root payloads, SDB client or signing material. Do not mistake this unsigned
 package for a working device integration.
 
+- [Dashboard pairing](docs/SIGN-IN.md)
+- [App permissions and client API](docs/APP-PERMISSIONS.md)
 - [Platform contract](PLATFORM.md)
 - [Diagnostic export schema](docs/DIAGNOSTIC-EXPORT.md)
 - [Release audit and outstanding checks](docs/RELEASE-AUDIT.md)

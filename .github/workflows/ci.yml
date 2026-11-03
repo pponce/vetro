@@ -20,10 +20,31 @@ jobs:
         run: python3 .github/scripts/test_parse_log.py
       - name: Combined installer checks
         run: |
-          python3 tools/tests/test_install_combined.py
+          python3 -m unittest discover -s tools/tests -v
           python3 tools/tv-updater/bundle.py
       - name: Release hygiene and architecture
         run: python3 .github/scripts/audit_release.py
+  permissions_ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install browser test dependencies
+        run: |
+          npm install --prefix "$RUNNER_TEMP/vetro-browser" --no-audit --no-fund playwright@1.56.1
+          "$RUNNER_TEMP/vetro-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Permission settings interaction and responsive layout
+        env:
+          VETRO_PREVIEW_DIR: ${{ runner.temp }}/vetro-permissions-preview
+        run: NODE_PATH="$RUNNER_TEMP/vetro-browser/node_modules" node app/tests/app-access-browser.cjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vetro-permissions-preview
+          path: ${{ runner.temp }}/vetro-permissions-preview
+          if-no-files-found: error
+          retention-days: 14
   launcher:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -56,7 +77,7 @@ jobs:
       - name: Compile TV updater
         run: dotnet build tools/tv-updater/VetroUpdate.csproj --configuration Release
   combined_package:
-    if: github.repository == 'pponce/vetro' && github.ref == 'refs/heads/combined/startup-return-launcher'
+    if: github.repository == 'pponce/vetro' && (github.ref == 'refs/heads/combined/startup-return-launcher' || github.ref == 'refs/heads/combined/permissions-startup-return')
     needs: [check, launcher]
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -43,7 +43,7 @@ const report=require('../service/diagnostic-report');
  assert.equal(timeout.sections.device.status,'timeout');assert.equal(timeout.sections.inventory.status,'unavailable');
  assert.equal(timeout.sections.mqtt.status,'unavailable');
  // Exercise the browser download handler, including the actual JSON file content.
- const html=require('../service/dashboard')(),script=html.match(/<script>([\s\S]*)<\/script>/)[1];new vm.Script(script);
+ const html=require('../service/dashboard')(),script=html.match(/<script>([\s\S]*?)<\/script>/)[1];new vm.Script(script);
  const match=script.match(/\$\('downloadDiagnostics'\)\.onclick=([\s\S]*?);\n/);assert(match);
  let saved,clicks=0,status={};const button={disabled:false};
  const context={fetch:async()=>({ok:true,json:async()=>d}),$:id=>id==='diagnosticStatus'?status:button,Blob:class{constructor(parts){saved=parts.join('');}},URL:{createObjectURL:()=> 'blob:local',revokeObjectURL:()=>{}},document:{createElement:()=>({click:()=>clicks++,remove:()=>{}}),body:{appendChild:()=>{}}},setTimeout:()=>{},Error,JSON,Object};

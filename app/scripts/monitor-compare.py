@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Observer-cost comparison. Reads counters; never switches UI or TV settings."""
+import os
 import argparse,base64,json,pathlib,time,urllib.request,re
 
 def api(base,path,body=None):
-    req=urllib.request.Request(base+path,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json'})
+    req=urllib.request.Request(base+path,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json', **({'Authorization':'Bearer '+os.environ['VETRO_TOKEN']} if os.environ.get('VETRO_TOKEN') else {})})
     with urllib.request.urlopen(req,timeout=25) as response:return json.load(response)
 def command(pids):
     script="echo __BOOT__; cat /proc/sys/kernel/random/boot_id; echo __UPTIME__; cat /proc/uptime; echo __CPU__; cat /proc/stat; echo __MEM__; cat /proc/meminfo; echo __VM__; cat /proc/vmstat; echo __ZRAM__; cat /sys/block/zram0/mm_stat; echo __BLOCK__; for d in mmcblk0 zram0; do printf '%s ' \"$d\"; cat /sys/block/$d/stat; done"

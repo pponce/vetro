@@ -46,3 +46,21 @@ assert.equal(decode('yi 45 0\n'),45);assert.throws(()=>decode('ii 4 -1'),/unavai
  const fresh=new Store(async()=>({stdout:'',exit_code:0}));await assert.rejects(fresh.write({id:'ledClearMotion',value:1,expected:0}),/not confirmed/);
  console.log('PASS TV settings: firmware-derived controls are written only after this TV confirms the exact D-Bus signature');
 })().catch(e=>{console.error(e);process.exitCode=1});
+
+(async()=>{
+ // Revocation while queued must produce zero setters, including zero rollback setters.
+ let allowed=true,sets=0;
+ const store=new Store(async(cmd,timeout,authorize)=>{
+  if(cmd.includes('SetBacklight')){allowed=false;if(authorize)authorize();sets++;return {stdout:'i 0',exit_code:0};}
+  return {stdout:'ii 20 0',exit_code:0};
+ });
+ await assert.rejects(store.write({id:'backlight',value:25,expected:20},()=>{if(!allowed)throw Error('permission revoked');}),/permission revoked/);assert.equal(sets,0);assert.equal(store.busy,false);
+ // Once a setter was dispatched, restore remains available after revocation.
+ allowed=true;let value=20;
+ const restore=new Store(async(cmd,timeout,authorize)=>{
+  if(authorize)authorize();if(cmd.includes('SetBacklight')){sets++;value=sets===1?23:20;allowed=false;return {stdout:'i 0',exit_code:0};}
+  return {stdout:'ii '+value+' 0',exit_code:0};
+ });
+ await assert.rejects(restore.write({id:'backlight',value:25,expected:20},()=>{if(!allowed)throw Error('permission revoked');}),/restore confirmed/);assert.equal(sets,2);assert.equal(value,20);
+ console.log('PASS brightness authorization: revocation before dispatch performs no write; attempted writes retain rollback after revocation');
+})().catch(e=>{console.error(e);process.exitCode=1});

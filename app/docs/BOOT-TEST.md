@@ -12,6 +12,8 @@ It does not change logging, flags, configuration, databases or services on the T
 
 ## Preparation
 
+First [pair the diagnostic script](SIGN-IN.md#scripts) and set `VETRO_TOKEN` in its environment.
+
 From the `app` folder, with `TV_IP` set to the TV's LAN address (or pass `--base http://TV_IP:8099`):
 
 ```sh

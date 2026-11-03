@@ -81,6 +81,33 @@ var TOGGLE_IDS = debloat.VERIFIED_GLOBAL_IDS.concat(quickSettings.ALLOWED_IDS);
 // The package builder writes a non-default port into build-info.js (VETRO_PORT=... node build.cjs);
 // VETRO_PORT at run time still wins for local runs.
 var PORT = Number(process.env.VETRO_PORT) || buildInfo.port || 8099;
+var authModule = require('./auth.js');
+var auth = new authModule.Auth();
+var tizenRuntime = typeof tizen === 'undefined' ? null : tizen;
+var appIdentity = new (require('./app-identity.js').Resolver)(tizenRuntime);
+var appAccess = new (require('./app-access.js').Access)({
+    identity: appIdentity,
+    inventory: function () { return inventory(true); },
+    perform: require('./app-api.js').create({
+        identity: appIdentity, execute: agentExecute,
+        monitor: function (force) { return monitor.snapshot('full', force); },
+        launch: function (appId,check) { return runActions([{type:'launch', appId:appId}],check); },
+        settings: {read:function () { return tvSettings.read(); }, write:function (p,check) { return tvSettings.write(p,check); }},
+        mutation: function (run) {
+            if (debloatBusy) return Promise.reject(require('./app-access.js').fault('busy','Another app change is in progress'));
+            debloatBusy=true;
+            return Promise.resolve().then(run).finally(function () { debloatBusy=false; registryAt=0; });
+        }
+    })
+});
+require('./access-store.js').privateDirectory(tizenRuntime, function (error, directory) {
+    if (error) return; // No shared-storage fallback for keys or grants.
+    auth.configure(require('path').join(directory,'vetro-sign-in.json'));
+    appAccess.configure(require('path').join(directory,'vetro-app-access.json'));
+});
+var appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth);
+function developmentOnly() { return !tizenRuntime && platform.status().mode === 'app-only'; }
+
 
 // --- telemetry reader (service side, uid 5001) ---------------------------
 // Reads /proc and /sys directly via fs. No platform command is needed. Every read
@@ -165,11 +192,11 @@ function serveJson(res, obj, code) {
 }
 
 function serveHtml(res, html) {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'X-Frame-Options':'DENY', 'X-Content-Type-Options':'nosniff' });
     res.end(html);
 }
 
-function dashboardHtml() { return renderDashboard(); }
+function dashboardHtml() { return developmentOnly() ? renderDashboard() : authModule.decorate(renderDashboard()); }
 
 var diagnosticPending = null;
 function downloadDiagnostics(res) {
@@ -274,6 +301,7 @@ function agentExecute(cmd, timeoutMs, guard) {
     queuedCommands++;
     var result=commandQueue.then(function(){return Promise.resolve(guard ? guard() : true).then(function(allowed){
         if (!allowed) throw Error('Launch cancelled because power or the startup choice changed');
+        if (guard && guard.onDispatch) guard.onDispatch();
         return platform.execute(cmd,timeoutMs||30000);
     });});
     commandQueue=result.catch(function(){});
@@ -520,7 +548,7 @@ function handleIcon(req,res) {
     if(iconCache[id])return send(iconCache[id]);
     inventory(false).then(function(data){var row=data.apps.find(function(r){return r.appId===id;}), command=AppRegistry.iconCommand(row);
         if(!command)throw new Error('no readable icon');
-        return agentExecute(command,10000).then(function(r){if(r.exit_code||r.timed_out)throw new Error('icon unavailable');var data=Buffer.from(r.stdout.replace(/\s/g,''),'base64');
+        return agentExecute(command,10000,authorize).then(function(r){if(r.exit_code||r.timed_out)throw new Error('icon unavailable');var data=Buffer.from(r.stdout.replace(/\s/g,''),'base64');
             var png=data.slice(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])), jpg=data[0]===255&&data[1]===216;
             if((!png&&!jpg)||data.length>262144)throw new Error('unsupported icon');
             var icon={data:data,mime:png?'image/png':'image/jpeg'};if(Object.keys(iconCache).length<100)iconCache[id]=icon;send(icon);
@@ -603,7 +631,8 @@ function noteReturnActions(actions) {
     returnApp.noteActions(actions);
     scheduleReturnApp(true);
 }
-function runActions(actions) {
+function runActions(actions, authorize) {
+    if(authorize)authorize();
     noteReturnActions(actions);
     if(actions.some(function(a){return a.type!=='key'||a.key!=='KEY_POWER';}))noteRemoteActivity();
     var sent=0, skipped=[],mqttSent=0, launcherFallback=null;
@@ -622,7 +651,7 @@ function runActions(actions) {
         else if(a.type==='launch')command='/usr/bin/app_launcher -s '+a.appId;
         else if(a.type==='key'){var key=control.nativeKey(a.key);command=key&&control.injectCommand(key);if(!command)throw new Error('unsupported native key: '+a.key);}
         else {skipped.push(a.type);return;}
-        return agentExecute(command,10000).then(function(r){if(r.exit_code||r.timed_out)throw new Error(r.stderr||'native action failed');sent++;});
+        return agentExecute(command,10000,authorize).then(function(r){if(r.exit_code||r.timed_out)throw new Error(r.stderr||'native action failed');sent++;});
     });},Promise.resolve()).then(function(){var result={ok:true,sent:sent,skipped:skipped,transport:mqttSent?(mqttSent===sent?'mqtt':'mixed'):'native'};if(launcherFallback)result.launcherFallback=launcherFallback;return result;});
 }
 var actionQueue=Promise.resolve(), pendingActions=0, inputError=null;
@@ -750,6 +779,16 @@ function handleRemapRun(req,res){readJsonBody(req,res,function(p){
 
 http.createServer(function (req, res) {
     var url = (req.url || '/').split('?')[0];
+    if (auth.gate(req,res,url,{open:developmentOnly(),onPair:function () { return runActions([{type:'launch',appId:'vetrotvapp.app'}]); }})) return;
+    if (url === '/app-access') {
+        if (req.method === 'GET') return serveJson(res,appAccess.snapshot());
+        if (req.method !== 'POST') return serveJson(res,{error:'Use GET or POST'},405);
+        return readJsonBody(req,res,function (p) {
+            Promise.resolve().then(function () { return appAccess.admin(p); }).then(function (d) { serveJson(res,d); },function (e) {
+                serveJson(res,{error:e.message,code:e.code||'unavailable'},e.code==='conflict'?409:e.code==='invalid_request'?400:503);
+            });
+        },8192);
+    }
     if (url === '/startup-app') return handleStartupApp(req, res);
     if (url === '/return-app') return handleReturnApp(req, res);
     if (url === '/diagnostics/download') {
@@ -763,7 +802,7 @@ http.createServer(function (req, res) {
         res.setHeader('Vary', 'Origin');
         if (req.method === 'OPTIONS') {
             res.writeHead(204, {'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type'});
+                'Access-Control-Allow-Headers': 'Content-Type, X-Vetro-Widget'});
             return res.end();
         }
     }

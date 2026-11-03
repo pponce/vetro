@@ -2,6 +2,7 @@
 const assert = require('assert').strict;
 const EventEmitter = require('events');
 const service = require('./service-harness.cjs')(require('path').resolve(__dirname, '..'));
+service.context.auth.gate=()=>false; // Authentication is exercised by app-access-http.test.cjs.
 let closes = 0, connects = 0, command, fail = false;
 service.context.packageInfo = {read: async path => { if (path !== '/tmp/example.wgt') throw new Error('bad manifest'); return {packageId: 'actualPkg123'}; }};
 service.context.platform = {start: () => {}, status: () => ({}), execute: () => Promise.reject(new Error('offline')), install: async (id, path) => {connects++; command = id + ' ' + path; closes++; if (fail) throw new Error('disconnected'); return 'not installed';}};

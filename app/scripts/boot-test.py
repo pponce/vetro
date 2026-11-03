@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Read-only TV boot observer. Writes measurements only to the local output folder."""
+import os
 import argparse
 import concurrent.futures
 import datetime
@@ -46,7 +47,7 @@ def request(base, route, timeout=0.8, command=None):
     try:
         body = None if command is None else json.dumps({'cmd': command}).encode()
         req = urllib.request.Request(base + route, data=body,
-                                     headers={'Content-Type': 'application/json'})
+                                     headers={'Content-Type': 'application/json', **({'Authorization': 'Bearer '+os.environ['VETRO_TOKEN']} if os.environ.get('VETRO_TOKEN') else {})})
         # A local TV must not be routed through a configured HTTP proxy.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(req, timeout=timeout) as response:

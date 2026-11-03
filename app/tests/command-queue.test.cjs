@@ -11,6 +11,13 @@ c.platform.execute=(cmd)=>{starts.push(cmd);return new Promise((resolve,reject)=
   pending[0].reject(new Error('fixture failure'));await assert.rejects(a,/fixture failure/);
   await new Promise(setImmediate);assert.deepEqual(starts,['first','second']);
   pending[1].resolve({exit_code:0});await b;assert.equal(c.queuedCommands,0);
-  console.log('PASS command queue: serial TV requests, timeout begins at dispatch, errors do not poison queue');
+  let allowed=true;
+  const running=c.agentExecute('occupied'),queued=c.agentExecute('must-not-run',1000,()=>{if(!allowed)throw Error('permission revoked');});queued.catch(()=>{});
+  await new Promise(setImmediate);allowed=false;pending[2].resolve({exit_code:0});await running;await assert.rejects(queued,/permission revoked/);
+  assert.ok(!starts.includes('must-not-run'),'authorization must run after waiting in the TV queue');
+  let dispatched=0;const guard=()=>true;guard.onDispatch=()=>{dispatched++;};
+  const sent=c.agentExecute('marked',1000,guard);await new Promise(setImmediate);assert.equal(dispatched,1);pending[3].resolve({exit_code:0});await sent;
+  const blocked=()=>false;blocked.onDispatch=()=>{dispatched++;};await assert.rejects(c.agentExecute('blocked',1000,blocked));assert.equal(dispatched,1);
+  console.log('PASS command queue: serial requests, authorization at dispatch, no submitted marker on refusal, errors do not poison queue');
  } finally {c.platform.execute=original;}
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -33,6 +33,7 @@ async function run(options) {
     document: {readyState: o.readyState || 'complete', getElementById: id => id === 'stage' ? stage : screen, hidden: false, addEventListener: (n, f) => { listeners[n] = f; }},
     window: {a2sService: o.Service, innerWidth: 1920, innerHeight: 1080, addEventListener: (n, f) => { windowListeners[n] = f; }},
     XMLHttpRequest: XHR, WebSocket: WS,
+    VetroAppAccess: function(){this.call=async()=>({token:"a".repeat(64),expires:Date.now()+300000});}, setInterval(){},
     fetch: async () => { if (o.failFetch && o.failFetch.n-- > 0) throw new Error('refused'); return {status: 200}; },
     tizen: {
       tvinputdevice: {getSupportedKeys: () => [{name: 'VolumeUp'}]},

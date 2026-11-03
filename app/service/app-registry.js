@@ -2,6 +2,7 @@
 // Registry fields are hex encoded by SQLite: no delimiter ambiguity, SQL values
 // supplied by callers, or arbitrary file paths accepted from HTTP requests.
 var apps = require('./apps.js');
+function flag(value){return value==='true'?true:value==='false'?false:null;}
 function command(sql){return 'sqlite3 -readonly /opt/dbspace/.pkgmgr_parser.db "'+sql+'"';}
 function fields(text){return String(text||'').trim().split('\n').filter(Boolean).map(function(line){return line.split('|').map(function(v){if(!/^(?:[a-fA-F0-9]{2})*$/.test(v))throw new Error('invalid registry field');return Buffer.from(v,'hex').toString('utf8');});});}
 function query(execute,sql){return execute(command(sql),15000).then(function(r){if(r.exit_code||r.timed_out)throw new Error('registry query failed');return fields(r.stdout);});}
@@ -14,9 +15,9 @@ function load(execute,probe){
     ]).then(function(data){
         var registered={};data[0].forEach(function(f){if(!/^[A-Za-z0-9_.-]+$/.test(f[0]))return;registered[f[0]]=true;var r=byId[f[0]];
             if(!r){r=apps.normalize([{id:f[0],packageId:f[1],show:false}],[])[0];rows.push(r);byId[f[0]]=r;}
-            Object.assign(r,{packageId:f[1],type:f[2],component:f[3],disabled:f[4]==='true',removable:f[5]==='true',version:f[6]||r.version,size:+f[7]||r.size,author:f[8]||null,system:f[9]==='true',preload:f[10]==='true',onboot:f[11]==='true',autorestart:f[12]==='true',show:f[13]==='false',name:r.name||f[14]||null,iconPath:f[15]||null,dependencies:[],dependents:[],dependencySource:'package registry'});
+            Object.assign(r,{packageId:f[1],type:f[2],component:f[3],disabled:flag(f[4]),removable:flag(f[5]),version:f[6]||r.version,size:+f[7]||r.size,author:f[8]||null,system:flag(f[9]),preload:flag(f[10]),onboot:flag(f[11]),autorestart:flag(f[12]),registryVerified:true,show:flag(f[13])===null?null:!flag(f[13]),name:r.name||f[14]||null,iconPath:f[15]||null,dependencies:[],dependents:[],dependencySource:'package registry'});
         });
-        data[2].forEach(function(f){if(byId[f[0]])byId[f[0]].disabled=f[1]==='true';});rows=rows.filter(function(r){return registered[r.appId]});rows.forEach(function(r){r.origin=r.system?'system':r.preload?'preinstalled':r.system===false&&r.preload===false?'installed':'unknown';Object.assign(r,apps.classification(r),apps.describe(r));r.dependencies=r.dependencies||[];r.dependents=r.dependents||[];data[1].forEach(function(d){if(d[0]===r.packageId)r.dependencies.push({packageId:d[1],type:d[2],version:d[3]||null});if(d[1]===r.packageId)r.dependents.push({packageId:d[0],type:d[2],version:d[3]||null});});});
+        data[2].forEach(function(f){if(byId[f[0]])byId[f[0]].disabled=flag(f[1]);});rows=rows.filter(function(r){return registered[r.appId]});rows.forEach(function(r){r.origin=r.system?'system':r.preload?'preinstalled':r.system===false&&r.preload===false?'installed':'unknown';Object.assign(r,apps.classification(r),apps.describe(r));r.dependencies=r.dependencies||[];r.dependents=r.dependents||[];data[1].forEach(function(d){if(d[0]===r.packageId)r.dependencies.push({packageId:d[1],type:d[2],version:d[3]||null});if(d[1]===r.packageId)r.dependents.push({packageId:d[0],type:d[2],version:d[3]||null});});});
         return {apps:rows,summary:apps.summarize(rows),source:'package registry + public probe',collectedAt:new Date().toISOString()};
     });
 }

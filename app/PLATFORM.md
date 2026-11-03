@@ -14,8 +14,12 @@ provide device operations. The optional integration implements this contract:
 
 The source boundary separates responsibilities; the full integration still has
 privileged behavior. The app-only build must not contain payloads, SDB or signing
-materials. The browser management HTTP interface currently requires a trusted
-LAN and has no login; agent authentication does not authenticate browser users.
+materials. The management HTTP interface requires [owner pairing](docs/SIGN-IN.md), including
+loopback requests on a TV. It still requires a trusted LAN because transport is HTTP.
+Third-party apps use a separate [scoped MessagePort API](docs/APP-PERMISSIONS.md).
+App command authorization is checked again when the shared command queue dispatches
+the operation; rollback after an attempted brightness write remains available even
+if permission is subsequently revoked.
 
 ### Physical remote feature
 

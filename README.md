@@ -79,6 +79,9 @@ the other physical shortcuts. [Set up Home and edit shortcuts →](app/docs/REMO
 
 ## Also included
 
+- **App permissions:** approve selected controls for installed user apps, with signer checks and revocation. Requires a Partner certificate. [Setup and client API](app/docs/APP-PERMISSIONS.md).
+- **Dashboard pairing:** owner access uses a code shown on the TV. [Sign-in guide](app/docs/SIGN-IN.md).
+
 - **TV settings:** adjust supported picture controls and selected advanced settings, with read-back and restore.
 - **MQTT and Home Assistant:** publish the TV's state and discovery and trigger actions from exact topics. [Setup guide](app/docs/mqtt/README.md).
 - **Dashboard:** CPU, RAM, swap, storage and processes. Live sampling starts when you ask and stops after two minutes.

@@ -3,6 +3,7 @@
 <head><meta charset="utf-8"><title>Vetro</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="$WEBAPIS/webapis/webapis.js"></script>
+<script src="service/app-access-client.js"></script>
 <style>
 /* Values from design-system/tokens.css (dark), status colours from the dashboard. Static page: solid surfaces,
    no blur, no animation. Flex without gap and ES5 only, so older TV runtimes draw it the same. */
@@ -61,15 +62,43 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
 .keys{display:flex;justify-content:flex-end;margin-top:18px;font-size:22px;color:var(--muted)}
 .keys span{margin-left:28px}
 .keys i{font-style:normal;display:inline-block;margin-right:10px;padding:2px 12px;border:2px solid var(--border);border-radius:8px;color:var(--text)}
+.pairing{position:absolute;z-index:10;top:145px;left:460px;width:1000px;padding:48px;background:var(--surface);border:3px solid var(--link);border-radius:20px;box-shadow:0 0 0 1500px rgba(0,0,0,.8);text-align:center}.pairing h2{font-size:40px;margin:0 0 18px}.pairing p{font-size:26px;line-height:1.5}.pairing strong{display:block;font-family:monospace;font-size:100px;letter-spacing:.25em;margin:24px 0}.pairing[hidden]{display:none}
 </style></head>
 <body>
-<div id="stage"><div class="safe" id="screen"></div></div>
+<div id="stage"><div class="safe" id="screen"></div><div id="pairing" class="pairing" hidden role="status"><h2>Pair a device with Vetro</h2><p id="pairingName"></p><strong id="pairingCode"></strong><p>Enter this code only on a device you want to give full control of this TV.</p><p id="pairingExpiry"></p></div></div>
 <script>
 var BASE = 'http://127.0.0.1:8099';
 var ICON = 'icon.png';
 var IDLE_MS = 300000;
 var report = {probe: {}, apps: [], packages: [], settings: {}};
 var delivered = false, running = false, idleTimer = null;
+var widgetClient=null,widgetCredential=null,widgetConnecting=null,pairingBusy=false;
+function widgetSession() {
+  if(widgetCredential && widgetCredential.expires>Date.now()+30000)return Promise.resolve(widgetCredential.token);
+  if(widgetConnecting)return widgetConnecting;
+  widgetConnecting=Promise.resolve().then(function(){
+    if(!widgetClient)widgetClient=new VetroAppAccess({widget:true,timeout:2000});
+    return widgetClient.call('widget.connect',{});
+  }).then(function(d){
+    if(!d||typeof d.token!=='string'||!/^[a-f0-9]{64}$/.test(d.token)||typeof d.expires!=='number')throw Error('Widget identity was not verified');
+    widgetCredential=d;widgetConnecting=null;return d.token;
+  },function(e){widgetConnecting=null;throw e;});
+  return widgetConnecting;
+}
+function pollPairing() {
+  if(document.hidden||pairingBusy)return;
+  pairingBusy=true;
+  widgetSession().then(function(token){return fetch(BASE+'/auth/pending',{headers:{'X-Vetro-Widget':token}});})
+    .then(function(r){if(r.status!==200)throw Error('Pairing is unavailable');return r.json();})
+    .then(function(d){
+      document.getElementById('pairing').hidden=!d.code;
+      document.getElementById('pairingCode').textContent=d.code||'';
+      document.getElementById('pairingName').textContent=d.code?'Request from '+d.name:'';
+      document.getElementById('pairingExpiry').textContent=d.code?'Expires in '+d.expiresIn+' seconds.':'';
+      pairingBusy=false;
+    },function(){document.getElementById('pairing').hidden=true;pairingBusy=false;});
+}
+
 // The service keeps running without this page; a resident page only holds memory.
 function leave() { try { tizen.application.getCurrentApplication().exit(); } catch (e) {} }
 // Every probe gets a time limit: a Tizen call whose callback never fires must not leave the screen on "Checking".
@@ -96,18 +125,19 @@ function launchService() {
   });
 }
 function reach(tries) {
-  return fetch(BASE + '/status').then(function (r) { return r.status; }, function (e) {
+  return widgetSession().then(function(token){return fetch(BASE + '/status',{headers:{'X-Vetro-Widget':token}});}).then(function (r) { if(r.status!==200)throw Error('Service authentication failed');return r.status; }).catch(function (e) {
     if (tries <= 1) throw e;
     return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return reach(tries - 1); });
   });
 }
 function cb(call) { return new Promise(function (ok, ko) { call(ok, ko); }); }
 function sendReport() {
-  return new Promise(function (resolve, reject) {
+  return widgetSession().then(function(token){return new Promise(function (resolve, reject) {
     var xhr = new XMLHttpRequest();
     xhr.open('POST', BASE + '/probe', true);
     xhr.timeout = 10000;
     xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('X-Vetro-Widget',token);
     xhr.onload = function () {
       var result;
       try { result = JSON.parse(xhr.responseText); } catch (e) { return reject(new Error('Response is not JSON')); }
@@ -117,13 +147,14 @@ function sendReport() {
     xhr.onerror = function () { reject(new Error('Report send failed')); };
     xhr.ontimeout = function () { reject(new Error('Report send timeout')); };
     xhr.send(JSON.stringify(report));
-  });
+  });});
 }
 // What the TV screen shows: one small JSON read. The launcher check inside it can take a few seconds.
 function readScreen() {
-  return new Promise(function (resolve, reject) {
+  return widgetSession().then(function(token){return new Promise(function (resolve, reject) {
     var xhr = new XMLHttpRequest();
     xhr.open('GET', BASE + '/screen', true);
+    xhr.setRequestHeader('X-Vetro-Widget',token);
     xhr.timeout = 12000;
     xhr.onload = function () {
       var d;
@@ -134,7 +165,7 @@ function readScreen() {
     xhr.onerror = function () { reject(new Error('Service unreachable')); };
     xhr.ontimeout = function () { reject(new Error('Service timeout')); };
     xhr.send();
-  });
+  });});
 }
 function tryConnect(port) {
   return new Promise(function (resolve, reject) {
@@ -289,6 +320,7 @@ document.addEventListener('keydown', function (e) {
   else if (k === 13) run();
 });
 window.addEventListener('resize', fit);
+setInterval(pollPairing,2000);
 fit();
 resetIdle();
 // Module scripts run after this classic script and before DOMContentLoaded.

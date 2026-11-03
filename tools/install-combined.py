@@ -168,6 +168,10 @@ class Installer:
         self.base = f'http://{args.tv}:{args.port}'
         self.redactions = []
         self.sent = False
+        spec = importlib.util.spec_from_file_location('vetro_owner', self.root / 'tools/vetro_owner.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.owner = module.OwnerClient(self.base, self.directory, self.log)
 
     def log(self, message):
         text = str(message)
@@ -179,11 +183,7 @@ class Installer:
         self.logfile.flush()
 
     def request(self, route, body=None, timeout=40):
-        data = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + route, data=data,
-                                     headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            return json.load(response)
+        return self.owner.request(route, body, timeout)
 
     def execute(self, command):
         result = self.request('/exec', {'cmd': command})
@@ -364,6 +364,9 @@ class Installer:
         installed = self.worker(verification_stage, 'installed')
         if installed.get('sourceRevision') != revision or installed.get('launcherSha256') != ledger['launcherSha256']:
             raise RuntimeError('Installed files do not match the combined build')
+        permissions = self.request('/app-access')
+        if permissions.get('available') is not True:
+            raise RuntimeError('The new build is running, but verified app communication is unavailable on this TV. No reinstall will be sent. Read App permissions in the dashboard.')
         for endpoint in ('/startup-app', '/return-app'):
             value = self.request(endpoint)
             if 'appId' not in value or not isinstance(value.get('revision'), int):
@@ -417,7 +420,7 @@ class Installer:
         ledger['launcherVerification'] = {'settings': chosen_preferences, 'changesSinceInstall': changes}
         ledger['complete'] = True
         self.write_ledger(ledger)
-        self.log('VERIFIED: combined source revision, launcher DLL, both new settings, and root connection.')
+        self.log('VERIFIED: combined source revision, launcher DLL, startup/return settings, verified app communication, and root connection.')
         self.log('Developer Mode and Host PC IP were not changed. Startup and return selections were not changed.')
         # Only remove this attempt's generated files after verification and lock release.
         try:
@@ -445,6 +448,17 @@ class Installer:
         if status.get('app', {}).get('sourceRevision') == revision and status.get('app', {}).get('sourceDirty') is False:
             self.log('This exact combined build is already running. No reinstall was submitted.')
             return
+        capability = self.request('/probe?diagnostics=1').get('service', {})
+        if any(capability.get(name) is not True for name in ('tizenObject', 'application', 'package')):
+            raise RuntimeError('The installed service cannot confirm the Tizen APIs required by this permission build. No install was submitted.')
+        snapshot = {name: self.request(route) for name, route in
+                    (('powerOn', '/startup-app'), ('returnApp', '/return-app'))}
+        snapshot['service'] = {'app': status.get('app'), 'rootConnected': status.get('agent', {}).get('connected')}
+        state_report = self.report.with_suffix('.before.json')
+        with state_report.open('x') as output:
+            os.chmod(state_report, 0o600)
+            json.dump(snapshot, output, indent=2)
+        self.log('Saved the current power-on and return status before installation: ' + str(state_report))
         dock = self.request('/dock', timeout=40)
         if not isinstance(dock.get('enabled'), bool):
             raise RuntimeError('Current launcher state could not be read')

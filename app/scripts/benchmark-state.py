@@ -1,10 +1,11 @@
+import os
 import json,urllib.request,re,pathlib,sys,time,argparse
 parser=argparse.ArgumentParser();parser.add_argument('phase',choices=['A','B']);parser.add_argument('--snapshot',required=True);parser.add_argument('--out',required=True);parser.add_argument('--base',default='http://127.0.0.1:8099');args=parser.parse_args()
 base=args.base
 snapshot=json.load(open(args.snapshot))
 targets=[x for x in snapshot['/apps']['apps'] if x.get('disabled')]
 def api(cmd):
- req=urllib.request.Request(base+'/exec',data=json.dumps({'cmd':cmd}).encode(),headers={'Content-Type':'application/json'})
+ req=urllib.request.Request(base+'/exec',data=json.dumps({'cmd':cmd}).encode(),headers={'Content-Type':'application/json', **({'Authorization':'Bearer '+os.environ['VETRO_TOKEN']} if os.environ.get('VETRO_TOKEN') else {})})
  with urllib.request.urlopen(req,timeout=35) as r:d=json.load(r)
  if not d.get('ok'):raise RuntimeError(str(d))
  return d

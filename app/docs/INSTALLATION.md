@@ -25,6 +25,7 @@ All three ways end with the same **[last steps](#last-steps-all-three-ways)**: o
 - **Get Apps2Samsung** from its [releases page](https://github.com/Apps2Samsung/Apps2Samsung/releases): desktop app (Windows, macOS, Linux), Android app, or command line.
 - **Turn on Developer Mode** on the TV: open **Apps**, enter **12345** with the remote, switch Developer Mode on, set **Host PC IP** to the address of the computer or phone running Apps2Samsung, and restart the TV. Apps2Samsung tells you if something is not ready.
 - **Find Vetro** in the catalog (under *Tools*). It has a *root* badge: confirm when Apps2Samsung asks.
+- **Signing for app permissions:** this build declares the Partner-level `appmanager.certificate` privilege. Use a Samsung Partner certificate; public-only signing is insufficient. See [App permissions](APP-PERMISSIONS.md).
 - **Port (optional):** Vetro uses port 8099. Change it only if another app on the TV uses the same port (for example tizen-youtube).
 - **First install only:** Apps2Samsung asks you to sign in to your Samsung account once, to create the certificate for your TV.
 - **From the command line:** `apps2samsung-cli install "Vetro" --tv TV_IP --allow-root`.
@@ -120,7 +121,7 @@ tizen install -n /tmp/vetro.wgt -t YOUR_TV_TARGET
 ### Open Vetro once
 
 - Open **Vetro** on the TV once after installing. **This is required:** on some TVs the installer registers the service with start at boot and auto-restart off. Vetro turns them on by itself (since 0.3.2), but only after it has run once and the root agent has connected. Until then the service does not start by itself after a restart ([#25](https://github.com/andrearicci93/vetro/issues/25)).
-- Visit `http://TV_IP:8099/` from a browser on the same network (or your port, if you changed it). Check the app list, the probe status and the platform connection.
+- Visit `http://TV_IP:8099/` from a browser on the same network (or your port, if you changed it). Pair that browser with the code shown on the TV, then check the app list, probe status and platform connection. See [dashboard pairing](SIGN-IN.md).
 - A visible icon or an accepted install is not proof that the background service or the root agent works.
 
 ### Let the TV reach its own SDB service
@@ -144,7 +145,7 @@ Good to know:
 
 ## If the dashboard says the root agent is not connected
 
-Open `http://TV_IP:8099/status` in a browser and read these fields:
+Pair the browser at `http://TV_IP:8099/` first, then open `http://TV_IP:8099/status` and read these fields:
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
