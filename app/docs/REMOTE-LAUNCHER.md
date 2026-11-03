@@ -23,7 +23,7 @@ saved shortcuts keep their settings.
 ## Choose another app
 
 1. Open **Remapper → Home button → Edit**.
-2. Choose **Open app**, select an installed app, and choose **Save changes**.
+2. Choose **Open app**, select an installed app, and choose **Save Home**.
 3. Press Home to open that app.
 
 The app list includes installed, enabled apps with launcher entries. Refresh the
@@ -32,13 +32,22 @@ Vetro off on the Launcher page. Enable Vetro there again to assign Home back to
 its toggle. An app shortcut opens the app; it does not dismiss it on a second press.
 Use **Restore default** to remove the override and return Home to Samsung Home.
 
+The Home editor opens inside the Home button section, below Steps 1 and 2. Those
+steps create new shortcuts; capturing Home there opens the same Home editor.
+While editing a saved mapping, save or cancel it before creating another shortcut.
+Home uses its saved remote identity. If setup is required, choose **Detect Home**
+in the editor and press Home once. Detection restores the saved remote shortcuts
+before you choose **Save Home** to apply the new action. Cancel leaves the saved
+assignment unchanged. If a save fails, its reason appears beside the save controls
+and the selected values remain available for correction.
+
 Keep an alternative launcher's own Home takeover off when Vetro manages the key.
 For AeroTizen builds with App mode, leave that mode on.
 
 ## Edit and enable other shortcuts
 
 Every saved mapping has **Edit**, including HTTP and MQTT rules. The editor keeps
-its trigger, enabled state and actions. **Save changes** updates that mapping;
+its trigger, enabled state and actions. **Save shortcut** updates that mapping;
 **Cancel** leaves it unchanged. Ordinary mappings can also be deleted.
 
 **Enable remote shortcuts** controls other physical mappings. Home follows its

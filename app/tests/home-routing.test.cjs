@@ -47,5 +47,14 @@ function fixture(){
  const pending=f.routing.change([other,home({type:'launch',appId:'netflix.app'})],{device:'/dev/input/event16'});
  await new Promise(r=>setImmediate(r));await assert.rejects(f.routing.setLauncher(true),/already in progress/);
  release({apps:f.apps});await pending;
+ f=fixture();f.store.input={enabled:true,device:'Smart Control',node:'/dev/input/event6'};
+ f.store.home={code:'63',device:'Smart Control',node:'/dev/input/event6'};
+ f.devices=[{name:'Smart Control',node:'/dev/input/event6',selectable:true,unique:false},{name:'Smart Control',node:'/dev/input/event16',selectable:true,unique:false}];
+ const initial=JSON.stringify(f.store);
+ await assert.rejects(f.routing.change([other,home({type:'launcher'})],{device:'/dev/input/event16'}),/Pause other remote shortcuts/);
+ assert.equal(JSON.stringify(f.store),initial,'a different capture interface cannot replace the saved remote');
+ await f.routing.change([other,home({type:'launcher'})]);
+ assert.equal(f.store.home.node,'/dev/input/event6');assert.equal(f.store.input.node,'/dev/input/event6');assert.equal(f.store.input.enabled,true);
+ assert.deepEqual(f.policy.blocked,['63','115'],'reusing the saved Home identity preserves the other shortcuts');
  console.log('PASS shared Home: one assignment, native default, paused shortcuts, app edits, re-enable, migration, device identity, rollback, revisions and serialization');
 })().catch(e=>{console.error(e);process.exitCode=1;});

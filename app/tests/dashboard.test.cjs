@@ -1,7 +1,7 @@
 'use strict';
 const assert=require('assert').strict,vm=require('vm');
 const html=require('../service/dashboard.js')();
-const nodes={};const el=id=>nodes[id]||(nodes[id]={value:'',hidden:true,textContent:'',innerHTML:'',focus(){}});
+const nodes={};const el=id=>nodes[id]||(nodes[id]={value:'',hidden:true,textContent:'',innerHTML:'',focus(){},appendChild(child){child.parentNode=this;return child;}});
 const calls=[];const inventory=[{appId:'app.one',packageId:'pkg.one',show:true,name:'Example <TV>',kind:'other'}];
 const sandbox={document:{getElementById:el,querySelectorAll:()=>[],addEventListener(){}},
  fetch:(url,opts)=>{calls.push({url,body:opts&&opts.body?JSON.parse(opts.body):undefined});let data=url.startsWith('/apps')?{apps:inventory,summary:{total:1},source:'public probe'}:url==='/status'?{mode:'app-only'}:url==='/input'?{devices:[{name:'Smart Control 2016',node:'/dev/input/event5',selectable:true}],status:{policy:{mode:'off'},events:[]}}:url.startsWith('/monitor')?{scope:url.includes('summary')?'summary':'full',ts:Date.now(),memory:{totalBytes:1000,availableBytes:500},cpu:{percent:5,cores:[]},processes:url.includes('summary')?undefined:[],network:[]}:url==='/remap'?{rules:opts&&opts.body?JSON.parse(opts.body).rules:[],persisted:true}:{};return Promise.resolve({ok:true,json:()=>Promise.resolve(data)})},
@@ -12,6 +12,10 @@ vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],sandbox);
  el('shortcutAction').value='launcher';el('shortcutAction').onchange();
  assert.equal(el('shortcutAppField').hidden,true,'launcher action needs no application selection');
  el('inputCode').value='63';el('targetApp').value='';await el('saveRule').onclick();
+ assert.equal(el('ruleEditor').parentNode,el('homeEditorSlot'),'captured Home opens the one Home editor');
+ assert.ok(!calls.filter(x=>x.url==='/remap'&&x.body).at(-1).body.rules.some(r=>r.trigger.value==='63'),'the creation form does not save Home');
+ el('editKind0').value='launcher';el('ruleEditor').onchange({target:{dataset:{editKind:'0'}}});el('editKind0').value='launcher';
+ await el('ruleEditor').onclick({target:{dataset:{saveEdit:''}}});
  const launcherRule=calls.filter(x=>x.url==='/remap'&&x.body).at(-1).body.rules.find(r=>r.trigger.value==='63');
  assert.deepEqual(launcherRule.actions,[{type:'launcher'}]);
  assert.ok(el('homeRule').innerHTML.includes('Toggle Vetro launcher'));
