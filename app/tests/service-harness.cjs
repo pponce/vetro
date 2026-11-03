@@ -14,8 +14,9 @@ module.exports = function loadService(root, options) {
     require: function (name) {
       return options.dependencies && Object.prototype.hasOwnProperty.call(options.dependencies, name) ? options.dependencies[name] : Object.prototype.hasOwnProperty.call(dependencies, name) ? dependencies[name]
         : name[0] === '.' ? require(path.join(root, 'service', name)) : require(name);
-    }, __dirname: path.join(root, 'service'), tizen: options.tizen, Buffer, process, console, setTimeout: options.setTimeout || setTimeout, clearTimeout, setInterval: options.setInterval || setInterval, clearInterval
+    }, module: {exports: {}}, __dirname: path.join(root, 'service'), tizen: options.tizen, Buffer, process, console, setTimeout: options.setTimeout || setTimeout, clearTimeout, setInterval: options.setInterval || setInterval, clearInterval
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'service/main.js'), 'utf8'), context);
-  return { context: context, router: router };
+  if (options.start !== false) context.module.exports.onStart();
+  return { context: context, router: router, lifecycle: context.module.exports };
 };

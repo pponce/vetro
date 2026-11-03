@@ -53,6 +53,14 @@ function start(tizen,access,auth) {
             } catch(e){if(p)reply(remote,p,null,e,internal);}
         });
     } catch (_) {}
-    return {stop:function(){access.transport={available:false,error:'App communication stopped'};try{if(watching)tizen.package.unsetPackageInfoEventListener();}catch(_){}try{if(local)local.removeMessagePortListener(listener);}catch(_){}try{if(internal)internal.removeMessagePortListener(widgetListener);}catch(_){}}};
+    var handle={ready:watching && listener!==undefined && widgetListener!==undefined,stop:function(){
+        handle.ready=false;
+        access.transport={available:false,error:'App communication stopped'};
+        try{if(watching)tizen.package.unsetPackageInfoEventListener();}catch(_){}
+        try{if(local && listener!==undefined)local.removeMessagePortListener(listener);}catch(_){}
+        try{if(internal && widgetListener!==undefined)internal.removeMessagePortListener(widgetListener);}catch(_){}
+        watching=false; listener=undefined; widgetListener=undefined;
+    }};
+    return handle;
 }
 module.exports={start:start,APP_PORT:APP_PORT,WIDGET_PORT:WIDGET_PORT};

@@ -101,12 +101,38 @@ var appAccess = new (require('./app-access.js').Access)({
         }
     })
 });
-require('./access-store.js').privateDirectory(tizenRuntime, function (error, directory) {
-    if (error) return; // No shared-storage fallback for keys or grants.
-    auth.configure(require('path').join(directory,'vetro-sign-in.json'));
-    appAccess.configure(require('path').join(directory,'vetro-app-access.json'));
-});
-var appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth);
+var appPorts = null, appStorageReady = false, appInitializing = false, appInitialization = 0;
+function startAppCommunication() {
+    // The service runtime finishes native API setup before its lifecycle callbacks.
+    // Read Tizen here too: a runtime may expose it only after evaluating this module.
+    tizenRuntime = typeof tizen === 'undefined' ? null : tizen;
+    appIdentity.tizen = tizenRuntime;
+    if (!tizenRuntime || appInitializing || appPorts && appPorts.ready) return;
+    if (appPorts) { appPorts.stop(); appPorts = null; }
+    function connect() { appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth); }
+    if (appStorageReady) { connect(); return; }
+    appInitializing = true;
+    var generation = ++appInitialization;
+    require('./access-store.js').privateDirectory(tizenRuntime, function (error, directory) {
+        if (generation !== appInitialization || !appInitializing) return;
+        appInitializing = false;
+        if (error) return; // Retry on a later lifecycle request; never use shared storage.
+        auth.configure(require('path').join(directory,'vetro-sign-in.json'));
+        appAccess.configure(require('path').join(directory,'vetro-app-access.json'));
+        // A corrupt store stays blocked. Do not reload it on every app request.
+        appStorageReady = true;
+        connect();
+    });
+}
+function stopAppCommunication() {
+    ++appInitialization; appInitializing = false;
+    if (appPorts) { appPorts.stop(); appPorts = null; }
+}
+module.exports.onStart = startAppCommunication;
+module.exports.onRequest = startAppCommunication;
+// TV Node services use onExit; other Tizen service runtimes use onStop.
+module.exports.onExit = stopAppCommunication;
+module.exports.onStop = stopAppCommunication;
 function developmentOnly() { return !tizenRuntime && platform.status().mode === 'app-only'; }
 
 
