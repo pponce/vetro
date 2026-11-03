@@ -370,13 +370,23 @@ class Installer:
                 raise RuntimeError('The updated app settings could not be read back')
         before = ledger['dock']
         after = self.request('/dock', timeout=40)
-        for key in ('fixTizenTube', 'homeShortcut'):
-            if key in before and after.get(key) != before[key]:
-                raise RuntimeError('Launcher setting changed during update: ' + key)
-        was_running = before.get('runtimeEnabled', before.get('enabled'))
-        if after.get('runtimeEnabled', after.get('enabled')) != was_running:
-            raise RuntimeError('Launcher runtime setting changed during update')
-        if was_running:
+        def preferences(value):
+            result = {'runtimeEnabled': value.get('runtimeEnabled', value.get('enabled'))}
+            if type(result['runtimeEnabled']) is not bool:
+                raise RuntimeError('Launcher enabled setting could not be read')
+            result.update({key: value.get(key) for key in ('fixTizenTube', 'homeShortcut') if key in before})
+            return result
+        recorded = preferences(before)
+        chosen_preferences = preferences(after)
+        changes = {key: {'recorded': recorded[key], 'current': value}
+                   for key, value in chosen_preferences.items() if recorded[key] != value}
+        if changes:
+            self.log('Launcher settings differ from the installation snapshot: ' + json.dumps(changes, sort_keys=True))
+            args = getattr(self, 'args', None)
+            if not (getattr(args, 'verify_existing', False) and getattr(args, 'accept_current_launcher', False)):
+                raise RuntimeError('Launcher settings changed. Inspect the current choices; use --verify-existing --accept-current-launcher to keep them and finish verification')
+            self.log('Keeping the current launcher choices for this verification. The original installation snapshot is retained.')
+        if chosen_preferences['runtimeEnabled']:
             previous_pid = after.get('pid')
             self.log('Restarting the enabled launcher with the updated DLL, preserving its settings…')
             self.request('/dock', {'action': 'refresh'}, timeout=120)
@@ -388,6 +398,8 @@ class Installer:
         home = after.get('home') or {}
         if home.get('launcher') and not home.get('device'):
             self.log('Home setup needed: open Launcher, choose Detect Home and enable Vetro, then press Home on the remote.')
+        if preferences(self.request('/dock', timeout=40)) != chosen_preferences:
+            raise RuntimeError('Launcher settings changed again during verification; the attempt remains pending')
         if staging_cleared:
             # Never manufacture the install job/state or remove another lock.
             if self.stage_state(ledger['stage']) is not None:
@@ -402,6 +414,7 @@ class Installer:
             finished = self.worker(ledger['stage'], 'finish')
             if finished.get('verified') is not True or finished.get('revision') != revision:
                 raise RuntimeError('TV updater did not confirm completion of the requested revision')
+        ledger['launcherVerification'] = {'settings': chosen_preferences, 'changesSinceInstall': changes}
         ledger['complete'] = True
         self.write_ledger(ledger)
         self.log('VERIFIED: combined source revision, launcher DLL, both new settings, and root connection.')
@@ -474,9 +487,13 @@ def main():
     parser.add_argument('--report-host')
     parser.add_argument('--verify-existing', action='store_true',
                         help='Only verify the saved attempt for --expected-commit; never sign or install')
+    parser.add_argument('--accept-current-launcher', action='store_true',
+                        help='With --verify-existing, retain current launcher choices when they differ from the installation snapshot')
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535 or not REVISION.fullmatch(args.expected_commit):
         parser.error('Invalid port or expected commit')
+    if args.accept_current_launcher and not args.verify_existing:
+        parser.error('--accept-current-launcher requires --verify-existing')
     installer = Installer(args)
     result = 0
     try:

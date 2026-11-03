@@ -299,6 +299,84 @@ class InstallerTests(unittest.TestCase):
             factory.return_value.verify_existing.assert_called_once_with()
             factory.return_value.run.assert_not_called()
 
+    def changed_launcher_installer(self, accepted=False, current_enabled=False):
+        obj,ledger,fresh=self.cleared_stage_installer()
+        obj.args=SimpleNamespace(verify_existing=True,accept_current_launcher=accepted)
+        original=obj.request
+        def request(route,body=None,timeout=None):
+            value=original(route,body,timeout)
+            if route=='/dock':value.update(enabled=False,runtimeEnabled=current_enabled,running=current_enabled)
+            return value
+        obj.request=request
+        return obj,ledger
+
+    def test_changed_launcher_stays_pending_without_explicit_acknowledgement(self):
+        obj,ledger=self.changed_launcher_installer()
+        with patch.object(installer.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'accept-current-launcher'):obj.verify(ledger)
+        self.assertFalse(ledger['complete'])
+        self.assertTrue(ledger['dock']['enabled'])
+        self.assertNotIn(('/dock',{'action':'refresh'}),obj.calls)
+
+    def test_verification_can_keep_current_disabled_launcher_without_reinstall(self):
+        obj,ledger=self.changed_launcher_installer(accepted=True)
+        original=json.loads(json.dumps(ledger['dock']))
+        with patch.object(installer.time,'sleep'):obj.verify(ledger)
+        self.assertTrue(ledger['complete'])
+        self.assertEqual(ledger['dock'],original,'the original snapshot is retained')
+        self.assertEqual(ledger['launcherVerification']['changesSinceInstall'],{'runtimeEnabled':{'recorded':True,'current':False}})
+        self.assertFalse(ledger['launcherVerification']['settings']['runtimeEnabled'])
+        self.assertFalse(any(c[0]=='/dock' and c[1] is not None for c in obj.calls),'off remains off')
+        self.assertFalse(any('vd_appinstall' in str(c) or c[0]=='/install' for c in obj.calls))
+
+    def test_accepted_current_enabled_launcher_is_refreshed(self):
+        obj,ledger=self.changed_launcher_installer(accepted=True,current_enabled=True)
+        ledger['dock']['enabled']=False
+        with patch.object(installer.time,'sleep'):obj.verify(ledger)
+        self.assertTrue(ledger['complete'])
+        self.assertIn(('/dock',{'action':'refresh'}),obj.calls)
+        self.assertEqual(ledger['launcherVerification']['changesSinceInstall']['runtimeEnabled'],{'recorded':False,'current':True})
+
+    def test_acknowledgement_keeps_all_current_choices_and_rejects_concurrent_changes(self):
+        obj,ledger=self.changed_launcher_installer(accepted=True)
+        ledger['dock']['homeShortcut']=None
+        original=obj.request
+        def request(route,body=None,timeout=None):
+            value=original(route,body,timeout)
+            if route=='/dock':value.update(fixTizenTube=True,homeShortcut={'appId':'example.app','label':'Example'})
+            return value
+        obj.request=request
+        with patch.object(installer.time,'sleep'):obj.verify(ledger)
+        self.assertEqual(set(ledger['launcherVerification']['changesSinceInstall']),{'runtimeEnabled','fixTizenTube','homeShortcut'})
+        obj,ledger=self.changed_launcher_installer(accepted=True);original=obj.request;reads=[0]
+        def changing(route,body=None,timeout=None):
+            value=original(route,body,timeout)
+            if route=='/dock':
+                reads[0]+=1
+                if reads[0]>1:value['runtimeEnabled']=True
+            return value
+        obj.request=changing
+        with patch.object(installer.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'changed again'):obj.verify(ledger)
+        self.assertFalse(ledger['complete']);self.assertNotIn('launcherVerification',ledger)
+
+    def test_acknowledgement_does_not_bypass_installed_file_validation(self):
+        obj,ledger=self.changed_launcher_installer(accepted=True)
+        obj.worker=lambda stage,mode:{'sourceRevision':REV,'launcherSha256':'wrong'}
+        with patch.object(installer.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'Installed files'):obj.verify(ledger)
+        self.assertFalse(ledger['complete'])
+
+    def test_acknowledgement_flag_is_only_available_for_verification(self):
+        args=['install-combined.py','--accept-current-launcher','--tv','192.0.2.1',
+              '--expected-commit',REV,'--project-root','/unused']
+        with patch.object(sys,'argv',args),patch.object(sys,'stderr'),patch.object(installer,'Installer') as factory:
+            with self.assertRaises(SystemExit) as caught:installer.main()
+            self.assertEqual(caught.exception.code,2);factory.assert_not_called()
+        with patch.object(sys,'argv',args+['--verify-existing']),patch.object(installer,'Installer') as factory:
+            self.assertEqual(installer.main(),0)
+            factory.return_value.verify_existing.assert_called_once_with();factory.return_value.run.assert_not_called()
+
     def test_tv_service_executable_is_never_probed_as_node(self):
         obj=object.__new__(installer.Installer);commands=[]
         obj.execute=lambda command: commands.append(command) or frame('probe',PROBE)

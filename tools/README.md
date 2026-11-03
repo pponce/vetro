@@ -50,6 +50,8 @@ python3 tools/install-combined.py --verify-existing --tv TV_IPV4 --project-root 
 
 This requires the matching saved attempt in the same project directory. The installer checkout may be newer than `INSTALLED_COMMIT`; that argument identifies the TV build to verify. A completed record is checked against the running build and root connection.
 
+Verification compares launcher choices with the snapshot taken before installation. If you have changed those choices, inspect the reported differences and add `--accept-current-launcher` to the verification command to retain the current values. This option is available only with `--verify-existing`. An enabled launcher is refreshed; a disabled launcher stays disabled. The installer retains the original snapshot and records the accepted differences separately. Source revision, installed files, root connection and update-lock checks remain required, and another setting change during verification stops completion.
+
 If a reboot removed the temporary updater directory and no TV update lock remains, verification first confirms the exact running revision and root. It uploads a checksum-verified helper to read the installed source revision and launcher hash, checks the app-setting endpoints, and refreshes an enabled launcher while preserving its settings. It then rechecks the running build and absence of update state before completing the local record. It does not recreate an installation job or clear another update's lock. Missing or malformed state inside an existing updater directory remains an error.
 
 ## Validation limits
