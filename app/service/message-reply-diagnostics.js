@@ -3,7 +3,7 @@ var crypto=require('crypto');
 var NAMES=['Error','TypeError','SyntaxError','SecurityError','NotFoundError','InvalidAccessError','InvalidValuesError','TypeMismatchError','QuotaExceededError','NotSupportedError','UnknownError','IOError','InvalidStateError'];
 function scrub(value,secrets,limit) {
     var text=typeof value==='string'?value:'';
-    (secrets||[]).forEach(function(secret){if(typeof secret==='string'&&secret.length>0){text=text.split(secret).join('[redacted]');text=text.split(JSON.stringify(secret).slice(1,-1)).join('[redacted]');}});
+    (secrets||[]).slice().sort(function(a,b){return String(b).length-String(a).length;}).forEach(function(secret){if(typeof secret==='string'&&secret.length>0){text=text.split(secret).join('[redacted]');text=text.split(JSON.stringify(secret).slice(1,-1)).join('[redacted]');}});
     return text.replace(/\b[a-f0-9]{24,}\b/gi,'[redacted-token]').replace(/\b\d{6}\b/g,'[redacted-code]')
         .replace(/(?:file:\/\/)?\/(?:[^\/\s():]+\/)+([^\/\s():]+:\d+(?::\d+)?)/g,'[path]/$1').slice(0,limit||2048);
 }
