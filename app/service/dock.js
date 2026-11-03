@@ -11,6 +11,7 @@
 // changed: no package is disabled and the default Home is untouched.
 
 var fs = require('fs');
+var constants = require('constants');
 var os = require('os');
 var path = require('path');
 var catalog = require('./dock-catalog.js');
@@ -42,6 +43,7 @@ function Dock(options) {
     this.dir = options.dir || path.join(__dirname, '..', 'native', 'dock');
     this.stateFile = options.stateFile || STATE_FILE;
     this.appsFile = options.appsFile || APPS_FILE;
+    this.fifo = options.fifo || FIFO;
     this.sleep = options.sleep || function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
     this.now = options.now || Date.now;
     this.uptime = options.uptime || function () { return os.uptime(); };
@@ -52,6 +54,25 @@ function Dock(options) {
     this.lastCatalog = null;
     this.refreshPending = false;
 }
+
+// The native launcher accepts toggle without arming its Samsung Home close
+// guard. A filtered remote key can use this channel without injecting Home.
+// Nonblocking open fails immediately when no launcher is reading the FIFO.
+Dock.prototype.toggle = function () {
+    var fd;
+    try {
+        if (this.busy || !this.readState().enabled || !this.installed()) return false;
+        fd = fs.openSync(this.fifo, constants.O_WRONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+        if (!fs.fstatSync(fd).isFIFO()) return false;
+        var command = Buffer.from('toggle\n');
+        return fs.writeSync(fd, command, 0, command.length) === command.length;
+    } catch (e) { return false; }
+    finally {
+        // A completed write must not be replayed as a native Home key if close
+        // reports an error. The short FIFO write is atomic (below PIPE_BUF).
+        if (fd !== undefined) { try { fs.closeSync(fd); } catch (ignored) {} }
+    }
+};
 
 Dock.prototype.installed = function () {
     try { return fs.existsSync(path.join(this.dir, DLL)) && fs.existsSync(path.join(this.dir, 'res', 'glass_tile.png')); }

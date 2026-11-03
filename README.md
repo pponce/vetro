@@ -67,6 +67,10 @@ Quick settings and Task manager share the same inventory: disable an assistant i
 
 Do what you want with the remote. Press a button, choose an app, and the button opens it. Shortcuts survive restarts, and a key can also trigger an MQTT message for Home Assistant.
 
+Choose **Toggle Vetro launcher** for the Home key and enable **Remote interception**
+to show the launcher over the current screen. This action keeps Samsung Home open
+when you have selected it. [Set up the launcher shortcut →](app/docs/REMOTE-LAUNCHER.md)
+
 <p align="center">
   <img src="app/docs/images/remapper-dashboard.jpg" alt="The Remapper tab: listen to a remote key, choose an app and save the shortcut" width="1000">
 </p>

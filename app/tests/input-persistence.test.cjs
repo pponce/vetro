@@ -25,6 +25,13 @@ function post(service,body,url='/input'){return new Promise(resolve=>{const req=
  await post(service,{rules:[]},'/remap');let count=starts.length;await service.tick();assert.equal(starts.length,count,'no helper without physical shortcuts');
  await post(service,{rules},'/remap');await service.tick();assert.equal(starts.length,count+1,'interception resumes when shortcuts return');
  await post(service,{mode:'off'});count=starts.length;service=boot();await service.tick();assert.equal(starts.length,count,'explicit off must survive restart');
+ const launcherRules=[{id:'home',enabled:true,trigger:{type:'physical',value:'63'},actions:[{type:'launcher'}]}];
+ await post(service,{rules:launcherRules},'/remap');await post(service,{device:node,mode:'filter'});
+ service=boot();await service.tick();let toggles=0;service.context.dock.toggle=()=>{toggles++;return true;};
+ commands.length=0;service.context.physical.onEvent({action:'down',decision:'blocked',code:63});await service.context.actionQueue;
+ assert.equal(toggles,1,'launcher action survives saved rule validation and interception restoration');
+ assert.deepEqual(commands,[],'restored launcher shortcut does not inject Home or close an app');
+ await post(service,{mode:'off'});
  writesFail=true;result=await post(service,{device:node,mode:'filter'});assert.equal(result.ok,false,'unsaved interception must not report success');assert.equal(service.context.physical.status().policy.mode,'off');
- console.log('PASS input persistence: delayed boot, changed event node, reconnection, temporary listening, rule edits, persistent off, disk failure');
+ console.log('PASS input persistence: delayed boot, changed event node, reconnection, temporary listening, rule edits, restored launcher action, persistent off, disk failure');
 })().catch(e=>{console.error(e);process.exitCode=1;});

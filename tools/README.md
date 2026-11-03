@@ -7,6 +7,7 @@ The combined branch includes:
 - Home-event debounce, so one physical press does not toggle the launcher twice.
 - Cancellation of pending Samsung Home closes when Samsung Home is explicitly opened.
 - A configurable app shortcut inside the launcher, with Samsung Home as the default/fallback.
+- A **Toggle Vetro launcher** remapper action for opening the launcher over the current screen using remote interception. See the [setup guide](../app/docs/REMOTE-LAUNCHER.md).
 - One app to open onscreen after cold boot or normal standby wake.
 - An independent app to return to when another app falls back to Samsung Home/TV.
 

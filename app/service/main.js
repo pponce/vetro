@@ -560,7 +560,12 @@ function runActions(actions) {
     return actions.reduce(function(chain,a){return chain.then(function(){
         var command;
         if(a.type==='mqtt'){bridge.publish(a.topic,a.payload);sent++;mqttSent++;return;}
-        if(a.type==='launch')command='/usr/bin/app_launcher -s '+a.appId;
+        if(a.type==='launcher'){
+            if(dock.toggle()){sent++;return;}
+            // Keep Home usable when the dock is off, restarting, or unavailable.
+            command=control.injectCommand('XF86Home');
+        }
+        else if(a.type==='launch')command='/usr/bin/app_launcher -s '+a.appId;
         else if(a.type==='key'){var key=control.nativeKey(a.key);command=key&&control.injectCommand(key);if(!command)throw new Error('unsupported native key: '+a.key);}
         else {skipped.push(a.type);return;}
         return agentExecute(command,10000).then(function(r){if(r.exit_code||r.timed_out)throw new Error(r.stderr||'native action failed');sent++;});
