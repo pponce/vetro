@@ -279,5 +279,15 @@ function fixture(options) {
     await assert.rejects(f.dock.setHomeShortcut(custom, available), /empty or unreadable/);
     assert.equal(f.dock.readState().homeShortcut, null, 'a failed save restores the previous choice');
 
+    // An installed app shortcut and its label survive a new service instance.
+    const netflix = {appId: 'org.tizen.netflix-app', label: 'Netflix'};
+    f = fixture({homeData: HOME_DATA + '\nH|' + hex(netflix.appId)});
+    await f.dock.enable();
+    await f.dock.setHomeShortcut(netflix, [{appId: netflix.appId, name: 'Netflix', show: true, disabled: false}]);
+    const reopened = new Dock({execute: f.dock.execute, dir: f.dock.dir,
+        stateFile: f.dock.stateFile, appsFile: f.dock.appsFile});
+    assert.deepEqual((await reopened.status()).homeShortcut, netflix);
+    assert.match(fs.readFileSync(f.dock.appsFile, 'utf8'), /customhome\tNetflix\tsys:org\.tizen\.netflix-app\tcom\.samsung\.tv\.csfs/);
+
     console.log('PASS dock service: on, off, boot start, crash restart, back-off that never switches it off');
 })().catch(e => { console.error(e); process.exitCode = 1; });
