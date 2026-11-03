@@ -71,7 +71,8 @@ var BASE = 'http://127.0.0.1:8099';
 var ICON = 'icon.png';
 var IDLE_MS = 300000;
 var report = {probe: {}, apps: [], packages: [], settings: {}};
-var delivered = false, running = false, idleTimer = null;
+var delivered = false, running = false, idleTimer = null, canIdle = false, fullCheck = false;
+var screenError = '', pairingError = '', pairingVisible = false, summaryReady = false;
 var widgetClient=null,widgetCredential=null,widgetConnecting=null,pairingBusy=false;
 function widgetSession() {
   if(widgetCredential && widgetCredential.expires>Date.now()+30000)return Promise.resolve(widgetCredential.token);
@@ -80,29 +81,63 @@ function widgetSession() {
     if(!widgetClient)widgetClient=new VetroAppAccess({widget:true,timeout:2000});
     return widgetClient.call('widget.connect',{});
   }).then(function(d){
-    if(!d||typeof d.token!=='string'||!/^[a-f0-9]{64}$/.test(d.token)||typeof d.expires!=='number')throw Error('Widget identity was not verified');
-    widgetCredential=d;widgetConnecting=null;return d.token;
-  },function(e){widgetConnecting=null;throw e;});
+    if(!d||typeof d.token!=='string'||!/^[a-f0-9]{64}$/.test(d.token)||typeof d.expires!=='number'||!isFinite(d.expires)||d.expires<=Date.now())throw Error('Widget identity was not verified');
+    widgetCredential=d;return d.token;
+  }).then(function(token){widgetConnecting=null;return token;},function(e){widgetConnecting=null;throw e;});
   return widgetConnecting;
 }
+// Bound every HTTP read as well as the MessagePort handshake. A restarted service
+// invalidates widget sessions; renew only after its explicit authentication refusal.
+function widgetRequest(method, route, body, timeout, renewed) {
+  return widgetSession().then(function(token){return new Promise(function(resolve,reject){
+    var xhr=new XMLHttpRequest();
+    xhr.open(method,BASE+route,true);xhr.timeout=timeout;
+    xhr.setRequestHeader('X-Vetro-Widget',token);
+    if(body!==undefined)xhr.setRequestHeader('Content-Type','application/json');
+    xhr.onload=function(){
+      if(xhr.status===401){
+        if(widgetCredential&&widgetCredential.token===token)widgetCredential=null;
+        if(!renewed)return resolve(widgetRequest(method,route,body,timeout,true));
+      }
+      if(xhr.status!==200)return reject(Error('Service replied HTTP '+xhr.status));
+      try{resolve(JSON.parse(xhr.responseText));}catch(e){reject(Error('Service response is not JSON'));}
+    };
+    xhr.onerror=function(){reject(Error('The authenticated request did not answer on port 8099.'));};
+    xhr.ontimeout=function(){reject(Error('Service request timed out'));};
+    xhr.send(body===undefined?null:JSON.stringify(body));
+  });});
+}
+function pairingStatus() {
+  var el=document.getElementById('pairingStatus');
+  if(el)el.textContent=pairingError?'Pairing unavailable: '+pairingError:'To pair a browser or installer, request a code there. It appears here without running full diagnostics.';
+}
 function pollPairing() {
-  if(document.hidden||pairingBusy)return;
+  if(document.hidden||pairingBusy)return Promise.resolve();
   pairingBusy=true;
-  widgetSession().then(function(token){return fetch(BASE+'/auth/pending',{headers:{'X-Vetro-Widget':token}});})
-    .then(function(r){if(r.status!==200)throw Error('Pairing is unavailable');return r.json();})
+  return widgetRequest('GET','/auth/pending',undefined,4000)
     .then(function(d){
-      document.getElementById('pairing').hidden=!d.code;
+      if(!d||typeof d!=='object')throw Error('Pairing response is invalid');
+      var wasVisible=pairingVisible;
+      pairingVisible=typeof d.code==='string'&&/^\d{6}$/.test(d.code);
+      pairingError='';
+      document.getElementById('pairing').hidden=!pairingVisible;
       document.getElementById('pairingCode').textContent=d.code||'';
       document.getElementById('pairingName').textContent=d.code?'Request from '+d.name:'';
       document.getElementById('pairingExpiry').textContent=d.code?'Expires in '+d.expiresIn+' seconds.':'';
-      pairingBusy=false;
-    },function(){document.getElementById('pairing').hidden=true;pairingBusy=false;});
+      if(wasVisible!==pairingVisible)resetIdle();
+    }).catch(function(e){
+      pairingVisible=false;pairingError=String(e&&e.message||e);
+      document.getElementById('pairing').hidden=true;
+      document.getElementById('pairingCode').textContent='';
+      resetIdle();
+    }).then(function(){pairingBusy=false;pairingStatus();});
 }
 
 // The service keeps running without this page; a resident page only holds memory.
 function leave() { try { tizen.application.getCurrentApplication().exit(); } catch (e) {} }
 // Every probe gets a time limit: a Tizen call whose callback never fires must not leave the screen on "Checking".
 function attempt(name, fn, limit) {
+  limit = limit || 8000;
   return new Promise(function (resolve) {
     var done = false, timer = setTimeout(function () { finish({ok: false, error: 'no answer in ' + Math.round(limit / 1000) + ' s'}); }, limit || 8000);
     function finish(r) { if (done) return; done = true; clearTimeout(timer); report.probe[name] = r; resolve(); }
@@ -125,47 +160,24 @@ function launchService() {
   });
 }
 function reach(tries) {
-  return widgetSession().then(function(token){return fetch(BASE + '/status',{headers:{'X-Vetro-Widget':token}});}).then(function (r) { if(r.status!==200)throw Error('Service authentication failed');return r.status; }).catch(function (e) {
+  return widgetRequest('GET','/status',undefined,4000).then(function () { return 200; }).catch(function (e) {
     if (tries <= 1) throw e;
     return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return reach(tries - 1); });
   });
 }
 function cb(call) { return new Promise(function (ok, ko) { call(ok, ko); }); }
 function sendReport() {
-  return widgetSession().then(function(token){return new Promise(function (resolve, reject) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', BASE + '/probe', true);
-    xhr.timeout = 10000;
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.setRequestHeader('X-Vetro-Widget',token);
-    xhr.onload = function () {
-      var result;
-      try { result = JSON.parse(xhr.responseText); } catch (e) { return reject(new Error('Response is not JSON')); }
-      if (xhr.status !== 200 || result.ok !== true) return reject(new Error('Report rejected: HTTP ' + xhr.status));
-      resolve({status: xhr.status, persisted: result.persisted});
-    };
-    xhr.onerror = function () { reject(new Error('Report send failed')); };
-    xhr.ontimeout = function () { reject(new Error('Report send timeout')); };
-    xhr.send(JSON.stringify(report));
-  });});
+  return widgetRequest('POST','/probe',report,10000).then(function(result){
+    if(!result||result.ok!==true)throw Error('Report was not accepted');
+    return result;
+  });
 }
 // What the TV screen shows: one small JSON read. The launcher check inside it can take a few seconds.
 function readScreen() {
-  return widgetSession().then(function(token){return new Promise(function (resolve, reject) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', BASE + '/screen', true);
-    xhr.setRequestHeader('X-Vetro-Widget',token);
-    xhr.timeout = 12000;
-    xhr.onload = function () {
-      var d;
-      try { d = JSON.parse(xhr.responseText); } catch (e) { return reject(new Error('Response is not JSON')); }
-      if (xhr.status !== 200 || !d || d.error) return reject(new Error('HTTP ' + xhr.status));
-      resolve(d);
-    };
-    xhr.onerror = function () { reject(new Error('Service unreachable')); };
-    xhr.ontimeout = function () { reject(new Error('Service timeout')); };
-    xhr.send();
-  });});
+  return widgetRequest('GET','/screen',undefined,12000).then(function(d){
+    if(!d||d.error)throw Error('Service summary unavailable');
+    return d;
+  });
 }
 function tryConnect(port) {
   return new Promise(function (resolve, reject) {
@@ -216,11 +228,11 @@ function appVersion() { try { return tizen.application.getCurrentApplication().a
 function checks(d) {
   var out = [], root, api, apiMissing = [], mem, l, i;
   if (!d) {
-    out.push(['bad', 'Service', 'Not answering', 'Vetro\'s background service did not answer on port 8099. Close this screen and open Vetro again; if it stays like this, reinstall Vetro.' +
-      (report.probe.serviceLaunch && !report.probe.serviceLaunch.ok ? ' ' + esc(report.probe.serviceLaunch.error) : ''), 'SVC DOWN', 'bad']);
+    out.push(['bad', 'Service', 'Not verified', 'The TV screen could not read the service. ' + esc(screenError || 'Connection unavailable') +
+      (report.probe.serviceLaunch && !report.probe.serviceLaunch.ok ? ' ' + esc(report.probe.serviceLaunch.error) : ''), 'SVC UNVERIFIED', 'bad']);
   } else {
     var av = appVersion(), mismatch = av && d.version && av !== d.version;
-    out.push(mismatch ? ['warn', 'Service', 'Version differs', 'The app is ' + esc(av) + ' and the service is ' + esc(d.version) + '. Reinstall Vetro so both match.', 'SVC ' + d.version + '/APP ' + av, 'warn']
+    out.push(screenError ? ['warn','Service','Report not saved',esc(screenError),'REPORT FAILED','warn'] : mismatch ? ['warn', 'Service', 'Version differs', 'The app is ' + esc(av) + ' and the service is ' + esc(d.version) + '. Reinstall Vetro so both match.', 'SVC ' + d.version + '/APP ' + av, 'warn']
       : ['ok', 'Service', 'Running', 'Port ' + esc(d.port), 'svc ok']);
   }
   if (!d) out.push(['na', 'Root access', 'Unknown', null, 'root ?']);
@@ -240,8 +252,9 @@ function checks(d) {
   else if (l.running === false) out.push(['bad', 'Launcher', l.failures ? 'Failed to start' : 'Not running',
     (l.failures ? 'Tried ' + esc(l.failures) + ' times. ' : '') + 'Open the Launcher tab in the dashboard and read the error.', 'LAUNCHER FAIL' + (l.failures ? ' x' + l.failures : ''), 'bad']);
   else out.push(['warn', 'Launcher', 'Cannot check', 'It needs root access to be checked.', 'LAUNCHER ?', 'warn']);
-  ['tizenObject', 'webapisObject', 'apps', 'packages'].forEach(function (k) { if (!probeOk(k)) apiMissing.push(k.replace('Object', '')); });
+  (fullCheck ? ['tizenObject', 'webapisObject', 'apps', 'packages'] : ['tizenObject', 'webapisObject']).forEach(function (k) { if (!probeOk(k)) apiMissing.push(k.replace('Object', '')); });
   api = apiMissing.length ? ['warn', 'TV APIs', 'Limited', 'Not available: ' + esc(apiMissing.join(', ')) + '.', 'API ' + apiMissing.join('/'), 'warn'] : ['ok', 'TV APIs', 'Available', null, 'api ok'];
+  if(!fullCheck&&!apiMissing.length)api=['na','TV APIs','Full check not run','App and package inventory is checked only when you press OK.','api not checked'];
   out.push(api);
   mem = d && d.memory && d.memory.availableMb;
   if (typeof mem !== 'number') out.push(['na', 'Memory', 'Unknown', null, 'mem ?']);
@@ -262,10 +275,11 @@ function render(d, waiting) {
   var list = waiting ? WAITING.map(function (w) { return ['wait', w[0], w[1], null, '']; }) : checks(d), bad = 0, warn = 0, state, label, sum, device = report.settings, model, firmware, line, version, pin = d && typeof d.pin === 'string' ? d.pin : '';
   list.forEach(function (c) { if (waiting) return; if (c[0] === 'bad') bad++; else if (c[0] === 'warn') warn++; });
   if (waiting) { state = 'wait'; label = 'Checking'; sum = 'Checking'; }
-  else if (!d) { state = 'bad'; label = 'Not responding'; sum = 'The service is down'; }
+  else if (!d) { state = 'bad'; label = 'Connection needs attention'; sum = 'Service state is unverified'; }
   else if (bad) { state = 'bad'; label = 'Needs attention'; sum = bad + (bad === 1 ? ' problem' : ' problems'); }
   else if (warn) { state = 'warn'; label = 'Running, with limits'; sum = warn + (warn === 1 ? ' thing to check' : ' things to check'); }
-  else { state = 'ok'; label = 'Running in the background'; sum = 'All good. You can close this screen, Vetro keeps running without it.'; }
+  else { state = 'ok'; label = 'Running in the background'; sum = fullCheck ? 'All good. You can close this screen, Vetro keeps running without it.' : 'Service checks complete. Full diagnostics are optional.'; }
+  if(!waiting){summaryReady=!!d;canIdle=!!d&&!bad&&!warn&&!screenError;}
   version = (d && d.version) || appVersion();
   model = device.realModel || device.model;
   firmware = device.firmware ? String(device.firmware).split('-').pop() : null;   // T-NKM2DEUC-2310.0 -> 2310.0
@@ -280,11 +294,12 @@ function render(d, waiting) {
     '</div><div class="state ' + (state === 'ok' ? '' : state) + '">' + ICONS[state] + esc(label) + '</div></div>' +
     '<div class="dash"><div class="dh"><small>DASHBOARD</small><div class="pin" id="pin"' + (pin ? '' : ' hidden') + '>PIN<b>' + esc(pin) + '</b></div></div>' +
     '<div class="url' + (addr ? '' : ' off') + '">' + (addr ? esc(addr) : 'Address unavailable') + '</div>' +
-    '<p>' + (addr ? 'Open it on a phone or computer on the same network.' : waiting ? 'Vetro is checking the TV. The address appears in a few seconds.' : 'Dashboard at <code>http://&lt;TV&gt;:8099/</code> once the service answers (use the TV address from your router).') + '</p></div></div>' +
+    '<p>' + (addr ? 'Open it on a phone or computer on the same network.' : waiting ? 'Vetro is checking the service connection.' : 'Dashboard at <code>http://&lt;TV&gt;:8099/</code> (use the TV address from your router).') + '</p><p id="pairingStatus"></p></div></div>' +
     '<div class="panel ' + (bad ? 'bad' : warn ? 'warn' : '') + '"><div class="ph"><h2>Diagnostics</h2><div class="sum ' + (state === 'ok' ? '' : state) + '" id="sum">' + esc(sum) + '</div></div>' +
     '<div class="grid">' + cells + '</div>' +
     '<div class="share"><div class="t">Asking for help? Read out or photograph this line.</div><code>' + (waiting ? 'Collecting the details&hellip;' : line.join(' &middot; ')) + '</code></div>' +
-    '<div class="keys"><span><i>OK</i>Check again</span><span><i>Back</i>Close</span></div></div>';
+    '<div class="keys"><span><i>OK</i>' + (summaryReady ? 'Full diagnostics (may take several minutes)' : 'Retry connection') + '</span><span><i>Back</i>Close</span></div></div>';
+  pairingStatus();
 }
 function fit() {
   var k = Math.min(window.innerWidth / 1920, window.innerHeight / 1080), s = document.getElementById('stage');
@@ -294,37 +309,49 @@ function fit() {
 // ---- run ----------------------------------------------------------------------------------------------------
 function resetIdle() {
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(leave, IDLE_MS);
+  idleTimer = null;
+  if(running||!canIdle||pairingVisible||pairingError)return;
+  idleTimer = setTimeout(function(){if(!running&&canIdle&&!pairingVisible&&!pairingError)leave();}, IDLE_MS);
 }
 // Shows how far the checks are, so a slow TV reads as working and not as stuck.
-function progress(n) {
+function progress(n, total) {
   var el = document.getElementById('sum');
-  if (el) el.textContent = 'Checking ' + n + ' of ' + jobs.length;
+  if (el) el.textContent = 'Checking ' + n + ' of ' + total;
 }
-function run() {
+function run(full) {
   if (running) return Promise.resolve();
-  running = true; delivered = false;
+  running = true; delivered = false; canIdle = false; screenError = ''; fullCheck = full === true;
+  resetIdle();
   report = {probe: {}, apps: [], packages: [], settings: {}};
   render(null, true);
-  return jobs.reduce(function (p, j, i) { return p.then(function () { progress(i + 1); return attempt(j[0], j[1], j[2]); }); }, Promise.resolve())
-    .then(function () { return sendReport().then(function () { delivered = true; }, function () {}); })
-    .then(function () { return readScreen().catch(function () { return null; }); })
+  // Package enumeration can block the TV's JavaScript thread for minutes. It
+  // must never be on the path to displaying an owner-pairing code.
+  var selected=fullCheck?jobs:[jobs[0],jobs[1],jobs[2],jobs[6],jobs[9]];
+  return selected.reduce(function (p, j, i) { return p.then(function () {
+    if(pairingVisible)fullCheck=false;
+    if(!fullCheck&&(j[0]==='apps'||j[0]==='packages'))return;
+    progress(i + 1, selected.length);
+    return attempt(j[0], j[1], j[2]).then(function(){if(i===0)return pollPairing();});
+  }); }, Promise.resolve())
+    // Do not replace the service's last full inventory with a quick-check report.
+    .then(function () { if(fullCheck)return sendReport().then(function () { delivered = true; }, function (e) {screenError=String(e&&e.message||e);}); })
+    .then(function () { return readScreen().catch(function (e) {screenError=String(e&&e.message||e);return null;}); })
     .then(function (d) { render(d, false); }, function () { render(null, false); })
-    .then(function () { running = false; });
+    .then(function () { running = false;resetIdle(); });
 }
-document.addEventListener('visibilitychange', function () { if (document.hidden && delivered) leave(); });
+document.addEventListener('visibilitychange', function () { if (document.hidden && canIdle && !running && !pairingVisible && !pairingError) leave(); });
 document.addEventListener('keydown', function (e) {
   var k = e && e.keyCode;
   resetIdle();
   if (k === 10009 || k === 27) leave();
-  else if (k === 13) run();
+  else if (k === 13 && !pairingVisible) run(summaryReady && !pairingError);
 });
 window.addEventListener('resize', fit);
 setInterval(pollPairing,2000);
 fit();
 resetIdle();
 // Module scripts run after this classic script and before DOMContentLoaded.
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else run();
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){run(false);}); else run(false);
 </script>
 <script type="module">import { Service } from 'wrt:service'; window.a2sService = Service;</script>
 </body>

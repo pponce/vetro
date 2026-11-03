@@ -68,6 +68,26 @@ The helper source is in `tools/tv-updater/`. `build-update-helper.yml` compiles 
 
 The Vetro installer checks service-side Tizen APIs before installation, saves startup/return observations, and verifies app communication availability after reconnection. App access stays off until the owner enables it. See [combined testing](../notes/combined-permissions-testing.md) and [app permissions](../app/docs/APP-PERMISSIONS.md).
 
+### Pairing and the TV screen
+
+Opening Vetro starts its service, checks for a requested pairing code, and reads
+the service summary. Full app/package inventory is optional: press **OK** after
+pairing to run it. Some TVs take several minutes in package enumeration; a native
+call can block the page's JavaScript thread, including its timeout callbacks.
+The initial screen does not enumerate apps or packages, and does not overwrite
+the service's previous full diagnostic report.
+
+Connection and trusted-widget errors appear on the TV. An unreadable service
+summary is reported as unverified, rather than as proof that the service is down.
+HTTP reads have timeouts, and an explicit HTTP 401 clears and renews a stale
+widget session once. Pairing still requires the same trusted MessagePort and
+widget identity; there is no unauthenticated code or credential endpoint.
+
+The five-minute idle close starts after successful checks. It is disabled while
+checks are running, a code is visible, or an error needs attention. **Back** still
+closes Vetro. If pairing fails, stop the installer at its prompt; retain its
+attempt record and inspect the TV connection before attempting another install.
+
 ## Capture a power-on test
 
 After pairing the maintenance tool during installation, select a power-on app,
