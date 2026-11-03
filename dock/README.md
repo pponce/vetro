@@ -20,6 +20,9 @@ custom home app’s own Home takeover off while using Vetro’s launcher.
 - `src/` the dock. `Core/` is pure logic (layout, catalog, input decoding) and has tests;
   `Native/` holds the P/Invoke surface; `Ui/` draws with EFL.
 - `tests/` desktop tests of `Core/`: `cd tests && dotnet run`.
+- `native-tests/` Linux tests that run real child commands through Ecore. With
+  `libecore1` installed, run `dotnet run --project native-tests/Launcher.NativeTests.csproj`.
+  These tests do not require a TV or a display server.
 - `res/` the images (bar, shadow, glow, focus ring) and the generic Settings/HDMI icons.
 - `tools/` generators for those images (`make-glass.cjs`, `system_icons.py`).
 - `designer/` a standalone page to try looks; `designer/chosen.json` is the design the launcher currently draws.

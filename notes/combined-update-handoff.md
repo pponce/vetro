@@ -37,11 +37,13 @@ The fourth attempt at `ae97e388d0a8880279be009609f08af9dc1c0441` reached host pa
 
 The merged application passed 71 suites. The 9 integration suites and 17 Python parser tests passed. The updater has 13 .NET suites, including real loopback socket fixtures that exercise the actual DUID probe with short IDs and zero-sender WRITE/CLOSE combinations. The host installer has 17 Python tests. These cover cached certificate eligibility, identity and checksum mismatches, fragmented/invalid SDB frames, exact/repeatable transfers, detached process completion, one-time install submission, acknowledgement loss, and resumed verification. A cross-language CI check feeds the real C# serializer's marked result and surrounding test/runtime messages into the Python decoder. A simulated complete host update exercises the actual decoder at probe, installed-file verification, and completion, plus short-ID certificate selection and a rerun without duplicate dispatch. GitHub additionally runs the launcher tests and compilation.
 
-The physical S95C install and behavior checks remain outstanding. Use `tools/README.md`, `app/docs/STARTUP-APP.md`, and `app/docs/RETURN-APP.md` for the procedure and limits.
+The user successfully installed `1a2f3ecfbcf124ca0e5d268499fca98d6c9109fb` on the S95C. The installer verified the installed source revision, native DLL, both setting endpoints, and root connection. The cached Partner certificate and loopback-SDB route worked without changing the Developer Mode host address.
+
+Physical launcher testing then revealed a Home regression: the first Home from Netflix could load/black out before returning to Netflix with the launcher; a later Home left Samsung Home behind the launcher. The user confirmed that no return app was selected and AeroTizen App mode remained on. A read-only capture showed the new native launcher running as root with its suppression option, while Samsung Home was the fullscreen app. No managed exception was logged. See `launcher-home-regression.md` for the process-completion repair and its validation limits.
 
 ## Next steps
 
-1. Use the exact final combined commit supplied with the retry block. The block uses the existing separate worktree and preserves local edits.
+1. Build and validate the Home regression repair, then provide an exact pinned combined commit for the existing installer. Preserve the startup, return, debounce, and configurable shortcut changes. Do not reuse the now-installed pre-repair revision as the next update target.
 2. Keep the TV on and Vetro's root connection available. Reuse the cached Partner certificate and loopback SDB; do not change Developer Mode's Host PC IP.
 3. Confirm the script reports VERIFIED after checking the installed source revision, launcher DLL, settings endpoints, and launcher refresh. An unresolved submission must only resume verification; never clear its ledger or submit again without evidence.
 4. Test ordinary standby power-on, cold boot, the return destination, Home-key debounce, opening Samsung Home, and the configured Home shortcut.
