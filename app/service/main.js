@@ -102,6 +102,7 @@ var appAccess = new (require('./app-access.js').Access)({
     })
 });
 var appPorts = null, appStorageReady = false, appInitializing = false, appInitialization = 0;
+var connectionDiagnostics = new (require('./connection-diagnostics.js').Diagnostics)(buildInfo);
 function startAppCommunication() {
     // The service runtime finishes native API setup before its lifecycle callbacks.
     // Read Tizen here too: a runtime may expose it only after evaluating this module.
@@ -109,16 +110,19 @@ function startAppCommunication() {
     appIdentity.tizen = tizenRuntime;
     if (!tizenRuntime || appInitializing || appPorts && appPorts.ready) return;
     if (appPorts) { appPorts.stop(); appPorts = null; }
-    function connect() { appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth); }
+    function connect() { appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth,connectionDiagnostics); }
     if (appStorageReady) { connect(); return; }
     appInitializing = true;
+    connectionDiagnostics.storage('resolving',false,false);
     var generation = ++appInitialization;
     require('./access-store.js').privateDirectory(tizenRuntime, function (error, directory) {
         if (generation !== appInitialization || !appInitializing) return;
         appInitializing = false;
-        if (error) return; // Retry on a later lifecycle request; never use shared storage.
+        if (error) { connectionDiagnostics.storage('failed',false,false,error);return; }
         auth.configure(require('path').join(directory,'vetro-sign-in.json'));
         appAccess.configure(require('path').join(directory,'vetro-app-access.json'));
+        connectionDiagnostics.storage(auth.store.error||appAccess.store.error?'blocked':'ready',
+            !auth.store.error,!appAccess.store.error);
         // A corrupt store stays blocked. Do not reload it on every app request.
         appStorageReady = true;
         connect();
@@ -128,11 +132,11 @@ function stopAppCommunication() {
     ++appInitialization; appInitializing = false;
     if (appPorts) { appPorts.stop(); appPorts = null; }
 }
-module.exports.onStart = startAppCommunication;
-module.exports.onRequest = startAppCommunication;
+module.exports.onStart = function(){connectionDiagnostics.lifecycle('starts');startAppCommunication();};
+module.exports.onRequest = function(){connectionDiagnostics.lifecycle('requests');startAppCommunication();};
 // TV Node services use onExit; other Tizen service runtimes use onStop.
-module.exports.onExit = stopAppCommunication;
-module.exports.onStop = stopAppCommunication;
+module.exports.onExit = function(){connectionDiagnostics.lifecycle('stops');stopAppCommunication();};
+module.exports.onStop = function(){connectionDiagnostics.lifecycle('stops');stopAppCommunication();};
 function developmentOnly() { return !tizenRuntime && platform.status().mode === 'app-only'; }
 
 
@@ -807,7 +811,9 @@ function handleRemapRun(req,res){readJsonBody(req,res,function(p){
 
 http.createServer(function (req, res) {
     var url = (req.url || '/').split('?')[0];
-    if (auth.gate(req,res,url,{open:developmentOnly(),onPair:function () { return runActions([{type:'launch',appId:'vetrotvapp.app'}]); }})) return;
+    if (auth.gate(req,res,url,{open:developmentOnly(),
+        connectionDiagnostics:buildInfo.connectionDiagnostics===true?function(){return connectionDiagnostics.snapshot();}:null,
+        onPair:function () { return runActions([{type:'launch',appId:'vetrotvapp.app'}]); }})) return;
     if (url === '/app-access') {
         if (req.method === 'GET') return serveJson(res,appAccess.snapshot());
         if (req.method !== 'POST') return serveJson(res,{error:'Use GET or POST'},405);

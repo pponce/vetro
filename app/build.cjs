@@ -36,6 +36,14 @@ function collectFiles() {
         'native/dock/tvlauncher-dotnet.dll', 'native/dock/tvlauncher-dotnet.runtimeconfig.json'].concat(
         fs.readdirSync(path.join(__dirname,'service')).filter(name => name.endsWith('.js')).sort().map(name => 'service/' + name));
     const metadata = Object.assign({}, require('./service/build-info.js'));
+    // Public connection telemetry is a build-time opt-in, never enabled by a
+    // request or by a runtime environment variable on the installed TV.
+    delete metadata.connectionDiagnostics;
+    const diagnostics = process.env.VETRO_CONNECTION_DIAGNOSTICS;
+    if (diagnostics !== undefined && diagnostics !== '' && diagnostics !== '0' && diagnostics !== '1') {
+        throw new Error('VETRO_CONNECTION_DIAGNOSTICS must be 0 or 1');
+    }
+    if (diagnostics === '1') metadata.connectionDiagnostics = true;
     if (port !== DEFAULT_PORT) metadata.port = port;
     let revision = process.env.VETRO_SOURCE_REVISION;
     if (!revision) {

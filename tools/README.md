@@ -103,3 +103,21 @@ foreground, source and monitoring state. It does not navigate, change settings
 or start pairing. If the credential expired, pair the maintenance tool before
 repeating the test. Reports omit owner credentials, app approvals and remote-key
 history. Run the capture before changing selections or testing automatic return.
+
+## Connection diagnostics builds
+
+Set `VETRO_CONNECTION_DIAGNOSTICS=1` when running the chosen package builder to
+include limited connection telemetry in an unpaired `GET /status` response.
+The response keeps its HTTP 401 or storage-failure HTTP 503 status. Other API
+routes, widget credentials, pairing and app permissions retain their access checks.
+
+The `connectionDiagnostics` object identifies the running service source revision,
+lifecycle calls, private-storage readiness, listener registration, and counts of
+received, rejected and replied-to widget requests. It includes fixed error names
+and frame-shape flags. It omits request contents, app identities, pairing codes,
+credentials, private paths, device details and command output. Counters are capped
+and held in memory for the service's lifetime; no diagnostic files are written.
+
+This telemetry is readable by an unpaired client that can reach the service.
+Ordinary builds omit it. Build without the flag to remove its public exposure;
+the installed service has no HTTP or runtime-environment switch to enable it.

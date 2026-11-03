@@ -89,9 +89,19 @@ Auth.prototype.confirmPair=function(req,res){
 };
 Auth.prototype.gate=function(req,res,url,options){
     options=options||{};var self=this,h=req.headers||{},origin=originOk(req);
+    function unavailable(status,message) {
+        var body={error:message};
+        // Explicit diagnostic packages can report connection milestones while
+        // preserving the refusal. This never provides a token, code or API access.
+        if(origin && req.method==='GET' && url==='/status' &&
+            typeof options.connectionDiagnostics==='function') {
+            try { body.connectionDiagnostics=options.connectionDiagnostics(); } catch (_) {}
+        }
+        json(res,status,body);
+    }
     if(options.open)return origin&&(hostOk(req)||!h.host)?false:(json(res,403,{error:'Cross-site request refused'}),true);
     if(!hostOk(req)){json(res,403,{error:'Open Vetro using the TV IP address'});return true;}
-    if(this.store.error){json(res,503,{error:this.store.error});return true;}
+    if(this.store.error){unavailable(503,this.store.error);return true;}
     // Widget bootstrap is available only over the trusted MessagePort to vetrotvapp.app.
     if(h['x-vetro-widget']!==undefined){
         var token=h['x-vetro-widget'],address=req.socket&&req.socket.remoteAddress;
@@ -117,7 +127,7 @@ Auth.prototype.gate=function(req,res,url,options){
     var session=this.session(req);
     if(!session){
         if((url==='/'||url==='/index.html')&&req.method==='GET'){res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','X-Frame-Options':'DENY','X-Content-Type-Options':'nosniff'});res.end(LOGIN);}
-        else json(res,401,{error:'Pair this device in the Vetro dashboard first'});
+        else unavailable(401,'Pair this device in the Vetro dashboard first');
         return true;
     }
     if(req.method!=='GET'&&req.method!=='POST'){json(res,405,{error:'Unsupported method'});return true;}
