@@ -36,6 +36,7 @@ var menuSettings = new (require('./menu-settings.js').Catalog)(agentExecute);
 var quickSettings = require('./quick-settings.js');
 var leftovers = new (require('./leftovers.js').Leftovers)(agentExecute);
 var StartupApp = require('./startup-app.js');
+var ReturnApp = require('./return-app.js');
 var Foreground = require('./foreground-state.js');
 var appPowerReader = new (require('./power-state.js').Reader)();
 function launchVisibleApp(appId, guard) {
@@ -57,6 +58,14 @@ var startupApp = new StartupApp.StartupApp({
     inventory: function () { return inventory(true); },
     presence: function () { return presence.read(); },
     launch: launchVisibleApp, snapshot: foregroundSnapshot, activity: remoteActivity
+});
+var returnApp = new ReturnApp.ReturnApp({
+    readPower: appPowerReader.read.bind(appPowerReader),
+    ready: function () { return platform.status().agent.connected === true; },
+    paused: function () { return startupApp.status().pending; },
+    inventory: function () { return inventory(true); },
+    launch: launchVisibleApp,
+    snapshot: foregroundSnapshot
 });
 // Components whose disabled flag Vetro may change: verified ACR set plus Quick Settings groups.
 var TOGGLE_IDS = debloat.VERIFIED_GLOBAL_IDS.concat(quickSettings.ALLOWED_IDS);
@@ -533,6 +542,7 @@ function handleAppChoice(req, res, choice, label) {
     }, 2048);
 }
 function handleStartupApp(req, res) { return handleAppChoice(req, res, startupApp, 'Startup'); }
+function handleReturnApp(req, res) { return handleAppChoice(req, res, returnApp, 'Return'); }
 
 function handleBlocklist(req, res) {
     var q = (req.url || '').split('?')[1] || '';
@@ -721,6 +731,7 @@ function handleRemapRun(req,res){readJsonBody(req,res,function(p){
 http.createServer(function (req, res) {
     var url = (req.url || '/').split('?')[0];
     if (url === '/startup-app') return handleStartupApp(req, res);
+    if (url === '/return-app') return handleReturnApp(req, res);
     if (url === '/diagnostics/download') {
         if (req.method !== 'GET') return serveJson(res, {error:'Use GET to download diagnostics'}, 405);
         return downloadDiagnostics(res);
@@ -769,7 +780,7 @@ http.createServer(function (req, res) {
     if (url === '/privacy') return privacy.read().then(function(d){serveJson(res,d)}).catch(function(e){serveJson(res,{error:e.message},503)});
     if (url === '/tv-menu') { var q=/[?&]id=([^&]+)/.exec(req.url||''), menuId=null; try { if(q)menuId=decodeURIComponent(q[1]); } catch(e) { return serveJson(res,{error:'Invalid menu ID'},400); } return (q?menuSettings.read(menuId):menuSettings.load()).then(function(d){serveJson(res,d)}).catch(function(e){serveJson(res,{error:e.message},503)}); }
     if (url === '/monitor') { var scope=/[?&]scope=([^&]*)/.exec(req.url||'');if(scope&&!/^(summary|full)$/.test(scope[1]))return serveJson(res,{error:'Unsupported monitor scope'},400);return monitor.snapshot(scope?scope[1]:'full').then(function(d){d.telemetry=readTelemetry();serveJson(res,d);}).catch(function(e){serveJson(res,{error:e.message},503);}); }
-    if (url === '/startup') return Promise.all([inventory(false),monitor.startup().catch(function(e){return {error:e.message};})]).then(function(d){serveJson(res,{apps:d[0].apps,services:Array.isArray(d[1])?d[1]:[],serviceError:d[1].error||null,foreground:startupApp.status()});});
+    if (url === '/startup') return Promise.all([inventory(false),monitor.startup().catch(function(e){return {error:e.message};})]).then(function(d){serveJson(res,{apps:d[0].apps,services:Array.isArray(d[1])?d[1]:[],serviceError:d[1].error||null,foreground:startupApp.status(),returnApp:returnApp.status()});});
     if (url === '/telemetry') return serveJson(res, readTelemetry());
     if (url === '/leftovers') return handleLeftovers(req,res);
     if (url === '/status') return serveJson(res, Object.assign({}, platform.status(), {app: buildInfo}));
@@ -794,7 +805,9 @@ http.createServer(function (req, res) {
 
 platform.start();
 // Explicit power transitions and actual Linux resume, never a root-agent reconnect alone.
+// With no selected app tick() returns without polling or sending a TV command.
 var startupAppTimer=setInterval(function(){startupApp.tick();},2000);if(startupAppTimer.unref)startupAppTimer.unref();
+var returnAppTimer=setInterval(function(){returnApp.tick();},2000);if(returnAppTimer.unref)returnAppTimer.unref();
 // The dock is started again after a boot or a crash while its switch is on.
 // A short tick notices the moment the root agent connects, so after a boot the dock starts at once
 // instead of waiting for the next 10 s round.
