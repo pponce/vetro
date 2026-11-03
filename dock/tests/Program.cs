@@ -627,6 +627,16 @@ namespace Launcher.Tests
             });
 
 
+            T.Run("Mapped Home belongs to the remapper", () =>
+            {
+                var home = new HomeKeyHandler { Mapped = true };
+                T.Eq(home.FromEvdev(0, false), HomeKeyAction.None, "physical Home cannot open the launcher");
+                T.Eq(home.FromWindow(1, true), HomeKeyAction.None, "window Home cannot duplicate the mapped toggle");
+                T.Eq(home.FromEvdev(2, true), HomeKeyAction.None, "physical Home cannot hide the launcher");
+                home.Mapped = false;
+                T.Eq(home.FromEvdev(3, false), HomeKeyAction.Show, "standalone mode still owns Home");
+            });
+
             T.Run("Home: evdev opens the dock and the matching window event leaves it open", () =>
             {
                 var home = new HomeKeyHandler();

@@ -10,6 +10,7 @@ namespace Launcher.Core
     {
         private const double DebounceSeconds = 0.35;
         private double _lastHome = double.NegativeInfinity;
+        public bool Mapped { get; set; }
 
         public HomeKeyAction FromEvdev(double now, bool active)
         {
@@ -24,6 +25,7 @@ namespace Launcher.Core
 
         private HomeKeyAction Accept(double now, bool active)
         {
+            if (Mapped) return HomeKeyAction.None;
             if (now - _lastHome < DebounceSeconds) return HomeKeyAction.None;
             _lastHome = now;
             return active ? HomeKeyAction.Hide : HomeKeyAction.Show;

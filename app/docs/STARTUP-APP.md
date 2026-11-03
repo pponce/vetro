@@ -16,11 +16,24 @@ Only one app can have this option enabled. Selecting another app replaces the pr
 | Start at boot | Set Tizen's startup flag for the app or component | Multiple |
 | Restart automatically | Set Tizen's restart flag for the component | Multiple |
 
-The controls are independent. Selecting a power-on app does not change its boot or restart flags, Samsung's Autorun settings, or the Home button. The selected app does not need its **Start at boot** switch enabled. Apps without a launcher entry and disabled apps cannot be selected.
+The controls are independent. Selecting a power-on app does not change its boot or restart flags, Samsung's Autorun settings, or the Home button. The selected app does not need either **Start at boot** or **Restart automatically** enabled. Those flags request process startup or restart; they do not guarantee a hidden preload or select an onscreen destination. Apps without a launcher entry and disabled apps cannot be selected.
 
 ## What to expect
 
-Vetro waits for the TV to report that it is on, allows a short settling period, and waits for its root service before sending one foreground-launch request. A full boot can take longer because root must become available. If the TV is not ready within three minutes of the detected power-on, that attempt expires.
+Vetro requests the app launch only while the TV is idle and ready within ten seconds of
+power-on. It uses a one-second settling period, then checks the remote activity,
+foreground app and input again immediately before dispatching the launch.
+
+Pressing a remote button other than Power cancels that attempt. Selecting another
+app, opening a menu, changing the input, or losing remote monitoring also cancels
+it. Remote activity monitoring must be connected at power-on through Vetro's
+configured physical remote. Without that coverage, the launch is skipped.
+
+If root becomes available after the deadline, Vetro leaves the current screen
+alone. A late service start after a full boot does not create a new deadline.
+The Startup section reports a launch, an app already onscreen, or the reason the
+attempt was skipped. The app's own loading and network time can still vary. This
+setting does not preload apps or keep them running in the background.
 
 Once the launch request has been sent, Vetro checks the foreground app and reports whether the selected app was confirmed onscreen. It does not repeatedly bring the app back when you switch to another app or input. Restarting Vetro during the same power session does not repeat the launch.
 

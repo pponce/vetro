@@ -13,15 +13,15 @@ function decode(body) {
 }
 
 function readClock() {
-    var bootId = null, suspendOffset = null;
+    var bootId = null, suspendOffset = null, uptimeSeconds = null;
     try { bootId = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(); } catch (e) {}
     try {
         // Linux /proc/uptime includes suspend; CLOCK_MONOTONIC (hrtime) does not.
         var uptime = parseFloat(fs.readFileSync('/proc/uptime', 'utf8'));
         var mono = process.hrtime();
-        if (isFinite(uptime)) suspendOffset = uptime - mono[0] - mono[1] / 1e9;
+        if (isFinite(uptime)) { uptimeSeconds = uptime; suspendOffset = uptime - mono[0] - mono[1] / 1e9; }
     } catch (e) {}
-    return {bootId: bootId, suspendOffset: suspendOffset};
+    return {bootId: bootId, suspendOffset: suspendOffset, uptimeSeconds: uptimeSeconds};
 }
 
 function Reader(options) {

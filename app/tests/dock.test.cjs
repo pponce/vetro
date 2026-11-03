@@ -289,5 +289,13 @@ function fixture(options) {
     assert.deepEqual((await reopened.status()).homeShortcut, netflix);
     assert.match(fs.readFileSync(f.dock.appsFile, 'utf8'), /customhome\tNetflix\tsys:org\.tizen\.netflix-app\tcom\.samsung\.tv\.csfs/);
 
+    f = fixture();f.dock.mappedHome=true;
+    await f.dock.enable();
+    assert.match(f.tv.started,/--mapped-home/);
+    assert.doesNotMatch(f.tv.started,/--home-code|--kill-on-home/);
+    assert.equal(f.tv.csfs,true,'mapped mode does not close Samsung Home during setup');
+    assert.equal(f.tv.autorun,1,'mapped setup does not change power-on preferences');
+    await f.dock.disable();
+
     console.log('PASS dock service: on, off, boot start, crash restart, back-off that never switches it off');
 })().catch(e => { console.error(e); process.exitCode = 1; });

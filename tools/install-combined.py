@@ -322,17 +322,23 @@ class Installer:
                 raise RuntimeError('The updated app settings could not be read back')
         before = ledger['dock']
         after = self.request('/dock', timeout=40)
-        for key in ('enabled', 'fixTizenTube', 'homeShortcut'):
+        for key in ('fixTizenTube', 'homeShortcut'):
             if key in before and after.get(key) != before[key]:
                 raise RuntimeError('Launcher setting changed during update: ' + key)
-        if before.get('enabled'):
+        was_running = before.get('runtimeEnabled', before.get('enabled'))
+        if after.get('runtimeEnabled', after.get('enabled')) != was_running:
+            raise RuntimeError('Launcher runtime setting changed during update')
+        if was_running:
             self.log('Restarting the enabled launcher with the updated DLL, preserving its settings…')
             self.request('/dock', {'action': 'refresh'}, timeout=120)
             after = self.request('/dock', timeout=40)
-            if after.get('enabled') is not True or after.get('running') is not True:
+            if after.get('runtimeEnabled', after.get('enabled')) is not True or after.get('running') is not True:
                 raise RuntimeError('Updated Vetro is installed, but the enabled launcher has not been confirmed running')
             if before.get('pid') and after.get('pid') == before['pid']:
                 raise RuntimeError('The old launcher process is still running')
+        home = after.get('home') or {}
+        if home.get('launcher') and not home.get('device'):
+            self.log('Home setup needed: open Launcher, choose Detect Home and enable Vetro, then press Home on the remote.')
         finished = self.worker(ledger['stage'], 'finish')
         if finished.get('verified') is not True or finished.get('revision') != revision:
             raise RuntimeError('TV updater did not confirm completion of the requested revision')
@@ -385,7 +391,7 @@ class Installer:
                    launcherSha256=native_hash, duidFingerprint=digest(probe['duid'].lower().encode()))
         self.upload(stage, 'job.json', (json.dumps(job) + '\n').encode())
         ledger = {'revision': revision, 'stage': stage, 'launcherSha256': native_hash,
-                  'dock': {k: dock[k] for k in ('enabled', 'fixTizenTube', 'homeShortcut', 'pid') if k in dock},
+                  'dock': {k: dock[k] for k in ('enabled', 'runtimeEnabled', 'fixTizenTube', 'homeShortcut', 'pid') if k in dock},
                   'sent': True, 'complete': False}
         self.write_ledger(ledger)
         self.sent = True

@@ -4,7 +4,8 @@ var fs = require('fs');
 var Power = require('./power-state.js');
 var CONFIG = '/opt/usr/home/owner/share/vetro-startup-app.json';
 var SESSION = '/tmp/vetro-startup-app-session.json';
-var SETTLE_MS = 5000, EVENT_MS = 180000, VERIFY_MS = 15000;
+var SETTLE_MS = 1000, EVENT_MS = 10000, VERIFY_MS = 15000;
+var FALLBACK = /^(org\.tizen\.tv-viewer|com\.samsung\.tv\.csfs)$/;
 var ID = /^[A-Za-z0-9_.-]{1,120}$/;
 
 function validId(value) { return value === null || typeof value === 'string' && ID.test(value); }
@@ -41,6 +42,8 @@ function StartupApp(options) {
     this.inventory = options.inventory;
     this.launch = options.launch;
     this.presence = options.presence;
+    this.snapshot = options.snapshot;
+    this.activity = options.activity || function () { return {ready:false}; };
     this.config = emptyConfig();
     this.session = null;
     this.busy = false;
@@ -48,6 +51,7 @@ function StartupApp(options) {
     this.error = null;
     this.power = null;
     this.lastResult = null;
+    this.lastActivity = null;
     try {
         var stored = readJson(this.fs, this.file);
         if (stored) {
@@ -83,6 +87,8 @@ StartupApp.prototype.configure = function (value, expectedRevision, rows) {
 };
 StartupApp.prototype.observe = function (power, clock) {
     if (!clock.bootId) throw Error('TV boot identity unavailable');
+    var activity = this.activity(), previousActivity = this.lastActivity;
+    this.lastActivity = activity;
     var old = this.session, freshBoot = !old || old.bootId !== clock.bootId;
     var resumed = !freshBoot && typeof old.suspendOffset === 'number' && typeof clock.suspendOffset === 'number' && clock.suspendOffset - old.suspendOffset > 1;
     var waking = !freshBoot && old.power === 'standby' && power === 'on';
@@ -99,9 +105,18 @@ StartupApp.prototype.observe = function (power, clock) {
     this.power = power;
     if (changed) this.saveSession();
     if (power === 'on' && !this.session.handled && !this.pending) {
+        // Service startup does not restart the cold-boot deadline.
+        var validBootAge = typeof clock.uptimeSeconds === 'number' && isFinite(clock.uptimeSeconds) && clock.uptimeSeconds >= 0;
+        var bootAge = freshBoot && validBootAge ? clock.uptimeSeconds * 1000 : 0;
         this.pending = {appId: this.config.appId, revision: this.config.revision, bootId: clock.bootId,
-            started: this.now(), stage: 'waiting'};
+            started: this.now() - bootAge, stage: 'waiting', activity: activity, foreground: null};
         this.lastResult = null;
+        if (freshBoot && !validBootAge) this.finish('Skipped: boot timing unavailable');
+        else if (bootAge > EVENT_MS) this.finish('Skipped: power-on launch expired before Vetro was ready');
+        else if (!activity.ready) this.finish('Skipped: remote activity monitoring was not ready at power-on');
+        else if (!freshBoot && (!previousActivity || previousActivity.generation !== activity.generation)) this.finish('Skipped: remote activity monitoring was interrupted');
+        else if (previousActivity && previousActivity.sequence !== activity.sequence ||
+            activity.lastAt && activity.lastAt >= this.now() - Math.max(2000, bootAge)) this.finish('Skipped: remote activity at power-on');
     }
 };
 StartupApp.prototype.current = function (event) {
@@ -114,6 +129,25 @@ StartupApp.prototype.finish = function (result) {
     this.pending = null;
     this.lastResult = result;
 };
+StartupApp.prototype.idle = function (event) {
+    if (!this.current(event)) return false;
+    if (this.now() - event.started >= EVENT_MS) { this.finish('Skipped: power-on launch expired before the TV was ready'); return false; }
+    var activity = this.activity();
+    if (!activity.ready || activity.generation !== event.activity.generation) {
+        this.finish('Skipped: remote activity monitoring was interrupted'); return false;
+    }
+    if (activity.sequence !== event.activity.sequence) { this.finish('Skipped: you started using the TV'); return false; }
+    return true;
+};
+StartupApp.prototype.checkForeground = function (event, state) {
+    if (state.full === event.appId || state.partial === event.appId) { this.finish('App already onscreen'); return false; }
+    if (!FALLBACK.test(state.full) || state.partial && !FALLBACK.test(state.partial) ||
+        event.foreground && event.foreground.sourceType !== state.sourceType) {
+        this.finish('Skipped: another app, menu or input is active'); return false;
+    }
+    event.foreground = state;
+    return true;
+};
 StartupApp.prototype.tick = function () {
     if (this.busy || !this.config.appId) return Promise.resolve();
     var self = this;
@@ -123,8 +157,6 @@ StartupApp.prototype.tick = function () {
         self.error = null;
         var event = self.pending;
         if (!event || !self.current(event)) return;
-        if (self.now() - event.started > EVENT_MS) return self.finish('Power-on launch expired before the TV was ready');
-        if (!self.ready() || self.now() - event.started < SETTLE_MS) return;
         if (event.stage === 'verifying') {
             return self.presence().then(function (state) {
                 if (!self.current(event)) return;
@@ -134,19 +166,23 @@ StartupApp.prototype.tick = function () {
                 if (self.current(event) && self.now() - event.sent >= VERIFY_MS) self.finish('Launch requested; onscreen state was not confirmed');
             });
         }
-        return self.inventory().then(function (data) {
-            if (!self.current(event)) return;
+        if (!self.idle(event) || !self.ready()) return;
+        return self.snapshot(false).then(function (state) {
+            if (!self.idle(event) || !self.checkForeground(event, state) || self.now() - event.started < SETTLE_MS) return;
+            return self.inventory().then(function (data) {
+            if (!self.idle(event)) return;
             if (data.registryError) throw Error('App registry unavailable');
             if (!eligible(data.apps.find(function (row) { return row.appId === event.appId; }))) return self.finish('Selected app is missing, disabled, or has no launcher entry');
             // Record the attempt before sending it; a service restart must not steal focus a second time.
             self.session.handled = true;
             self.saveSession();
             return self.launch(event.appId, function () {
-                if (!self.current(event) || !self.ready()) return false;
+                if (!self.idle(event) || !self.ready()) return false;
                 // Recheck after the root command queue drains, immediately before the launch command.
                 return self.readPower().then(function (power) {
                     self.observe(power, self.clock());
-                    return self.current(event) && self.ready();
+                    if (!self.idle(event) || !self.ready()) return false;
+                    return self.snapshot(true).then(function (fresh) { return self.idle(event) && self.checkForeground(event, fresh); });
                 });
             }).then(function () {
                 if (!self.current(event)) return;
@@ -156,6 +192,7 @@ StartupApp.prototype.tick = function () {
             }).catch(function (e) {
                 if (self.current(event)) self.finish('Launch not completed: ' + e.message);
             });
+            });
         });
     }).catch(function (e) {
         self.error = e.message;
@@ -163,4 +200,4 @@ StartupApp.prototype.tick = function () {
     }).finally(function () { self.busy = false; });
 };
 
-module.exports = {StartupApp: StartupApp, eligible: eligible, validId: validId, SETTLE_MS: SETTLE_MS};
+module.exports = {StartupApp: StartupApp, eligible: eligible, validId: validId, SETTLE_MS: SETTLE_MS, EVENT_MS: EVENT_MS};

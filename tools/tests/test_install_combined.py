@@ -116,6 +116,30 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(ledger['sent']);self.assertFalse(obj.sent)
         self.assertFalse(ledger['complete'])
 
+    def test_runtime_refresh_is_independent_of_home_assignment(self):
+        obj,ledger=self.fake_installer()
+        original=obj.request
+        def request(route,body=None,timeout=None):
+            result=original(route,body,timeout)
+            if route=='/dock':result.update(enabled=False,runtimeEnabled=True,home={'launcher':False})
+            return result
+        obj.request=request
+        with patch.object(installer.time,'sleep'):obj.verify(ledger)
+        self.assertTrue(ledger['complete'])
+        self.assertIn(('/dock',{'action':'refresh'}),obj.calls)
+
+    def test_home_detection_guidance_does_not_repeat_install(self):
+        obj,ledger=self.fake_installer()
+        original=obj.request
+        def request(route,body=None,timeout=None):
+            result=original(route,body,timeout)
+            if route=='/dock':result['home']={'launcher':True,'device':None,'ready':False}
+            return result
+        obj.request=request
+        with patch.object(installer.time,'sleep'):obj.verify(ledger)
+        self.assertTrue(ledger['complete'])
+        self.assertTrue(any('Home setup needed' in message for message in obj.messages))
+
     def test_unknown_outcome_stays_pending(self):
         obj,ledger=self.fake_installer(ready=False)
         with patch.object(installer.time,'monotonic',side_effect=[0,1,1,1,400]),patch.object(installer.time,'sleep'):

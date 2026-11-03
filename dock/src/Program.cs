@@ -214,6 +214,7 @@ namespace Launcher
         /// </summary>
         private static void SetupInput(string[] args)
         {
+            if (HomeKeys.Mapped) return;
             int code;
             string want = Arg(args, "--home-code") ?? Environment.GetEnvironmentVariable("TVLAUNCHER_HOME_CODE");
             if (want != null && int.TryParse(want, out code) && code > 0 && code < 768) _homeCode = code;
@@ -947,7 +948,8 @@ namespace Launcher
 
                 Efl.evas_object_event_callback_add(_win, Efl.EvasCallbackKeyDown, KeyCb, IntPtr.Zero);
                 SetupFifo();
-                string guard = Arg(args, "--kill-on-home");
+                HomeKeys.Mapped = Flag(args, "--mapped-home");
+                string guard = HomeKeys.Mapped ? null : Arg(args, "--kill-on-home");
                 if (guard != null)
                 {
                     if (Catalog.ValidAppId(guard)) { _guardApp = guard; Log("guard: " + guard + " uses Ecore child-exit events; explicit launches cancel pending closes"); }

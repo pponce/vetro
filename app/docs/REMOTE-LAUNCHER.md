@@ -1,53 +1,61 @@
-# Open the launcher with the remote
+# Home and remote shortcuts
 
-The **Toggle Vetro launcher** action shows or hides the enabled Vetro launcher
-over the current screen. When the Home key is mapped to this action and remote
-interception is connected, Samsung Home can remain open behind the launcher.
+Home has one saved assignment shared by the Launcher and Remapper pages. Its
+default is Samsung Home through the TV's normal key delivery.
 
-## Set up the Home key
+## Use Vetro on Home
 
-1. Turn on **Vetro launcher** in the **Launcher** tab.
-2. Open **Remapper**, select **Detect automatically (listen only)** and choose
-   **Start listening**.
-3. Press **Home** on the remote. Confirm that the captured key and selected
-   physical device correspond to that press.
-4. Under **Action**, choose **Toggle Vetro launcher**, then **Save shortcut**.
-5. Turn on **Remote interception** for the captured physical device. Confirm
-   that its status says it is connected.
+1. Open **Launcher** and turn on **Vetro launcher**.
+2. Confirm that Home should use Vetro. This replaces any custom Home action.
+3. If remote setup is needed, choose **Detect Home and enable Vetro** and press
+   Home once. Detection waits until you press the button or cancel it.
+4. Press Home to show the overlay and press it again to hide it.
 
-The shortcut and interception preference are saved on the TV and restored when
-Vetro starts. Listening temporarily pauses interception; resume interception
-before testing the shortcut. Other keys retain their native behavior unless
-you have mapped them separately.
+The assignment is saved on the TV and restored when Vetro starts. A known remote
+can be reused without another capture. If the remote cannot be identified, the
+page requests detection instead of selecting an input device automatically.
 
-If the launcher is disabled, restarting, or confirms that it did not receive the
-command, the action sends the TV's native Home key. The Remapper status reports
-when this fallback is used; choose **Refresh status** to read the latest result.
-An unconfirmed command releases interception and
-shows an error; it is not repeated. Turn off **Remote interception** to restore
-the remote's normal key delivery.
+The remapper handles physical Home and sends the toggle command to the launcher.
+The launcher handles navigation while visible. Samsung Home can remain behind it.
+Turning off Vetro on the Launcher page restores Home's native behavior. Other
+saved shortcuts keep their settings.
 
-Interception applies to the selected physical device. Home commands from HDMI-CEC,
-network remotes, or other input devices are not covered by that selection.
+## Choose another app
 
-## Open an installed app with Home
+1. Open **Remapper → Home button → Edit**.
+2. Choose **Open app**, select an installed app, and choose **Save changes**.
+3. Press Home to open that app.
 
-The **Open app** action can assign Home to an installed launcher or another app.
-The **App to open** list comes from the TV's installed, enabled apps with a visible
-app entry. If an app was recently installed, refresh the app list in **Task manager**.
+The app list includes installed, enabled apps with launcher entries. Refresh the
+Task manager app list after installing an app. Saving another Home action switches
+Vetro off on the Launcher page. Enable Vetro there again to assign Home back to
+its toggle. An app shortcut opens the app; it does not dismiss it on a second press.
+Use **Restore default** to remove the override and return Home to Samsung Home.
 
-1. In **Remapper**, capture Home or enter its previously captured key code.
-2. Choose **Action → Open app**.
-3. Select the app in **App to open**, then choose **Save shortcut**.
-4. Keep **Remote interception** enabled for the physical device that supplies Home.
+Keep an alternative launcher's own Home takeover off when Vetro manages the key.
+For AeroTizen builds with App mode, leave that mode on.
 
-Saving a shortcut replaces the existing physical shortcut for that key. Selecting
-an app therefore replaces **Toggle Vetro launcher** as that key's action.
-When using an app as the Home screen, turn off **Vetro launcher** in the Launcher
-tab. Disable the selected app's own Home takeover or automatic return behavior
-so Vetro controls the physical Home press. For AeroTizen builds with **App mode**,
-keep that mode on.
+## Edit and enable other shortcuts
 
-To use Vetro's launcher again, enable **Vetro launcher** and save **Toggle Vetro
-launcher** for the same Home key. Keep Remote interception enabled. An app shortcut
-opens the selected app; it does not toggle that app open and closed.
+Every saved mapping has **Edit**, including HTTP and MQTT rules. The editor keeps
+its trigger, enabled state and actions. **Save changes** updates that mapping;
+**Cancel** leaves it unchanged. Ordinary mappings can also be deleted.
+
+**Enable remote shortcuts** controls other physical mappings. Home follows its
+own assignment, so enabling Vetro does not activate unrelated paused shortcuts.
+HTTP and MQTT triggers are independent of this switch.
+
+**Start listening** temporarily pauses all physical mappings, including Home,
+while retaining their saved settings. **Stop listening** restores those settings.
+Unmapped keys keep their native behavior.
+
+## Availability
+
+A missing or restarting launcher can fall back once to the TV's native Home key
+when non-delivery is confirmed. An uncertain toggle result is not replayed;
+interception is released and an error is shown. **Refresh status** reads the
+current connection and any error. Changing the Home assignment applies immediately
+without rebooting the TV.
+
+Physical mappings apply to the selected remote device. Home commands from
+HDMI-CEC, network remotes or another input device are not covered by that selection.

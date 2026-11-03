@@ -61,16 +61,15 @@ const tick = () => new Promise(r => setImmediate(r));
     assert.equal(sw.checked, false, 'the switch stays off until confirmed');
     assert.ok(!calls.some(c => c.url === '/dock' && c.body), 'nothing sent yet');
     page = el('dockBody').innerHTML;
-    assert.match(page, /Turn on the Vetro launcher\?/);
-    assert.match(page, /instead of Samsung’s Home/);
-    assert.match(page, /closes Samsung’s Home each time you press it/);
-    assert.match(page, /goes back to Samsung’s Home by itself/);
-    assert.match(page, /Nothing of Samsung’s is removed or disabled/);
-    assert.match(page, /Tested on a Q80A only/);
+    assert.match(page, /Use Vetro on the Home button\?/);
+    assert.match(page, /replaces the current Home action with Toggle Vetro launcher/);
+    assert.match(page, /Other shortcuts keep their settings/);
+    assert.doesNotMatch(page, /closes Samsung’s Home each time/);
+    assert.match(page, /Detect Home and enable Vetro/);
 
     // Cancel leaves it as it was.
     el('dock').onclick({target: {closest: () => ({dataset: {dockCancel: ''}})}});
-    assert.doesNotMatch(el('dockBody').innerHTML, /Turn on the Vetro launcher\?/);
+    assert.doesNotMatch(el('dockBody').innerHTML, /Use Vetro on the Home button\?/);
     assert.ok(!calls.some(c => c.url === '/dock' && c.body));
 
     // Confirm turns it on.
@@ -94,7 +93,7 @@ const tick = () => new Promise(r => setImmediate(r));
     assert.match(page, /class="lp-tile lp-sel"[^>]*><img alt="" src="\/dock\/icon\?slug=netflix"/, 'the first app is the selected one');
     assert.doesNotMatch(page, /lp-label/, 'no name or clock row: the design shows none');
     assert.match(page, /<div class="lp-hint">Source/, 'the hint over the bar');
-    assert.match(sandbox.operationEntries[0].message, /Launcher on and running\. Press Home on the remote to open it\./, 'recorded in Actions');
+    assert.match(sandbox.operationEntries[0].message, /Launcher on and running\. Press Home to show or hide it\./, 'recorded in Actions');
 
     // Turning it off needs no warning.
     const off = {dataset: {dockSwitch: ''}, checked: false};

@@ -26,10 +26,21 @@ function fixture() {
 (async()=>{
     assert.deepEqual(parse('key value = video.one\nkey value = \nkey value = 13\n'),{full:'video.one',partial:'',sourceType:13});
     assert.equal(parse('value = "video.one"\nvalue = (null)\nvalue = 0').full,'video.one');
+    const typed = (full,partial='',source=0) => 'memory/appfw/current_fullscreen_appid, value = '+full+' (String)\n'+
+        'memory/appfw/current_partial_appid, value = '+partial+' (String)\n'+
+        'memory/system/source_type, value = '+source+' (Int32)\n';
+    assert.deepEqual(parse(typed(HOME)),{full:HOME,partial:'',sourceType:0});
+    assert.deepEqual(parse(typed('"video.one"','(null)',13)),{full:'video.one',partial:'',sourceType:13});
+    assert.throws(()=>parse(typed(HOME).replace('(Int32)','(Boolean)')),/unavailable/);
+    assert.throws(()=>parse(typed('video.one;id')),/unavailable/);
     for(const input of ['', 'value = video.one\nvalue = 0','value = video.one;id\nvalue = \nvalue = 0','value = video.one\nvalue = \nvalue = unknown']) assert.throws(()=>parse(input),/unavailable/);
     assert.ok(!/\b(set|app_launcher|kill)\b/.test(COMMAND),'snapshot is read-only');
 
     let f=fixture();await f.tick();assert.equal(f.reads,0,'disabled feature does no polling');
+    const tv=fixture();tv.choose('home.app');
+    tv.app.snapshot=async()=>parse(typed(tv.state.full,tv.state.partial,tv.state.sourceType));
+    await tv.exit();assert.deepEqual(tv.launches,['home.app'],'typed TV output detects the app exit and passes the launch guard');
+    await tv.tick('home.app');assert.match(tv.app.status().lastResult,/confirmed/);
     f.choose('home.app');await f.tick();await f.tick();assert.equal(f.launches.length,0,'enabling does not launch');
     assert.throws(()=>f.choose('background.svc'),/launcher/);
     assert.throws(()=>f.app.configure('home.other',0,f.rows),/changed/);

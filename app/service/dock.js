@@ -52,6 +52,7 @@ function Dock(options) {
     this.lastCatalog = null;
     this.refreshPending = false;
     this.lastControl = null;
+    this.mappedHome = options.mappedHome === true;
 }
 
 // The app service cannot assume access to the root launcher's private files.
@@ -195,7 +196,7 @@ Dock.prototype.statusNow = function () {
 Dock.prototype.startScript = function () {
     var env = 'HOME=/home/owner XDG_RUNTIME_DIR=/run WAYLAND_DISPLAY=wayland-0 TVLAUNCHER_ENGINE=egl TVLAUNCHER_DIR=' + RUN_DIR;
     var args = DLL + ' --apps ' + q(this.appsFile) + ' --inputs ' + q(path.join(this.dir, 'res', 'inputs.tsv')) +
-        ' --hidden --home-code ' + HOME_CODE + ' --kill-on-home ' + HOME_APP;
+        ' --hidden' + (this.mappedHome ? ' --mapped-home' : ' --home-code ' + HOME_CODE + ' --kill-on-home ' + HOME_APP);
     return [
         this.stopLines(),
         'rm -f ' + FIFO,
@@ -272,13 +273,14 @@ Dock.prototype.enable = function () {
     return this.launch().then(function () {
         self.patchState({enabled: true, since: self.now()});
         self.failures = 0; self.nextTry = 0;
+        if (self.mappedHome) return;
         // Not fatal: the launcher works either way, only the picture at power-on differs.
         return self.turnOffAutorun()
             .catch(function (e) { self.lastError = 'The launcher is on, but Autorun Smart Hub could not be switched off: ' + e.message; });
     }).then(function () {
         // Samsung's Home is idle in the background; closing it frees its memory, and Settings or
         // Source opened from the dock start it again on demand.
-        return self.execute('app_launcher -k ' + HOME_APP, 8000).catch(function () {});
+        if (!self.mappedHome) return self.execute('app_launcher -k ' + HOME_APP, 8000).catch(function () {});
     }).then(function () { return self.status(); }).catch(function (e) {
         self.lastError = e.message;
         return self.stopDock().catch(function () {}).then(function () { throw e; });

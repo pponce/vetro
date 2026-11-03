@@ -1,8 +1,8 @@
 # Vetro launcher
 
 A glass launcher for a rooted Samsung Tizen TV, written in C# against the TV's own EFL
-libraries and run with the TV's `dotnet`. Vetro starts and stops it from its **Launcher**
-tab; it is off until you turn it on.
+libraries and run with the TV's `dotnet`. Enable it on Vetro's **Launcher** tab
+to assign the physical Home button to its show/hide action.
 
 When it is on, the Home key opens this launcher instead of Samsung's Home. The dock shows
 the same apps, in the same order and with the same icons as Samsung's Home row, read
@@ -14,6 +14,13 @@ existing button. Samsung Home remains the default and is used if the selected ap
 removed (at the next list refresh) or its launch request is rejected. Save restarts an enabled launcher to apply the change;
 it does not enable a disabled launcher or change the TV’s default Home app. Keep any
 custom home app’s own Home takeover off while using Vetro’s launcher.
+
+Vetro starts the process with `--mapped-home`. In this mode Home is owned by the
+remapper: physical and window Home events do not toggle the overlay, and its
+standalone Home watcher and close guard are not started. Commands through the
+control pipe still show and hide the overlay; arrow, OK and Back navigation use
+normal window events. The standalone `--home-code` mode remains available for
+running the launcher independently.
 
 ## Layout
 
