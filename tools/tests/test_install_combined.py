@@ -81,7 +81,7 @@ class InstallerTests(unittest.TestCase):
     def fake_installer(self, ready=True):
         obj=object.__new__(installer.Installer);obj.sent=False;obj.calls=[];obj.messages=[]
         obj.log=obj.messages.append;obj.write_ledger=lambda d: obj.calls.append(('ledger',dict(d)))
-        count=[0]
+        count=[0];dock_pid=[99]
         def request(route, body=None, timeout=None):
             obj.calls.append((route,body))
             if route=='/status':
@@ -89,7 +89,9 @@ class InstallerTests(unittest.TestCase):
                 if ready and count[0]>1:return {'app':{'sourceRevision':REV,'sourceDirty':False},'agent':{'connected':True}}
                 return {'app':{'sourceRevision':'b'*40},'agent':{'connected':True}}
             if route in ('/startup-app','/return-app'):return {'appId':None,'revision':0}
-            if route=='/dock':return {'enabled':True,'running':True,'fixTizenTube':False,'pid':99}
+            if route=='/dock':
+                if body=={'action':'refresh'}:dock_pid[0]+=1
+                return {'enabled':True,'running':True,'fixTizenTube':False,'pid':dock_pid[0]}
             raise AssertionError(route)
         obj.request=request
         obj.execute=lambda command: obj.calls.append(('exec',command)) or json.dumps({'phase':'install-returned','submitted':True,'finished':True})
@@ -147,6 +149,155 @@ class InstallerTests(unittest.TestCase):
                 obj.verify(ledger)
         self.assertTrue(ledger['sent']);self.assertFalse(ledger['complete'])
         self.assertNotIn(('worker','finish'),obj.calls)
+
+    def test_stage_state_distinguishes_cleared_files_from_failed_or_locked_reads(self):
+        obj,ledger=self.fake_installer()
+        stage=ledger['stage'];commands=[]
+        def execute(command):
+            commands.append(command)
+            return installer.STAGE_CLEARED+'\n'
+        obj.execute=execute
+        self.assertIsNone(obj.stage_state(stage))
+        self.assertIn('[ -L '+stage+' ]',commands[0])
+        self.assertIn('/tmp/vetro-combined-update.lock',commands[0])
+        for invalid in (None,'/tmp/other',stage+'/../other'):
+            with self.assertRaisesRegex(RuntimeError,'Invalid saved'):
+                obj.stage_state(invalid)
+        self.assertEqual(len(commands),1)
+        for output in (installer.UPDATE_LOCKED,'','not json','[]'):
+            obj.execute=lambda _,output=output:output
+            with self.assertRaises((RuntimeError,ValueError)):obj.stage_state(stage)
+        obj.execute=lambda _: (_ for _ in ()).throw(RuntimeError('read failed'))
+        with self.assertRaisesRegex(RuntimeError,'read failed'):obj.stage_state(stage)
+
+    def cleared_stage_installer(self):
+        obj,ledger=self.fake_installer()
+        fresh='/tmp/vetro-update-'+'c'*16
+        obj.stage_state=lambda stage: None
+        obj.stage_helper=lambda: obj.calls.append(('stage-helper',fresh)) or fresh
+        original=obj.worker
+        def worker(stage,mode):
+            self.assertEqual(stage,fresh)
+            self.assertEqual(mode,'installed','Cleared install state must never be fabricated or finished')
+            return original(stage,mode)
+        obj.worker=worker
+        return obj,ledger,fresh
+
+    def test_reboot_verifies_live_files_without_install_or_finish(self):
+        obj,ledger,fresh=self.cleared_stage_installer()
+        with patch.object(installer.time,'sleep'):obj.verify(ledger)
+        self.assertTrue(ledger['complete'])
+        self.assertEqual(ledger['verificationMode'],'live-installed-files')
+        self.assertIn(('worker','installed'),obj.calls)
+        self.assertNotIn(('worker','finish'),obj.calls)
+        self.assertIn(('exec','rm -rf '+fresh),obj.calls)
+        self.assertNotIn(('exec','rm -rf '+ledger['stage']),obj.calls)
+        staged=next(i for i,c in enumerate(obj.calls) if c[0]=='stage-helper')
+        self.assertEqual(sum(c[0]=='/status' for c in obj.calls[:staged]),2)
+        self.assertFalse(any('vd_appinstall' in str(c) or c[0]=='/install' for c in obj.calls))
+
+    def test_cleared_stage_does_not_bypass_live_revision_check(self):
+        obj,ledger,fresh=self.cleared_stage_installer()
+        original=obj.request
+        obj.request=lambda route,body=None,timeout=None: (
+            {'app':{'sourceRevision':'b'*40},'agent':{'connected':True}} if route=='/status'
+            else original(route,body,timeout))
+        with patch.object(installer.time,'monotonic',side_effect=[0,1,1,1,400]),patch.object(installer.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'No second install'):obj.verify(ledger)
+        self.assertNotIn(('stage-helper',fresh),obj.calls)
+        self.assertFalse(ledger['complete'])
+
+    def test_reboot_wrong_installed_files_stay_pending(self):
+        for field in ('sourceRevision','launcherSha256'):
+            with self.subTest(field=field):
+                obj,ledger,_=self.cleared_stage_installer()
+                installed={'sourceRevision':REV,'launcherSha256':'native'}
+                installed[field]='wrong'
+                obj.worker=lambda stage,mode: installed
+                with patch.object(installer.time,'sleep'):
+                    with self.assertRaisesRegex(RuntimeError,'Installed files'):obj.verify(ledger)
+                self.assertFalse(ledger['complete'])
+                self.assertFalse(any(c[0]=='ledger' or c[0]=='/dock' for c in obj.calls))
+
+    def test_reboot_detects_update_state_or_lock_appearing(self):
+        for locked in (False,True):
+            with self.subTest(locked=locked):
+                obj,ledger,_=self.cleared_stage_installer();count=[0]
+                def stage_state(stage):
+                    count[0]+=1
+                    if count[0]<3:return None
+                    if locked:raise RuntimeError('A TV update lock remains')
+                    return {'submitted':True}
+                obj.stage_state=stage_state
+                with patch.object(installer.time,'sleep'):
+                    with self.assertRaisesRegex(RuntimeError,'update (lock|state)'):obj.verify(ledger)
+                self.assertFalse(ledger['complete'])
+                self.assertFalse(any(c[0]=='ledger' for c in obj.calls))
+
+    def test_reboot_rechecks_running_revision_cleanliness_and_root(self):
+        for changed in ('revision','dirty','root'):
+            with self.subTest(changed=changed):
+                obj,ledger,_=self.cleared_stage_installer();original=obj.request;count=[0]
+                def request(route,body=None,timeout=None):
+                    result=original(route,body,timeout)
+                    if route=='/status':
+                        count[0]+=1
+                        if count[0]>=3:
+                            if changed=='revision':result['app']['sourceRevision']='b'*40
+                            if changed=='dirty':result['app']['sourceDirty']=True
+                            if changed=='root':result['agent']['connected']=False
+                    return result
+                obj.request=request
+                with patch.object(installer.time,'sleep'):
+                    with self.assertRaisesRegex(RuntimeError,'Running revision or root changed'):obj.verify(ledger)
+                self.assertFalse(ledger['complete'])
+
+    def test_launcher_refresh_compares_current_process_not_pre_reboot_pid(self):
+        obj,ledger=self.fake_installer();ledger['dock']['pid']=100
+        with patch.object(installer.time,'sleep'):obj.verify(ledger)
+        self.assertTrue(ledger['complete'],'PID reuse from before reboot is allowed')
+        obj,ledger=self.fake_installer();original=obj.request
+        def request(route,body=None,timeout=None):
+            result=original(route,body,timeout)
+            if route=='/dock':result['pid']=99
+            return result
+        obj.request=request
+        with patch.object(installer.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'old launcher process'):obj.verify(ledger)
+        self.assertFalse(ledger['complete'])
+
+    def test_verify_existing_requires_matching_submitted_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            obj,ledger=self.fake_installer()
+            obj.args=SimpleNamespace(expected_commit=REV)
+            obj.ledger_file=Path(directory)/'state.json'
+            obj.verify=lambda record: obj.calls.append(('verify',record))
+            with self.assertRaisesRegex(RuntimeError,'No saved update'):obj.verify_existing()
+            for changed in ({'sent':False},{'revision':'b'*40}):
+                obj.ledger_file.write_text(json.dumps(dict(ledger,**changed)))
+                with self.assertRaisesRegex(RuntimeError,'does not match'):obj.verify_existing()
+            self.assertEqual(obj.calls,[])
+            obj.ledger_file.write_text(json.dumps(ledger))
+            obj.verify_existing()
+            self.assertEqual(obj.calls,[('verify',ledger)])
+
+    def test_verify_existing_completed_record_checks_live_state_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            obj,ledger=self.fake_installer();ledger['complete']=True
+            obj.args=SimpleNamespace(expected_commit=REV)
+            obj.ledger_file=Path(directory)/'state.json'
+            obj.ledger_file.write_text(json.dumps(ledger))
+            with self.assertRaisesRegex(RuntimeError,'not confirmed'):obj.verify_existing()
+            obj.verify_existing()
+            self.assertEqual(obj.calls,[('/status',None),('/status',None)])
+
+    def test_verification_flag_never_enters_install_flow(self):
+        args=['install-combined.py','--verify-existing','--tv','192.0.2.1',
+              '--expected-commit',REV,'--project-root','/unused']
+        with patch.object(sys,'argv',args),patch.object(installer,'Installer') as factory:
+            self.assertEqual(installer.main(),0)
+            factory.return_value.verify_existing.assert_called_once_with()
+            factory.return_value.run.assert_not_called()
 
     def test_tv_service_executable_is_never_probed_as_node(self):
         obj=object.__new__(installer.Installer);commands=[]
@@ -224,7 +375,7 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual(route,'/exec');command=body['cmd']
                 if command.startswith('nohup setsid '):
                     state['submitted']+=1;output='updater-started\n'
-                elif command.startswith('cat '):
+                elif command.startswith('if [ -e '):
                     output=json.dumps({'submitted':True,'finished':True,'phase':'install-returned'})
                 elif command.startswith('rm -rf '):output=''
                 else:

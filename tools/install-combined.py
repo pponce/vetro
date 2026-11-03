@@ -24,6 +24,8 @@ STAGE = re.compile(r"/tmp/vetro-update-[a-f0-9]{16}\Z")
 REVISION = re.compile(r"[a-f0-9]{40}\Z")
 CHUNK = 16384
 WORKER_PREFIX = 'VETRO_UPDATE_RESULT_V1 '
+STAGE_CLEARED = 'VETRO_UPDATE_STAGE_CLEARED_V1'
+UPDATE_LOCKED = 'VETRO_UPDATE_LOCK_PRESENT_V1'
 
 
 def digest(value):
@@ -266,6 +268,43 @@ class Installer:
         self.command(['node', 'rooting/build.cjs'], env=env)
         return output, package_metadata(output, revision, native_hash)
 
+    def stage_state(self, stage):
+        if not isinstance(stage, str) or not STAGE.fullmatch(stage):
+            raise RuntimeError('Invalid saved update directory')
+        directory = shlex.quote(stage)
+        lock = '/tmp/vetro-combined-update.lock'
+        output = self.execute(
+            'if [ -e ' + directory + ' ] || [ -L ' + directory + ' ]; then\n'
+            'cat ' + shlex.quote(stage + '/state.json') + '\n'
+            'elif [ -e ' + lock + ' ] || [ -L ' + lock + ' ]; then\n'
+            'printf "%s\\n" ' + shlex.quote(UPDATE_LOCKED) + '\nelse\n'
+            'printf "%s\\n" ' + shlex.quote(STAGE_CLEARED) + '\nfi').strip()
+        if output == UPDATE_LOCKED:
+            raise RuntimeError('A TV update lock remains; the saved attempt was not completed or cleared')
+        if output == STAGE_CLEARED:
+            return None
+        value = json.loads(output)
+        if not isinstance(value, dict):
+            raise RuntimeError('Invalid TV updater state')
+        return value
+
+    def verify_existing(self):
+        if not self.ledger_file.is_file():
+            raise RuntimeError('No saved update attempt was found; verification did not submit an install')
+        ledger = json.loads(self.ledger_file.read_text())
+        if ledger.get('revision') != self.args.expected_commit or ledger.get('sent') is not True:
+            raise RuntimeError('Saved attempt does not match the requested submitted update')
+        if ledger.get('complete') is True:
+            status = self.request('/status')
+            if (status.get('app', {}).get('sourceRevision') != self.args.expected_commit
+                    or status.get('app', {}).get('sourceDirty') is not False
+                    or status.get('agent', {}).get('connected') is not True):
+                raise RuntimeError('The saved update is complete, but its running revision and root are not confirmed')
+            self.log('This update is already verified and running. No install was submitted.')
+            return
+        self.log('Verifying the existing update only; no signing or installation.')
+        return self.verify(ledger)
+
     def verify(self, ledger):
         self.sent = True
         revision = ledger['revision']
@@ -287,7 +326,7 @@ class Installer:
             if time.monotonic() >= next_notice:
                 self.log('Still waiting for the requested source revision and root…')
                 try:
-                    progress = json.loads(self.execute('cat ' + shlex.quote(ledger['stage'] + '/state.json')))
+                    progress = self.stage_state(ledger['stage']) or {}
                 except (OSError, ValueError, RuntimeError):
                     progress = {}
                 if progress.get('phase') == 'not-submitted' and progress.get('submitted') is False:
@@ -306,14 +345,23 @@ class Installer:
         # The replacement service can start before vd_appinstall releases its SDB
         # stream. Do not delete the helper's files while it is still running.
         deadline = time.monotonic() + 150
+        verification_stage = ledger['stage']
+        staging_cleared = False
         while True:
-            progress = json.loads(self.execute('cat ' + shlex.quote(ledger['stage'] + '/state.json')))
+            progress = self.stage_state(ledger['stage'])
+            if progress is None:
+                # A reboot can remove /tmp after a successful install. The live
+                # revision/root check above is required before staging a reader.
+                self.log('Temporary updater files are gone. Checking installed files with a fresh verification helper.')
+                verification_stage = self.stage_helper()
+                staging_cleared = True
+                break
             if progress.get('finished') is True:
                 break
             if time.monotonic() >= deadline:
                 raise RuntimeError('New Vetro is running, but the updater has not finished. Rerun this block to resume verification; no second install will be sent.')
             time.sleep(3)
-        installed = self.worker(ledger['stage'], 'installed')
+        installed = self.worker(verification_stage, 'installed')
         if installed.get('sourceRevision') != revision or installed.get('launcherSha256') != ledger['launcherSha256']:
             raise RuntimeError('Installed files do not match the combined build')
         for endpoint in ('/startup-app', '/return-app'):
@@ -329,26 +377,38 @@ class Installer:
         if after.get('runtimeEnabled', after.get('enabled')) != was_running:
             raise RuntimeError('Launcher runtime setting changed during update')
         if was_running:
+            previous_pid = after.get('pid')
             self.log('Restarting the enabled launcher with the updated DLL, preserving its settings…')
             self.request('/dock', {'action': 'refresh'}, timeout=120)
             after = self.request('/dock', timeout=40)
             if after.get('runtimeEnabled', after.get('enabled')) is not True or after.get('running') is not True:
                 raise RuntimeError('Updated Vetro is installed, but the enabled launcher has not been confirmed running')
-            if before.get('pid') and after.get('pid') == before['pid']:
+            if previous_pid and after.get('pid') == previous_pid:
                 raise RuntimeError('The old launcher process is still running')
         home = after.get('home') or {}
         if home.get('launcher') and not home.get('device'):
             self.log('Home setup needed: open Launcher, choose Detect Home and enable Vetro, then press Home on the remote.')
-        finished = self.worker(ledger['stage'], 'finish')
-        if finished.get('verified') is not True or finished.get('revision') != revision:
-            raise RuntimeError('TV updater did not confirm completion of the requested revision')
+        if staging_cleared:
+            # Never manufacture the install job/state or remove another lock.
+            if self.stage_state(ledger['stage']) is not None:
+                raise RuntimeError('TV update state changed during verification; the attempt remains pending')
+            current = self.request('/status')
+            if (current.get('app', {}).get('sourceRevision') != revision
+                    or current.get('app', {}).get('sourceDirty') is not False
+                    or current.get('agent', {}).get('connected') is not True):
+                raise RuntimeError('Running revision or root changed during verification; the attempt remains pending')
+            ledger['verificationMode'] = 'live-installed-files'
+        else:
+            finished = self.worker(ledger['stage'], 'finish')
+            if finished.get('verified') is not True or finished.get('revision') != revision:
+                raise RuntimeError('TV updater did not confirm completion of the requested revision')
         ledger['complete'] = True
         self.write_ledger(ledger)
         self.log('VERIFIED: combined source revision, launcher DLL, both new settings, and root connection.')
         self.log('Developer Mode and Host PC IP were not changed. Startup and return selections were not changed.')
         # Only remove this attempt's generated files after verification and lock release.
         try:
-            self.execute('rm -rf ' + shlex.quote(ledger['stage']))
+            self.execute('rm -rf ' + shlex.quote(verification_stage))
         except (OSError, ValueError, RuntimeError):
             self.log('Verified install; temporary updater files could not be removed.')
 
@@ -412,13 +472,18 @@ def main():
     parser.add_argument('--project-root', required=True)
     parser.add_argument('--installer')
     parser.add_argument('--report-host')
+    parser.add_argument('--verify-existing', action='store_true',
+                        help='Only verify the saved attempt for --expected-commit; never sign or install')
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535 or not REVISION.fullmatch(args.expected_commit):
         parser.error('Invalid port or expected commit')
     installer = Installer(args)
     result = 0
     try:
-        installer.run()
+        if args.verify_existing:
+            installer.verify_existing()
+        else:
+            installer.run()
     except (Exception, KeyboardInterrupt) as error:
         installer.log('STOPPED: ' + str(error))
         installer.log('No automatic reinstall will be attempted.' if installer.sent else 'No Vetro install was submitted.')

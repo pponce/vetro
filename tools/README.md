@@ -42,6 +42,16 @@ A local attempt record and a TV-side lock prevent duplicate installation. Rerunn
 
 If the helper proves that installation was never submitted, the report says so and a later run can make a fresh attempt. If the outcome is uncertain, inspect the report and TV state before clearing any attempt record or lock.
 
+To verify a submitted update without signing or installing a package, use:
+
+```sh
+python3 tools/install-combined.py --verify-existing --tv TV_IPV4 --project-root /path/to/samsung-tv-tools --expected-commit INSTALLED_COMMIT
+```
+
+This requires the matching saved attempt in the same project directory. The installer checkout may be newer than `INSTALLED_COMMIT`; that argument identifies the TV build to verify. A completed record is checked against the running build and root connection.
+
+If a reboot removed the temporary updater directory and no TV update lock remains, verification first confirms the exact running revision and root. It uploads a checksum-verified helper to read the installed source revision and launcher hash, checks the app-setting endpoints, and refreshes an enabled launcher while preserving its settings. It then rechecks the running build and absence of update state before completing the local record. It does not recreate an installation job or clear another update's lock. Missing or malformed state inside an existing updater directory remains an error.
+
 ## Validation limits
 
 Automated checks cover the .NET helper's source/file hashes, fragmented SDB packets, zero-sender response variants, protocol failures, transfer integrity, certificate selection, package identity, process detachment, one-time dispatch, lost acknowledgements, revision verification, and launcher restart. A cross-language check decodes the C# serializer's result with the Python installer, and a simulated host update covers probe, certificate selection, dispatch, verification, and repeat-run behavior with runtime messages around each result. Test the update and startup/return behavior on each TV model; automated checks do not establish hardware compatibility.
