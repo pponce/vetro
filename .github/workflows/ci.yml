@@ -72,9 +72,14 @@ jobs:
           const integration = require('./rooting/build.cjs');
           const files = integration.collectIntegration();
           const names = files.map(f => decodeURIComponent(f.uri));
-          for (const name of ['service/startup-app.js', 'service/return-app.js', 'service/root-agent.js', 'native/dock/tvlauncher-dotnet.dll']) {
+          for (const name of ['service/startup-app.js', 'service/return-app.js', 'service/home-routing.js', 'service/root-agent.js', 'native/dock/tvlauncher-dotnet.dll']) {
             if (!names.includes(name)) throw Error('Missing combined package file: ' + name);
           }
+          const launcher = files.find(f => decodeURIComponent(f.uri) === 'native/dock/tvlauncher-dotnet.dll');
+          if (!launcher.data.includes(Buffer.from('--mapped-home', 'utf16le'))) {
+            throw Error('The packaged launcher must be rebuilt for shared Home routing');
+          }
+          console.log('Launcher SHA256: ' + require('crypto').createHash('sha256').update(launcher.data).digest('hex'));
           fs.mkdirSync('dist', {recursive:true});
           fs.writeFileSync('dist/vetro-combined-unsigned.wgt', app.zip(files));
           NODE
