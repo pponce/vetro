@@ -43,7 +43,7 @@ Physical launcher testing then revealed a Home regression: the first Home from N
 
 ## Next steps
 
-1. Build and validate the Home regression repair, then provide an exact pinned combined commit for the existing installer. Preserve the startup, return, debounce, and configurable shortcut changes. Do not reuse the now-installed pre-repair revision as the next update target.
+1. Use the final pinned combined commit containing the Ecore command-completion repair and the compiled launcher from `8e9af78ba65d2e58c9fc1cbdbe6623f1096ef306`. Source CI and the native build passed; verify final-package CI before handing over the installer. The startup, return, debounce, and configurable shortcut changes remain included.
 2. Keep the TV on and Vetro's root connection available. Reuse the cached Partner certificate and loopback SDB; do not change Developer Mode's Host PC IP.
 3. Confirm the script reports VERIFIED after checking the installed source revision, launcher DLL, settings endpoints, and launcher refresh. An unresolved submission must only resume verification; never clear its ledger or submit again without evidence.
 4. Test ordinary standby power-on, cold boot, the return destination, Home-key debounce, opening Samsung Home, and the configured Home shortcut.
