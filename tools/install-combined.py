@@ -201,6 +201,7 @@ class Installer:
         raise RuntimeError('Existing Apps2Samsung CLI was not found under vetro-install/bin; use --installer PATH')
 
     def sign(self, duid, revision, native_hash):
+        self.log('Checking the existing cached Partner certificate…')
         raw = self.command([str(self.find_cli()), 'cert', '--partner', '--json'], quiet=True)
         profile = partner_profile(raw, duid)
         for name in ('author.p12', 'distributor.p12', 'password.txt'):
@@ -325,6 +326,7 @@ class Installer:
         if probe.get('uid') != 0 or probe.get('updateLocked'):
             raise RuntimeError('Root preflight failed or another update is still pending')
         self.redactions.append(probe['duid'])
+        self.log('TV identity and loopback SDB verified (' + str(len(probe['duid'])) + '-character DUID).')
         native_hash = digest((self.root / 'app/native/dock/tvlauncher-dotnet.dll').read_bytes())
         output, metadata = self.sign(probe['duid'], revision, native_hash)
         if metadata['authorFingerprint'] != probe['authorFingerprint']:

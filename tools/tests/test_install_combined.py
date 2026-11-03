@@ -20,12 +20,12 @@ REV = 'a' * 40
 
 class InstallerTests(unittest.TestCase):
     def test_existing_partner_profile_only(self):
-        p = {'Level':'Partner','Exists':True,'Usable':True,'Duids':['TEST-DUID'],'Path':'/profile'}
+        p = {'Level':'Partner','Exists':True,'Usable':True,'Duids':['TESTTV1234567'],'Path':'/profile'}
         raw = 'CLI progress\n' + json.dumps({'result':{'profiles':[p]}})
-        self.assertEqual(installer.partner_profile(raw,'test-duid'),Path('/profile'))
+        self.assertEqual(installer.partner_profile(raw,'testtv1234567'),Path('/profile'))
         for key, value in [('Usable',False),('Level','Public'),('Duids',['OTHER'])]:
             bad=dict(p);bad[key]=value
-            with self.assertRaises(RuntimeError):installer.partner_profile(json.dumps({'profiles':[bad]}),'TEST-DUID')
+            with self.assertRaises(RuntimeError):installer.partner_profile(json.dumps({'profiles':[bad]}),'TESTTV1234567')
 
     def test_chunk_transfer_is_exact_and_repeatable(self):
         stage='/tmp/vetro-update-'+secrets.token_hex(8)
