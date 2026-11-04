@@ -138,9 +138,12 @@ collector uses directory listing and file reading operations only, with a
 first reads `/usr/share/wrt/app/service/service_runner.js` directly, then
 prioritizes WRT and Node directories in its bounded search. A runtime source
 file may be a regular file or a symbolic link; actual bytes read remain capped.
-It records attempted source paths and a sample of directories left when the
-search limit is reached. An empty SDB directory reply does not establish that
-the directory exists or that access was granted.
+Each operation opens its own sync stream over the same relay connection. The
+report records attempted source paths, bounded file-error messages, matching
+entries from the search roots, and a sample of directories left when the search
+limit is reached. It retains the last 48 transport frame headers, without their
+payloads, to identify connection or stream failures. An empty SDB directory reply
+does not establish that the directory exists or that access was granted.
 
 The collector does not open a shell, create authentication keys, install packages, or change
 settings. Output creation is exclusive so existing reports are preserved.

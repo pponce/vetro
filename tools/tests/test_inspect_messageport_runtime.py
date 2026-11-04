@@ -49,8 +49,9 @@ class InspectRuntimeTests(unittest.TestCase):
         listing = dent('service_runner.js', stat.S_IFREG | 0o444, len(source)) + b'DONE' + bytes(16)
         data = (frame(b'CNXN', 0x01000000, 4096) + frame(b'OKAY', 7, 1) +
                 frame(b'WRTE', 7, 1, listing[:13]) + frame(b'OKAY', 7, 1) +
-                frame(b'WRTE', 7, 1, listing[13:]) + frame(b'OKAY', 7, 1) +
-                frame(b'WRTE', 7, 1, b'DATA' + struct.pack('<I', len(source)) + source + b'DONE' + bytes(4)))
+                frame(b'WRTE', 7, 1, listing[13:]) + frame(b'CLSE', 7, 1) +
+                frame(b'OKAY', 8, 2) + frame(b'OKAY', 8, 2) +
+                frame(b'WRTE', 8, 2, b'DATA' + struct.pack('<I', len(source)) + source + b'DONE' + bytes(4)))
         sock = FragmentedSocket(data)
         reader = M.SdbReader(sock)
         reader.connect()
@@ -59,7 +60,76 @@ class InspectRuntimeTests(unittest.TestCase):
         reader.close()
         requests = [packet[24:] for packet in sock.writes if packet[:4] == b'WRTE']
         self.assertEqual([request[:4] for request in requests], [b'LIST', b'RECV'])
+        self.assertEqual([struct.unpack('<2I', packet[4:12]) for packet in sock.writes
+                          if packet[:4] == b'WRTE'], [(1, 7), (2, 8)])
         self.assertTrue(all(b'shell:' not in packet and b'SEND' not in packet for packet in sock.writes))
+
+    def test_failed_file_read_then_fresh_directory_stream(self):
+        # Models a closed sync service after FAIL. The hardware report did not
+        # retain frame headers, so it cannot establish this exact frame order.
+        message = b'No such file or directory'
+        failure = b'FAIL' + struct.pack('<I', len(message)) + message
+        for sender in (0, 7):
+            for close_after_open in (False, True):
+                with self.subTest(sender=sender, close_after_open=close_after_open):
+                    delayed = frame(b'OKAY', 7, 1) + frame(b'CLSE', sender, 1)
+                    opened = frame(b'OKAY', 8, 2)
+                    frames = (frame(b'OKAY', 7, 1) + frame(b'WRTE', 7, 1, failure) +
+                              (opened + delayed if close_after_open else delayed + opened) +
+                              frame(b'OKAY', 8, 2) + frame(b'WRTE', 8, 2, b'DONE' + bytes(16)))
+                    sock = FragmentedSocket(frames)
+                    reader = M.SdbReader(sock)
+                    with self.assertRaises(M.RemoteFileFailure) as raised:
+                        reader.pull(M.DIRECT_SOURCE)
+                    self.assertEqual(raised.exception.detail(), {
+                        'category': 'not-found', 'message': message.decode()})
+                    self.assertEqual(reader.list('/usr/share/wrt'), [])
+                    self.assertEqual([struct.unpack('<I', packet[4:8])[0] for packet in sock.writes
+                                      if packet[:4] == b'OPEN'], [1, 2])
+                    self.assertNotIn(message.decode(), str(list(reader.frames)))
+                    reader.close()
+
+    def test_file_failure_evidence_and_root_directory_evidence(self):
+        class SourceReader:
+            def pull(self, path):
+                raise M.RemoteFileFailure('Permission denied\n')
+            def list(self, path):
+                if path == '/usr/share/wrt/app':
+                    return [('service', stat.S_IFDIR, 0), ('unrelated', stat.S_IFREG, 20)]
+                return []
+        report = dict(directoriesAttempted=0, directoriesRead=0, directoriesRefused=0,
+                      sourceReadsRefused=0, sources=[], loadedRuntimeVerified=False)
+        M.inspect(SourceReader(), report)
+        self.assertEqual(report['sourceAttempts'][0]['error'], {
+            'category': 'access-denied', 'message': 'Permission denied '})
+        self.assertFalse(report['sourceRetrieved'])
+        evidence = next(row for row in report['directoryEvidence'] if row['path'] == '/usr/share/wrt/app')
+        self.assertEqual(evidence['entryCount'], 2)
+        self.assertEqual([entry['name'] for entry in evidence['matchingEntries']], ['service'])
+        self.assertNotIn('unrelated', str(report))
+
+    def test_retired_stream_never_supplies_data_and_foreign_close_is_rejected(self):
+        for command, sender, target, payload in [(b'WRTE', 7, 1, b'spoofed'),
+                (b'CLSE', 9, 1, b''), (b'CLSE', 0, 99, b''), (b'OKAY', 9, 1, b'')]:
+            with self.subTest(command=command, sender=sender, target=target):
+                reader = M.SdbReader(FragmentedSocket(frame(command, sender, target, payload)))
+                reader.local, reader.remote = 2, 8
+                reader.retired[1] = 7
+                with self.assertRaises(M.ReadFailure):
+                    reader.pump()
+                self.assertEqual(reader.buffer, b'')
+
+    def test_new_stream_refusal_and_active_stream_close(self):
+        sock = FragmentedSocket(frame(b'CLSE', 0, 1))
+        with self.assertRaisesRegex(M.ReadFailure, 'refused the new'):
+            M.SdbReader(sock).pull(M.DIRECT_SOURCE)
+        self.assertEqual([packet[:4] for packet in sock.writes], [b'OPEN', b'CLSE'])
+        for sender in (0, 7):
+            with self.subTest(sender=sender):
+                sock = FragmentedSocket(frame(b'OKAY', 7, 1) + frame(b'OKAY', 7, 1) + frame(b'CLSE', sender, 1))
+                with self.assertRaisesRegex(M.ReadFailure, 'closed the file-reading stream'):
+                    M.SdbReader(sock).pull(M.DIRECT_SOURCE)
+                self.assertEqual([packet[:4] for packet in sock.writes], [b'OPEN', b'WRTE', b'CLSE'])
 
     def test_real_socket_round_trip(self):
         client, server = socket.socketpair()
@@ -72,11 +142,21 @@ class InspectRuntimeTests(unittest.TestCase):
                 self.assertEqual(peer.frame()[3], b'sync:\0')
                 server.sendall(frame(b'OKAY', 7, 1))
                 request = peer.frame()
-                self.assertEqual(request[3][:4], b'LIST')
+                self.assertEqual(request[3][:4], b'RECV')
                 server.sendall(frame(b'OKAY', 7, 1))
-                server.sendall(frame(b'WRTE', 7, 1, b'DONE' + bytes(16)))
+                reason = b'Permission denied'
+                server.sendall(frame(b'WRTE', 7, 1, b'FAIL' + struct.pack('<I', len(reason)) + reason))
                 self.assertEqual(peer.frame()[0], b'OKAY')
-                self.assertEqual(peer.frame()[0], b'CLSE')
+                server.sendall(frame(b'CLSE', 0, 1))
+                self.assertEqual(peer.frame()[:3], (b'CLSE', 1, 7))
+                self.assertEqual(peer.frame(), (b'OPEN', 2, 0, b'sync:\0'))
+                server.sendall(frame(b'OKAY', 8, 2))
+                request = peer.frame()
+                self.assertEqual(request[3][:4], b'LIST')
+                server.sendall(frame(b'OKAY', 8, 2))
+                server.sendall(frame(b'WRTE', 8, 2, b'DONE' + bytes(16)))
+                self.assertEqual(peer.frame()[0], b'OKAY')
+                self.assertEqual(peer.frame()[:3], (b'CLSE', 2, 8))
             except BaseException as error:
                 failures.append(error)
             finally:
@@ -86,6 +166,8 @@ class InspectRuntimeTests(unittest.TestCase):
         reader = M.SdbReader(client)
         try:
             reader.connect()
+            with self.assertRaisesRegex(M.RemoteFileFailure, 'Permission denied'):
+                reader.pull(M.DIRECT_SOURCE)
             self.assertEqual(reader.list('/usr/lib'), [])
         finally:
             reader.close()
@@ -105,12 +187,11 @@ class InspectRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(M.ReadFailure, 'checksum'):
             M.SdbReader(FragmentedSocket(corrupt)).frame()
         reader = M.SdbReader(FragmentedSocket(frame(b'WRTE', 9, 1, b'x')))
-        reader.remote = 7
+        reader.local, reader.remote = 1, 7
         with self.assertRaisesRegex(M.ReadFailure, 'stream identity'):
             reader.pump()
         reader = M.SdbReader(FragmentedSocket(frame(b'OKAY', 7, 1) +
             frame(b'WRTE', 7, 1, b'DATA' + struct.pack('<I', M.MAX_SOURCE + 1))))
-        reader.remote = 7
         with self.assertRaisesRegex(M.ReadFailure, 'limit'):
             reader.pull('/usr/lib/service_runner.js')
 
@@ -211,6 +292,29 @@ class InspectRuntimeTests(unittest.TestCase):
         self.assertTrue(report['sourceRetrieved'])
         self.assertFalse(report['loadedRuntimeVerified'])
         self.assertEqual(report['assessment'], 'partial-source')
+
+    def test_transport_failure_report_retains_file_error_and_frame_headers(self):
+        revision = 'a' * 40
+        status = {'connectionDiagnostics': {'sourceRevision': revision, 'sourceDirty': False}}
+        relay = {'relay': {'enabled': True, 'listening': True, 'sessions': 0, 'port': 26201}}
+        reason = b'No such file or directory'
+        sock = FragmentedSocket(frame(b'CNXN', 0x01000000, 4096, b'private-banner') +
+            frame(b'OKAY', 7, 1) + frame(b'OKAY', 7, 1) +
+            frame(b'WRTE', 7, 1, b'FAIL' + struct.pack('<I', len(reason)) + reason) +
+            frame(b'CLSE', 0, 1) + frame(b'OKAY', 8, 2) +
+            frame(b'WRTE', 99, 2, b'unexpected-data'))
+        with patch.object(M, 'read_json', side_effect=[status, relay]), \
+             patch.object(M.socket, 'create_connection', return_value=sock):
+            report = M.collect('192.0.2.1', revision)
+        self.assertEqual(report['assessment'], 'read-blocked')
+        self.assertFalse(report['sourceRetrieved'])
+        self.assertEqual(report['sourceAttempts'][0]['error'], {
+            'category': 'not-found', 'message': reason.decode()})
+        self.assertIn('WRTE 99/2; expected 8/2', report['errors'][0])
+        self.assertIn({'direction': 'receive', 'command': 'WRTE', 'arg0': 99, 'arg1': 2,
+                       'payloadBytes': 15}, report['transportFrames'])
+        self.assertNotIn('private-banner', str(report))
+        self.assertNotIn('unexpected-data', str(report))
 
 
 if __name__ == '__main__':

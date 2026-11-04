@@ -70,6 +70,32 @@ Ten collector tests pass, including direct-read short-circuiting, runtime subtre
 priority, symlink source retrieval, and explicit reporting of the directory cap.
 No application/service changes or installations are included.
 
+## Targeted inspection transport failure
+
+`runtime-wrapper-20261103-180354-715512.json` verifies the same running revision.
+Its direct source request returned a sync FAIL, recorded as missing-or-refused.
+The first fallback directory request then stopped with
+`Unexpected SDB stream identity`; no directory reply or source was retrieved.
+The collector discarded the FAIL text and did not retain frame identifiers.
+This report therefore cannot distinguish missing source from access denial, or
+identify the exact frame that triggered the transport check. A close of the first
+sync stream is a possible explanation, not an observed frame in this report.
+
+The collector now opens a fresh sync stream for each LIST/RECV operation over
+the existing connection, following the SDB client's per-operation channel use.
+It accepts delayed empty close/ack frames only for known retired streams and
+keeps both identifiers strict for active data. A complete FAIL remains readable
+even if it precedes a separate request acknowledgement. Schema 3 retains bounded
+file-error messages, the last 48 transport frame headers without payloads, and
+matching entries from search-root directory replies.
+
+Fifteen collector tests pass locally. They include a real socket exchange with a
+failed RECV, peer closure, and successful LIST on a new channel; late close/ack
+orders; rejected foreign-stream data; and retention of both the original file
+error and a subsequent transport failure. These validate host behavior only.
+The revised collector has not yet been run on the TV. The application remains at
+the installed revision, with no runtime workaround or installation included.
+
 ## Decisions and next steps
 
 1. Keep the installed revision and all prior installation records.

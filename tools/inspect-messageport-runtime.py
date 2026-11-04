@@ -6,6 +6,7 @@ install packages, register keys, or modify the TV. Candidate source files are
 not proof of which runtime the service loaded. Reports preserve that distinction.
 """
 import argparse
+from collections import deque
 import datetime
 import hashlib
 import heapq
@@ -34,6 +35,22 @@ class ReadFailure(RuntimeError):
     pass
 
 
+class RemoteFileFailure(PermissionError):
+    def __init__(self, message):
+        # File-operation errors are diagnostic evidence, never instructions.
+        # Retain a bounded printable message rather than losing the real cause.
+        self.message = ''.join(c if c.isprintable() else ' ' for c in message)[:512]
+        lower = self.message.lower()
+        self.category = ('not-found' if any(s in lower for s in ('no such file', 'not found')) else
+                         'access-denied' if any(s in lower for s in
+                            ('permission denied', 'access denied', 'not permitted', 'not allowed', 'forbidden')) else
+                         'remote-file-failure')
+        super().__init__(self.message)
+
+    def detail(self):
+        return {'category': self.category, 'message': self.message}
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise ReadFailure('HTTP redirect refused')
@@ -58,13 +75,20 @@ def read_json(url):
 
 
 class SdbReader:
-    """One SDB connection and one sync stream; only LIST and RECV requests."""
+    """One SDB connection, a fresh sync stream for each LIST/RECV operation."""
     def __init__(self, connection, seconds=90):
         self.sock = connection
-        self.deadline = time.monotonic() + seconds
+        self.started = time.monotonic()
+        self.deadline = self.started + seconds
         self.buffer = bytearray()
-        self.local = 1
+        self.local = 0
         self.remote = None
+        self.retired = {}
+        self.frames = deque(maxlen=48)
+
+    def record(self, direction, command, a, b, size):
+        self.frames.append({'direction': direction, 'command': command.decode('ascii', errors='replace'),
+                            'arg0': a, 'arg1': b, 'payloadBytes': size})
 
     def exact(self, size):
         result = bytearray()
@@ -80,6 +104,7 @@ class SdbReader:
         return bytes(result)
 
     def send(self, command, arg0, arg1, data=b''):
+        self.record('send', command, arg0, arg1, len(data))
         number = struct.unpack('<I', command)[0]
         self.sock.sendall(struct.pack('<6I', number, arg0, arg1, len(data),
                                      sum(data) & 0xffffffff, number ^ 0xffffffff) + data)
@@ -91,7 +116,9 @@ class SdbReader:
         payload = self.exact(size)
         if sum(payload) & 0xffffffff != checksum:
             raise ReadFailure('Invalid SDB frame checksum')
-        return struct.pack('<I', command), a, b, payload
+        tag = struct.pack('<I', command)
+        self.record('receive', tag, a, b, len(payload))
+        return tag, a, b, payload
 
     def connect(self):
         self.send(b'CNXN', 0x01000000, 4096, b'host::vetro-readonly')
@@ -100,24 +127,68 @@ class SdbReader:
             raise ReadFailure('SDB requires authentication; no key was created or registered')
         if command != b'CNXN' or maximum < 1024:
             raise ReadFailure('Unexpected SDB handshake')
+
+    def retired_frame(self, command, a, b, payload):
+        if b not in self.retired:
+            return False
+        expected = self.retired[b]
+        # Late close/ack frames belong only to an exact, previously closed
+        # local channel. No payload is accepted from a retired channel.
+        if not payload and ((command == b'CLSE' and a in (0, expected)) or
+                            (command == b'OKAY' and a == expected)):
+            return True
+        raise ReadFailure('Unexpected frame for retired SDB stream: ' +
+                          command.decode('ascii', errors='replace') + ' ' + str(a) + '/' + str(b))
+
+    def open_sync(self):
+        if self.remote is not None or self.buffer:
+            raise ReadFailure('Previous SDB stream was not closed')
+        self.local += 1
         self.send(b'OPEN', self.local, 0, b'sync:\0')
-        command, a, b, _ = self.frame()
-        if command != b'OKAY' or b != self.local or not a:
-            raise ReadFailure('SDB file-reading stream was refused')
-        self.remote = a
+        while True:
+            command, a, b, payload = self.frame()
+            if self.retired_frame(command, a, b, payload):
+                continue
+            if command == b'CLSE' and b == self.local and not payload:
+                self.send(b'CLSE', self.local, a)
+                raise ReadFailure('SDB refused the new file-reading stream')
+            if command != b'OKAY' or b != self.local or not a or payload:
+                raise ReadFailure('Unexpected SDB open response: ' +
+                                  command.decode('ascii', errors='replace') + ' ' + str(a) + '/' + str(b))
+            self.remote = a
+            return
+
+    def finish_stream(self):
+        if self.remote is not None:
+            self.retired[self.local] = self.remote
+            try:
+                self.send(b'CLSE', self.local, self.remote)
+            except OSError:
+                pass  # Preserve the original operation result; a later read will fail.
+        self.remote = None
+        self.buffer.clear()
 
     def pump(self):
-        command, a, b, payload = self.frame()
+        while True:
+            command, a, b, payload = self.frame()
+            if not self.retired_frame(command, a, b, payload):
+                break
+        # A close with sender ID zero is a protocol refusal/close, not data.
+        # WRTE and OKAY still require both exact active stream identifiers.
+        if command == b'CLSE' and b == self.local and a in (0, self.remote) and not payload:
+            self.send(b'CLSE', self.local, a)
+            self.remote = None
+            raise ReadFailure('SDB closed the file-reading stream')
         if a != self.remote or b != self.local:
-            raise ReadFailure('Unexpected SDB stream identity')
+            raise ReadFailure('Unexpected SDB stream identity: ' +
+                command.decode('ascii', errors='replace') + ' ' + str(a) + '/' + str(b) +
+                '; expected ' + str(self.remote) + '/' + str(self.local))
         if command == b'WRTE':
             if len(self.buffer) + len(payload) > MAX_SOURCE + MAX_FRAME:
                 raise ReadFailure('SDB buffer limit exceeded')
             self.buffer.extend(payload)
             self.send(b'OKAY', self.local, self.remote)
-        elif command == b'CLSE':
-            raise ReadFailure('SDB closed the file-reading stream')
-        elif command != b'OKAY':
+        elif command != b'OKAY' or payload:
             raise ReadFailure('Unexpected SDB stream frame')
         return command
 
@@ -140,21 +211,27 @@ class SdbReader:
         encoded = path.encode('utf-8')
         if len(encoded) > 1024:
             raise ReadFailure('System path exceeds protocol limit')
+        self.open_sync()
         self.send(b'WRTE', self.local, self.remote,
                   operation + struct.pack('<I', len(encoded)) + encoded)
-        while self.pump() != b'OKAY':
-            pass
+        # There is one outbound request per stream. The response reader handles
+        # ACKs while waiting for data; a complete FAIL must remain observable
+        # even if the peer closes before acknowledging the request separately.
 
     def failed(self):
         length = struct.unpack('<I', self.read(4))[0]
         if length > 4096:
             raise ReadFailure('Invalid SDB failure length')
-        # The TV's error text is not needed and is not copied into the report.
-        self.read(length)
-        raise PermissionError('SDB refused this file operation')
+        raise RemoteFileFailure(self.read(length).decode('utf-8', errors='replace'))
 
     def list(self, path):
-        self.request(b'LIST', path)
+        try:
+            self.request(b'LIST', path)
+            return self.read_directory()
+        finally:
+            self.finish_stream()
+
+    def read_directory(self):
         entries = []
         while True:
             kind = self.read(4)
@@ -175,7 +252,13 @@ class SdbReader:
             entries.append((name, mode, size))
 
     def pull(self, path):
-        self.request(b'RECV', path)
+        try:
+            self.request(b'RECV', path)
+            return self.read_file()
+        finally:
+            self.finish_stream()
+
+    def read_file(self):
         result = bytearray()
         while True:
             kind = self.read(4)
@@ -190,8 +273,7 @@ class SdbReader:
 
     def close(self):
         try:
-            if self.remote:
-                self.send(b'CLSE', self.local, self.remote)
+            self.finish_stream()
         finally:
             self.sock.close()
 
@@ -202,9 +284,11 @@ def capture_source(reader, report, candidate, method):
     report['sourceAttempts'].append(attempt)
     try:
         source = reader.pull(candidate)
-    except PermissionError:
+    except PermissionError as error:
         report['sourceReadsRefused'] += 1
         attempt['result'] = 'missing-or-refused'
+        if isinstance(error, RemoteFileFailure):
+            attempt['error'] = error.detail()
         return False
     if not source:
         attempt['result'] = 'empty-file'
@@ -228,12 +312,13 @@ def directory_priority(path):
 def inspect(reader, report):
     report.update(sourceReadsAttempted=0, sourceAttempts=[],
                   nonemptyDirectoryReplies=0, emptyDirectoryReplies=0,
-                  pendingDirectorySample=[], searchLimitReached=False)
+                  pendingDirectorySample=[], searchLimitReached=False,
+                  directoryEvidence=[], directoryFailures=[])
     # RECV follows a file symlink and remains bounded by the actual bytes read.
     # No prior directory traversal or size/type guess is needed at this location.
     if capture_source(reader, report, DIRECT_SOURCE, 'runtime-stack-path'):
         return
-    roots = ('/usr/share/wrt/app/service', '/usr/share/wrt') + ROOTS
+    roots = ('/usr/share/wrt/app/service', '/usr/share/wrt/app', '/usr/share/wrt') + ROOTS
     queue = [(directory_priority(path), 0, path, path.startswith('/usr/share/wrt')) for path in roots]
     heapq.heapify(queue)
     seen = set()
@@ -245,11 +330,20 @@ def inspect(reader, report):
         report['directoriesAttempted'] += 1
         try:
             entries = reader.list(path)
-        except PermissionError:
+        except PermissionError as error:
             report['directoriesRefused'] += 1
+            if isinstance(error, RemoteFileFailure) and len(report['directoryFailures']) < 20:
+                report['directoryFailures'].append({'path': path, 'error': error.detail()})
             continue
         report['directoriesRead'] += 1
         report['nonemptyDirectoryReplies' if entries else 'emptyDirectoryReplies'] += 1
+        if path in roots:
+            relevant_entries = [(name, mode, size) for name, mode, size in sorted(entries)
+                                if name == 'app' or INTERESTING.search(name) or name.endswith('.js')]
+            report['directoryEvidence'].append({'path': path, 'entryCount': len(entries),
+                'matchingEntries': [{'name': name, 'mode': mode, 'size': size}
+                                    for name, mode, size in relevant_entries[:60]],
+                'matchingEntriesTruncated': len(relevant_entries) > 60})
         for name, mode, size in sorted(entries):
             candidate = path + '/' + name
             if (name == 'service_runner.js' and candidate != DIRECT_SOURCE
@@ -268,7 +362,7 @@ def inspect(reader, report):
 
 
 def collect(tv, revision):
-    report = {'schema': 2, 'capturedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    report = {'schema': 3, 'capturedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
               'expectedRevision': revision, 'serviceRevisionVerified': False,
               'directoriesAttempted': 0, 'directoriesRead': 0, 'directoriesRefused': 0,
               'sourceReadsRefused': 0, 'sources': [], 'sourceRetrieved': False,
@@ -306,6 +400,8 @@ def collect(tv, revision):
                 reader.close()
             except Exception:
                 pass
+            report['transportFrames'] = list(reader.frames)
+            report['transportElapsedSeconds'] = round(time.monotonic() - reader.started, 3)
     return report
 
 
@@ -328,6 +424,9 @@ def main():
     print('Runtime candidates: ' + str(len(report['sources'])))
     for error in report['errors']:
         print('Read limitation: ' + error)
+    for attempt in report.get('sourceAttempts', []):
+        if 'error' in attempt:
+            print('File read: ' + attempt['error']['category'] + ': ' + attempt['error']['message'])
     print('Report: ' + str(args.output))
 
 
