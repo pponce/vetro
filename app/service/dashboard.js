@@ -321,7 +321,7 @@ function startupAppMarkup(a){
  var reason=startupAppError||(!data?'Reading the power-on choice…':!chosen?componentAvailability(a,inventory,verifiedDisableIds).launch.reason:'');
  var note=!data?'':data.appId?(chosen?'This app is selected.':'Currently selected: '+startupAppName(data.appId)+'. Selecting this app replaces it.'):'No app is selected.';
  return '<label class="switch"><input type="checkbox" role="switch" id="startupForeground" '+(chosen?'checked ':'')+(reason||componentBusy?'disabled ':'')+'aria-describedby="startupForegroundHelp"><span>Open onscreen at power-on</span></label>'+
-  '<p id="startupForegroundHelp" class="muted">Starts opening within 10 seconds of boot or standby wake while the TV is idle, or skips that wake. Remote use cancels the pending launch. Remote monitoring must be ready. App loading can take longer. Only one app can be selected.</p>'+
+  '<p id="startupForegroundHelp" class="muted">Starts opening while the TV is idle, within 10 seconds of a cold boot or 20 seconds of a standby wake. If readiness checks take longer, that launch is skipped. Remote use cancels the pending launch. Remote monitoring must be ready. App loading can take longer. Only one app can be selected.</p>'+
   '<p class="muted">'+esc(reason||note)+'</p>'+(data&&(data.error||data.lastResult)?'<p class="notice" role="status">'+esc(data.error||data.lastResult)+'</p>':'');
 }
 function refreshStartupAppControl(){
@@ -1039,3 +1039,4 @@ $('dock').onclick=function(e){var b=e.target.closest?e.target.closest('button'):
 if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('resize',function(){if(currentPanel==='dock')fitPreview()});
 loadApps().then(loadRules);liveStatus();loadQuick();setInterval(function(){if(currentPanel==='remote'&&inputListening&&!ruleDetection&&!document.hidden)pollInput()},1500);setInterval(function(){if(liveUntil){if(Date.now()>=liveUntil)liveUntil=0;liveStatus();}if(currentPanel==='dashboard'||currentPanel==='processes'||currentPanel==='apps')pollMonitor()},1000);
 </script><script>${appAccessUI.script}</script></body></html>`;};
+

@@ -148,16 +148,18 @@ Access.prototype.limit = function (appId) {
     if (++b.count>20 || this.inFlight[appId] || this.active>=4) throw fault('busy','Wait for the current request to finish');
 };
 Access.prototype.call = function (appId, method, params) {
-    var self=this,identity,grant,owned=false,submitted=false,required=Object.prototype.hasOwnProperty.call(METHODS,method)?METHODS[method]:null;
+    var self=this,identity,grant,revision,owned=false,submitted=false,required=Object.prototype.hasOwnProperty.call(METHODS,method)?METHODS[method]:null;
     return Promise.resolve().then(function () {
         if (!validId(appId)) throw fault('identity_unverified','App identity cannot be verified');
         self.limit(appId); self.inFlight[appId]=true; self.active++; owned=true;
         self.ready();
+        revision=self.state.revision;
         if (method!=='access.request' && method!=='access.status' && !required) throw fault('not_allowed','This operation is not available to apps');
         identity=self.options.identity.read(appId);
         return self.options.inventory();
     }).then(function (d) {
         self.ready();
+        if(self.state.revision!==revision)throw fault('permission_denied','Permissions changed. Read the current approval before retrying.');
         if (self.options.identity.read(appId).installation!==identity.installation) throw fault('identity_changed','App changed. Request approval again.');
         if (d.registryError || !userApp(d.apps.find(function (a) { return a.appId===appId && a.packageId===identity.packageId && a.version===identity.version; }),d.apps)) throw fault('not_allowed','Only verified user apps can connect');
         grant=self.state.grants.find(function (g) { return g.identity.appId===appId && g.identity.installation===identity.installation; });
@@ -177,12 +179,14 @@ Access.prototype.call = function (appId, method, params) {
         }
         function check() {
             self.ready();
+            if(self.state.revision!==revision)throw fault('permission_denied','Permissions changed. Read the current approval before retrying.');
             var current=self.state.grants.find(function (g) { return g.identity.appId===appId && g.identity.installation===identity.installation; });
             if (!current || !grant || current.generation!==grant.generation || !current.enabled || current.scopes.indexOf(required)<0) throw fault('permission_denied','This permission has not been granted');
             if (self.options.identity.read(appId).installation!==identity.installation) throw fault('identity_changed','App changed. Request approval again.');
             return true;
         }
-        check.onDispatch=function(){submitted=true;};
+        // Recheck at actual dispatch as well as before entering an async queue.
+        check.onDispatch=function(){check();submitted=true;};
         check();
         return self.options.perform(method,params,d.apps,check).then(function (value) { check(); self.event(appId,method,'completed'); return value; });
     }).catch(function (e) {

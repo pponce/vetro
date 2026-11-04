@@ -7,6 +7,12 @@ const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-
   f.tizen.messageport={requestLocalMessagePort:n=>port(n,false),requestTrustedLocalMessagePort:n=>port(n,true)};
   const {context:c,router}=require('./service-harness.cjs')(path.resolve(__dirname,'..'),{tizen:f.tizen,setInterval:()=>({unref(){}})});
   c.inventory=async()=>({apps:f.rows});
+  const commands=[];let inventoryReads=0,registryFailure=false;
+  c.platform.execute=async command=>{
+   const result=f.permissionRegistryResult(command);
+   if(result){inventoryReads++;return registryFailure?{exit_code:1,stdout:'',stderr:'Registry unavailable'}:result;}
+   commands.push(command);return {exit_code:0,stdout:''};
+  };
   server=http.createServer(router);await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
   async function api(route,body,headers={}){const r=await fetch(base+route,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...headers},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json()};}
   function ipc(port,appId,method,params={},trusted=false){return new Promise(resolve=>{
@@ -21,6 +27,11 @@ const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-
   const owner={Authorization:'Bearer '+confirmation.body.token};let state=(await api('/app-access',undefined,owner)).body;assert.equal(state.enabled,false);
   const blocked=await ipc(ports.APP_PORT,'garage.app','access.request',{scopes:['apps.read']});assert.equal(blocked.error.code,'disabled');
   state=(await api('/app-access',{action:'enable',enabled:true,expectedRevision:state.revision},owner)).body;
+  registryFailure=true;
+  const unavailable=await ipc(ports.APP_PORT,'garage.app','access.status');
+  assert.equal(unavailable.ok,false);assert.equal(unavailable.error.code,'unavailable');
+  assert.equal(unavailable.error.submitted,false,'failed live registry cannot use the owner inventory as permission evidence');
+  registryFailure=false;
   const request=await ipc(ports.APP_PORT,'garage.app','access.request',{scopes:['apps.read']});assert.equal(request.result.state,'pending');
   state=(await api('/app-access',{action:'approve',requestId:request.result.requestId,scopes:['apps.read'],expectedRevision:state.revision},owner)).body;assert.equal(state.grants.length,1);
   const apps=await ipc(ports.APP_PORT,'garage.app','apps.list');assert.equal(apps.ok,true);assert.equal(apps.result.apps.length,2);
@@ -30,7 +41,7 @@ const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-
   const launchRequest=await ipc(ports.APP_PORT,'garage.app','access.request',{scopes:['apps.launch']});
   state=(await api('/app-access',undefined,owner)).body;
   state=(await api('/app-access',{action:'approve',requestId:launchRequest.result.requestId,scopes:['apps.launch'],expectedRevision:state.revision},owner)).body;
-  const commands=[];c.platform.execute=async command=>{commands.push(command);return {exit_code:0,stdout:''};};
+  commands.length=0; // Browser pairing may have opened Vetro before this app launch.
   c.startupApp.pending={stage:'waiting'};c.returnApp.pending={appId:'home.app'};
   const launched=await ipc(ports.APP_PORT,'garage.app','apps.launch',{appId:'media.app'});
   assert.equal(launched.ok,true);assert.equal(launched.result.submitted,true);
@@ -41,6 +52,7 @@ const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-
   await api('/app-access',{action:'revoke',appId:'garage.app',expectedRevision:state.revision},owner);
   assert.equal((await ipc(ports.APP_PORT,'garage.app','apps.launch',{appId:'media.app'})).error.code,'permission_denied');
   assert.equal(commands.length,1,'revoked access never reaches the TV command queue');
+  assert.ok(inventoryReads>=10,'permission operations read the live lean registry without a cached authority fallback');
   console.log('PASS real HTTP router + MessagePort: closed owner API, widget handshake, pairing, approval, scoped app reads and immediate revocation');
  }finally{if(server)await new Promise(r=>server.close(r));f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

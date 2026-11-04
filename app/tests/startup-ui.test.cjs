@@ -29,6 +29,7 @@ vm.runInNewContext(require('../service/dashboard.js')().match(/<script>([\s\S]*?
     await sandbox.loadStartupApp();
     let html=sandbox.startupAppMarkup(rows[1]);
     assert.match(html,/Open onscreen at power-on/); assert.match(html,/standby/);
+    assert.match(html,/10 seconds of a cold boot or 20 seconds of a standby wake/);
     assert.match(html,/Currently selected: Video One/); assert.match(html,/replaces it/);
     assert.match(sandbox.startupAppMarkup(rows[0]),/id="startupForeground" checked/);
     assert.match(sandbox.startupAppMarkup(rows[2]),/id="startupForeground" disabled/);
@@ -48,3 +49,4 @@ vm.runInNewContext(require('../service/dashboard.js')().match(/<script>([\s\S]*?
     await el('clearStartupChoice').onclick();assert.equal(choice.appId,null,'a removed app can be deselected from the Startup overview');
     console.log('PASS startup UI: exclusive selection, replacement copy, independent boot flags, disabled background apps, stale refresh, and off');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+

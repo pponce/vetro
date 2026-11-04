@@ -49,6 +49,20 @@ test('request cannot appear after disable while inventory was pending',async f=>
  await f.enable();let release;f.options.inventory=()=>new Promise(r=>release=r);const call=f.access.call('garage.app','access.request',{scopes:['apps.read']});await new Promise(r=>setImmediate(r));
  await f.access.admin({action:'enable',enabled:false,expectedRevision:f.access.state.revision});release({apps:f.rows});await denied(call,'disabled');assert.equal(f.access.pending.length,0);
 });
+for(const stage of ['inventory','dispatch','after-dispatch'])test('disable then re-enable invalidates pending '+stage+' work',async f=>{
+ await f.approve(['apps.launch']);let release;
+ if(stage==='inventory')f.options.inventory=()=>new Promise(r=>release=()=>r({apps:f.rows}));
+ else f.options.perform=(method,params,rows,check)=>new Promise((resolve,reject)=>{
+  if(stage==='after-dispatch'){check.onDispatch();f.calls.push('dispatched');}
+  release=()=>{try{if(stage==='dispatch'){check.onDispatch();f.calls.push('bad');}resolve({submitted:true});}catch(e){reject(e);}};
+ });
+ const work=f.access.call('garage.app','apps.launch',{appId:'media.app'});await new Promise(r=>setImmediate(r));
+ await f.access.admin({action:'enable',enabled:false,expectedRevision:f.access.state.revision});
+ await f.access.admin({action:'enable',enabled:true,expectedRevision:f.access.state.revision});
+ release();
+ await assert.rejects(work,e=>e.code===(stage==='after-dispatch'?'not_confirmed':'permission_denied')&&e.submitted===(stage==='after-dispatch'));
+ assert.equal(f.calls.length,stage==='after-dispatch'?1:0,'no new dispatch after approval state changed');
+});
 test('busy rejection does not release another in-flight reservation',async f=>{
  await f.approve();let release;f.options.perform=()=>new Promise(r=>release=r);const first=f.access.call('garage.app','apps.list',{});await new Promise(r=>setImmediate(r));
  await denied(f.access.call('garage.app','apps.list',{}),'busy');assert.equal(f.access.active,1);assert.equal(f.access.inFlight['garage.app'],true);await denied(f.access.call('garage.app','apps.list',{}),'busy');release({});await first;assert.equal(f.access.active,0);
@@ -64,3 +78,4 @@ test('post-dispatch revocation is an unknown outcome, never a safe native fallba
  await assert.rejects(f.access.call('garage.app','apps.launch',{appId:'media.app'}),e=>e.code==='permission_denied'&&e.submitted===false);
 });
 (async()=>{for(const [name,fn] of cases){const f=fixture();try{await fn(f);console.log('PASS '+name);}finally{f.close();}}})().catch(e=>{console.error(e);process.exitCode=1;});
+

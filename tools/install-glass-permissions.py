@@ -19,6 +19,13 @@ BASE = PROJECT / 'launcher-playground'
 REPO = BASE / 'sources/glass-home-permissions'
 BRANCH = 'combined/vetro-permissions'
 REVISION = args.expected_commit
+VERIFY_FILES = (
+    'index.html', 'css/tv.css', 'js/data.js', 'js/platform.js', 'js/home.js',
+    'js/vetro-apps.js', 'js/vetro-access-client.js', 'js/vetro-permissions.js',
+    'js/vendor/sha256.js', 'js/vendor/sha256.LICENSE.txt', 'service/server.js',
+    'service/vetro.js', 'service/vetro-launch.js', 'service/vetro-replies.js',
+    'service/dock-prefs.js', 'js/config.js', 'js/local-key.js'
+)
 TV, MINT = args.tv, args.mint
 API = 'http://' + TV + ':8099'
 STAMP = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
@@ -77,8 +84,8 @@ def restart_glass():
         try:
             with HTTP.open('http://' + TV + ':8090/health', timeout=2) as response:
                 health = json.loads(response.read(4096))
-            if health.get('name') == 'Glass Home' and health.get('vetroApps') == 3 and health.get('dockPreferences') == 1 and health.get('vetroLaunch') == 1 and health.get('vetroPermissions') == 1:
-                say('RUNNING: Vetro app reader 3, coordinated launch 1 and scoped access integration 1 verified.')
+            if health.get('name') == 'Glass Home' and health.get('vetroApps') == 3 and health.get('dockPreferences') == 1 and health.get('vetroLaunch') == 1 and health.get('vetroPermissions') == 2:
+                say('RUNNING: Vetro app reader 3, coordinated launch 1 and scoped access integration 2 verified.')
                 say('PERSISTENCE READY: confirmed app-selection and hiding storage revision 1 verified.')
                 return
         except Exception:
@@ -86,7 +93,7 @@ def restart_glass():
         if attempt in (9, 19):
             say('Waiting for the updated Glass Home service...')
         time.sleep(1)
-    raise RuntimeError('Updated files are installed, but reader 3, preference storage 1 and coordinated launch 1 are not running. Keep the report; do not reinstall automatically.')
+    raise RuntimeError('Updated files are installed, but reader 3, preference storage 1, coordinated launch 1 and scoped access integration 2 are not running. Keep the report; do not reinstall automatically.')
 
 def verify_vetro(root):
     try:
@@ -206,6 +213,8 @@ def main():
             root = previous['root']
             if root not in ('/opt/usr/apps/GlassHome1/res/wgt', '/usr/apps/GlassHome1/res/wgt'):
                 raise RuntimeError('Invalid installed app path in the saved attempt')
+            if not isinstance(previous.get('hashes'), dict) or not set(VERIFY_FILES).issubset(previous['hashes']):
+                raise RuntimeError('The saved attempt does not cover every required Glass Home file. Keep the report; no second install was sent.')
             if not all(re.fullmatch(r'[A-Za-z0-9_./-]+', name) and '..' not in name.split('/') and
                        tv_hash(root + '/' + name, previous['hashCommand']) == checksum for name, checksum in previous['hashes'].items()):
                 raise RuntimeError('The submitted update is not yet verified. Keep the report; no second install was sent.')
@@ -335,9 +344,8 @@ def main():
         if tv_hash(target, command) != hashlib.sha256(signed.read_bytes()).hexdigest():
             raise RuntimeError('Transferred package checksum mismatch; installation was not requested.')
         say('Package checksum verified. Updating Glass Home through Vetro...')
-        verify_files = ['index.html', 'css/tv.css', 'js/data.js', 'js/platform.js', 'js/home.js', 'js/vetro-apps.js', 'js/vetro-access-client.js', 'js/vetro-permissions.js', 'service/server.js', 'service/vetro.js', 'service/vetro-launch.js', 'service/dock-prefs.js', 'js/config.js', 'js/local-key.js']
         ledger = {'revision':REVISION, 'sent':True, 'complete':False, 'root':app_root, 'hashCommand':command,
-                  'hashes':{name:hashlib.sha256(contents[name]).hexdigest() for name in verify_files}}
+                  'hashes':{name:hashlib.sha256(contents[name]).hexdigest() for name in VERIFY_FILES}}
         ledger_write(ledger)
         submitted = True
         result = api('/install', {'path': target}, timeout=150)
@@ -345,7 +353,7 @@ def main():
             raise RuntimeError('Vetro did not confirm installation submission. Do not retry automatically.')
         for attempt in range(12):
             try:
-                if 'GlassHome1.GlassHome' in inventory() and all(tv_hash(app_root + '/' + name, command) == hashlib.sha256(contents[name]).hexdigest() for name in verify_files):
+                if 'GlassHome1.GlassHome' in inventory() and all(tv_hash(app_root + '/' + name, command) == hashlib.sha256(contents[name]).hexdigest() for name in VERIFY_FILES):
                     verified = True
                     break
             except Exception:

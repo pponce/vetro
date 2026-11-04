@@ -33,7 +33,8 @@ function collectFiles() {
     const dockFiles = dockResources();
     const port = buildPort();
     const names = ['config.xml', 'index.html', 'icon.png', 'native/TvState.dll', 'native/TvState.runtimeconfig.json',
-        'native/dock/tvlauncher-dotnet.dll', 'native/dock/tvlauncher-dotnet.runtimeconfig.json'].concat(
+        'native/dock/tvlauncher-dotnet.dll', 'native/dock/tvlauncher-dotnet.runtimeconfig.json',
+        'service/vendor/sha256.js', 'service/vendor/sha256.LICENSE.txt'].concat(
         fs.readdirSync(path.join(__dirname,'service')).filter(name => name.endsWith('.js')).sort().map(name => 'service/' + name));
     const metadata = Object.assign({}, require('./service/build-info.js'));
     // Public connection telemetry is a build-time opt-in, never enabled by a

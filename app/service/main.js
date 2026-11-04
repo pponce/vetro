@@ -55,7 +55,7 @@ function launchVisibleApp(appId, guard) {
 var startupApp = new StartupApp.StartupApp({
     readPower: readAppPower, powerSession: appPowerSession,
     ready: function () { return platform.status().agent.connected === true; },
-    inventory: function () { return inventory(true); },
+    lookupApps: function (ids, timeoutMs) { return AppRegistry.launchable(platform.execute.bind(platform), ids, timeoutMs); },
     presence: function () { return presence.read(); },
     launch: launchVisibleApp, snapshot: returnSnapshot, activity: remoteActivity
 });
@@ -88,7 +88,7 @@ var tizenRuntime = typeof tizen === 'undefined' ? null : tizen;
 var appIdentity = new (require('./app-identity.js').Resolver)(tizenRuntime);
 var appAccess = new (require('./app-access.js').Access)({
     identity: appIdentity,
-    inventory: function () { return inventory(true); },
+    inventory: function () { return require('./app-permission-registry.js').load(agentExecute,state); },
     perform: require('./app-api.js').create({
         identity: appIdentity, execute: agentExecute,
         monitor: function (force) { return monitor.snapshot('full', force); },
@@ -101,6 +101,7 @@ var appAccess = new (require('./app-access.js').Access)({
         }
     })
 });
+var appReplies = new (require('./app-replies.js').Cache)({access:appAccess,interfaces:function(){return os.networkInterfaces();},port:PORT});
 var appPorts = null, appStorageReady = false, appInitializing = false, appInitialization = 0;
 var widgetBootstrap = null, appPrivateDirectory = null;
 var connectionDiagnostics = new (require('./connection-diagnostics.js').Diagnostics)(buildInfo);
@@ -114,7 +115,7 @@ function startAppCommunication() {
     function connect() {
         if(!widgetBootstrap)widgetBootstrap=new (require('./widget-bootstrap.js').Publisher)(auth,connectionDiagnostics);
         widgetBootstrap.start(appPrivateDirectory);
-        appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth,connectionDiagnostics);
+        appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth,connectionDiagnostics,appReplies);
     }
     if (appStorageReady) { connect(); return; }
     appInitializing = true;
@@ -137,6 +138,7 @@ function startAppCommunication() {
 function stopAppCommunication() {
     ++appInitialization; appInitializing = false;
     if (appPorts) { appPorts.stop(); appPorts = null; }
+    appReplies.clear();
     if (widgetBootstrap) { widgetBootstrap.stop(); widgetBootstrap = null; }
 }
 module.exports.onStart = function(){connectionDiagnostics.lifecycle('starts');startAppCommunication();};
@@ -818,6 +820,7 @@ function handleRemapRun(req,res){readJsonBody(req,res,function(p){
 
 http.createServer(function (req, res) {
     var url = (req.url || '/').split('?')[0];
+    if (appReplies.handle(req,res,url)) return;
     if (auth.gate(req,res,url,{open:developmentOnly(),
         connectionDiagnostics:buildInfo.connectionDiagnostics===true?function(){return connectionDiagnostics.snapshot();}:null,
         onPair:function () { return runActions([{type:'launch',appId:'vetrotvapp.app'}]); }})) return;

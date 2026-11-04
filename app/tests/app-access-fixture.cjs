@@ -15,6 +15,15 @@ module.exports=function fixture(){
  const identity=new Resolver(tizen),calls=[],options={identity,now:()=>now,file:path.join(dir,'grants.json'),inventory:async()=>({apps:rows}),perform:async(method,p,r,check)=>{check();calls.push({method,p});return {ok:true};}};
  const access=new Access(options);access.transport={available:true,error:null};
  const f={dir,rows,installed,tizen,identity,calls,access,options,advance:n=>now+=n,close:()=>fs.rmSync(dir,{recursive:true,force:true})};
+ // Supply only the lean permission query's wire output. Other platform
+ // commands remain the individual HTTP fixture's responsibility.
+ f.permissionRegistryResult=command=>{
+  if(!command.includes("SELECT hex('base'),hex(a.app_id),hex(a.package)")||!command.includes('hex(p.package_system)'))return null;
+  const flag=v=>typeof v==='boolean'?String(v):'',hex=values=>values.map(v=>Buffer.from(String(v)).toString('hex')).join('|');
+  return {exit_code:0,timed_out:false,stdout:rows.map(a=>hex(['base',a.appId,a.packageId,a.type||'wgt',a.component,
+   flag(a.disabled),flag(a.removable),a.version,flag(a.system),flag(a.preload),flag(typeof a.show==='boolean'?!a.show:null)]))
+   .concat([hex(['complete'])]).join('\n')+'\n'};
+ };
  f.enable=()=>access.admin({action:'enable',enabled:true,expectedRevision:access.state.revision});
  f.approve=async(scopes=['apps.read'])=>{await f.enable();const p=await access.call('garage.app','access.request',{scopes});await access.admin({action:'approve',requestId:p.requestId,scopes,expectedRevision:access.state.revision});};
  return f;

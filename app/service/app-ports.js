@@ -2,7 +2,7 @@
 // MessagePort's remote.appId is supplied by Tizen. No identity from message data or HTTP is accepted.
 var APP_PORT='VETRO_APP_ACCESS_V1',WIDGET_PORT='VETRO_WIDGET_V1',WIDGET_REPLY_PORT='VETRO_WIDGET_REPLY_V1';
 var MAX_REQUEST=4096,MAX_RESPONSE=16384;
-function start(tizen,access,auth,diagnostics) {
+function start(tizen,access,auth,diagnostics,replies) {
     var local,internal,widgetReply,listener,widgetListener,widgetReplyListener,watching=false,widgetStage='port-create';
     function trace(stage,error) { if(diagnostics)diagnostics.widget(stage,error); }
     function hasReplyTarget(remote) {
@@ -13,9 +13,13 @@ function start(tizen,access,auth,diagnostics) {
     function decode(data) {
         if (!Array.isArray(data) || data.length!==1 || data[0].key!=='json' || typeof data[0].value!=='string' || Buffer.byteLength(data[0].value)>MAX_REQUEST) throw Error('Invalid app request');
         var p=JSON.parse(data[0].value);
-        if (!p || p.version!==1 || typeof p.id!=='string' || !/^[A-Za-z0-9_-]{1,64}$/.test(p.id) ||
+        if (!p || (p.version!==1&&p.version!==2) || typeof p.id!=='string' || !/^[A-Za-z0-9_-]{1,64}$/.test(p.id) ||
             typeof p.method!=='string' || p.method.length>60 || !p.params || typeof p.params!=='object' || Array.isArray(p.params) ||
-            Object.keys(p).some(function(k){return ['version','id','method','params'].indexOf(k)<0;})) throw Error('Invalid app request');
+            Object.keys(p).some(function(k){return (p.version===2?['version','id','method','params','reply']:['version','id','method','params']).indexOf(k)<0;})) throw Error('Invalid app request');
+        if(p.version===2&&(!p.reply||typeof p.reply!=='object'||Array.isArray(p.reply)||
+            Object.keys(p.reply).length!==2||Object.keys(p.reply).some(function(k){return k!=='id'&&k!=='key';})||
+            typeof p.reply.id!=='string'||!/^[a-f0-9]{64}$/.test(p.reply.id)||
+            typeof p.reply.key!=='string'||!/^[a-f0-9]{64}$/.test(p.reply.key)))throw Error('Invalid app reply channel');
         return p;
     }
     function reply(remote,p,result,error,port,request) {
@@ -48,14 +52,19 @@ function start(tizen,access,auth,diagnostics) {
         watching=true;
         local=tizen.messageport.requestLocalMessagePort(APP_PORT);
         listener=local.addMessagePortListener(function(data,remote){
-            var p;
+            var p,ticket;
             try {
                 if (!hasReplyTarget(remote)) return;
                 p=decode(data);
                 if(p.method==='access.request' && Object.keys(p.params).some(function(k){return k!=='scopes';}) ||
                    p.method==='access.status' && Object.keys(p.params).length) throw Error('Invalid app request');
             } catch (_) { return; }
-            access.call(remote.appId,p.method,p.params).then(function(r){reply(remote,p,r,null,local);},function(e){reply(remote,p,null,e,local);});
+            if(p.version===2){
+                // Only a native-identified MessagePort request can create a reply
+                // capability. HTTP cannot reserve one or dispatch an operation.
+                if(!replies||(ticket=replies.reserve(remote.appId,p))===null)return;
+                access.call(remote.appId,p.method,p.params).then(function(r){replies.complete(ticket,r,null);},function(e){replies.complete(ticket,null,e);});
+            }else access.call(remote.appId,p.method,p.params).then(function(r){reply(remote,p,r,null,local);},function(e){reply(remote,p,null,e,local);});
         });
         access.transport={available:true,error:null};
         if(diagnostics)diagnostics.appPort(true);
@@ -87,7 +96,7 @@ function start(tizen,access,auth,diagnostics) {
                 replyPort=remote.isTrusted?internal:widgetReply;
                 try { p=decode(data); } catch(error) { trace('frame-rejected',error);return; }
                 if(diagnostics&&typeof diagnostics.consume==='function'&&diagnostics.consume(p,remote))return;
-                if(p.method!=='widget.connect'||Object.keys(p.params).length){trace('method-rejected');return;}
+                if(p.version!==1||p.method!=='widget.connect'||Object.keys(p.params).length){trace('method-rejected');return;}
                 trace('accepted');
                 // The trusted port verifies the signer; the exact sender ID restricts this to Vetro's widget.
                 var session=auth.issueWidget();
@@ -99,6 +108,7 @@ function start(tizen,access,auth,diagnostics) {
     } catch(error) { trace(widgetStage,error); }
     var handle={ready:watching && listener!==undefined && widgetListener!==undefined && widgetReplyListener!==undefined,stop:function(){
         handle.ready=false;
+        if(replies)replies.clear();
         access.transport={available:false,error:'App communication stopped'};
         try{if(watching)tizen.package.unsetPackageInfoEventListener();}catch(_){}
         try{if(local && listener!==undefined)local.removeMessagePortListener(listener);}catch(_){}

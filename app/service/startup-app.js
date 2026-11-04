@@ -40,7 +40,9 @@ function StartupApp(options) {
     var reader = new Power.Reader();
     this.readPower = options.readPower || reader.read.bind(reader);
     this.ready = options.ready || function () { return false; };
-    this.inventory = options.inventory;
+    // Called while the launch guard owns the root-command queue slot. The
+    // integration supplies a small direct registry read, never a queued refresh.
+    this.lookupApps = options.lookupApps || function () { return Promise.reject(Error('Foreground app validation unavailable')); };
     this.launch = options.launch;
     this.presence = options.presence;
     this.snapshot = options.snapshot;
@@ -149,9 +151,10 @@ StartupApp.prototype.observe = function (power, clock) {
         var started = this.now() - bootAge, limit = isWake ? WAKE_MS : EVENT_MS;
         this.pending = {appId: this.config.appId, revision: this.config.revision, bootId: clock.bootId,
             started:started, deadline:started + limit, stage:'waiting', activity:activity, foreground:null,
-            resume:baseline, readySince:activity.ready ? this.now() : null, powerSession:this.powerSession()};
+            resume:baseline, readySince:activity.ready ? this.now() : null, powerSession:this.powerSession(), checks:{}};
         this.eventInfo = {kind:isWake ? 'wake' : 'boot', startedAt:started, deadlineAt:started + limit,
-            phase:'waiting', monitoringReadyAt:this.pending.readySince, resumedAppId:baseline && baseline.full || null};
+            phase:'waiting', monitoringReadyAt:this.pending.readySince, resumedAppId:baseline && baseline.full || null,
+            checks:this.pending.checks};
         this.result(null);
         // A service restart abandons this attempt instead of restarting its
         // deadline. Persist before any asynchronous readiness or registry work.
@@ -177,6 +180,19 @@ StartupApp.prototype.finish = function (result) {
     this.pending = null;
     if (this.eventInfo) this.eventInfo.phase = 'finished';
 };
+StartupApp.prototype.beginCheck = function (event, name) {
+    event.checks[name] = {startedAt:this.now(),finishedAt:null,durationMs:null,outcome:'pending'};
+    if (this.current(event)) this.eventInfo.phase = name;
+};
+StartupApp.prototype.endCheck = function (event, name, outcome) {
+    var check=event.checks[name];
+    if (!check || check.finishedAt !== null) return;
+    check.finishedAt=this.now();check.durationMs=Math.max(0,check.finishedAt-check.startedAt);check.outcome=outcome;
+};
+StartupApp.prototype.measure = function (event, name, task) {
+    var self=this;this.beginCheck(event,name);
+    return Promise.resolve().then(task).then(function(value){self.endCheck(event,name,'complete');return value;},function(error){self.endCheck(event,name,'error');throw error;});
+};
 StartupApp.prototype.idle = function (event) {
     if (!this.current(event)) return false;
     if (event.cancelled) { this.finish('Skipped: deliberate navigation'); return false; }
@@ -195,8 +211,7 @@ StartupApp.prototype.idle = function (event) {
     if (!activity.ready) { this.eventInfo.phase = 'waiting-for-monitor'; return false; }
     if (event.readySince === null) event.readySince = this.now();
     this.eventInfo.monitoringReadyAt = event.readySince;
-    this.eventInfo.phase = 'settling';
-    if (this.now() - event.readySince < SETTLE_MS) return false;
+    if (this.now() - event.readySince < SETTLE_MS) { this.eventInfo.phase = 'settling'; return false; }
     return true;
 };
 StartupApp.prototype.checkForeground = function (event, state) {
@@ -248,37 +263,56 @@ StartupApp.prototype.tick = function () {
         }
         if (!self.idle(event)) return;
         if (!self.ready()) { self.eventInfo.phase = 'waiting-for-root'; return; }
-        return self.snapshot(false).then(function (state) {
+        return self.measure(event,'foreground',function(){return self.snapshot(false);}).then(function (state) {
             if (!self.idle(event) || !self.checkForeground(event, state) || self.now() - event.started < SETTLE_MS) return;
-            return self.inventory().then(function (data) {
-            if (!self.idle(event)) return;
-            if (data.registryError) throw Error('App registry unavailable');
-            if (!eligible(data.apps.find(function (row) { return row.appId === event.appId; }))) return self.finish('Selected app is missing, disabled, or has no launcher entry');
-            event.resumeEligible = !!event.resume && eligible(data.apps.find(function (row) { return row.appId === event.resume.full; }));
-            if (event.foreground && !FALLBACK.test(event.foreground.full) && !event.resumeEligible) {
-                return self.finish('Skipped: resumed foreground is not an enabled launcher app');
-            }
             // Record the attempt before sending it; a service restart must not steal focus a second time.
             self.session.handled = true;
             self.saveSession();
             event.dispatching = true;
+            var preparationFailed = false;
+            self.beginCheck(event,'queue');
             return self.launch(event.appId, function () {
+                self.endCheck(event,'queue','complete');
                 if (!self.idle(event) || !self.ready()) return false;
-                // Recheck after the root command queue drains, immediately before the launch command.
-                return self.readPower().then(function (power) {
+                // Recheck current app flags after the root queue drains. A
+                // complete inventory is unnecessary, and cached flags cannot
+                // establish whether the destination was disabled while queued.
+                return self.measure(event,'power',function(){return self.readPower();}).then(function (power) {
                     self.observe(power, self.clock());
                     if (!self.idle(event) || !self.ready()) return false;
-                    return self.snapshot(true).then(function (fresh) { return self.idle(event) && self.ready() && self.checkForeground(event, fresh); });
-                });
+                    var ids=[event.appId];
+                    if(event.resume && typeof event.resume.full==='string' && event.resume.full!==event.appId && validId(event.resume.full))ids.push(event.resume.full);
+                    return self.measure(event,'eligibility',function(){
+                        return self.lookupApps(ids,Math.min(4000,event.deadline-self.now()));
+                    }).then(function(data){
+                        if(!self.idle(event)||!self.ready())return false;
+                        if(!data||data.registryError||!Array.isArray(data.apps))throw Error('App registry unavailable');
+                        if(!eligible(data.apps.find(function(row){return row.appId===event.appId;}))){self.finish('Selected app is missing, disabled, or has no launcher entry');return false;}
+                        event.resumeEligible=!!event.resume&&eligible(data.apps.find(function(row){return row.appId===event.resume.full;}));
+                        if(event.foreground&&!FALLBACK.test(event.foreground.full)&&!event.resumeEligible){self.finish('Skipped: resumed foreground is not an enabled launcher app');return false;}
+                        return self.measure(event,'dispatchForeground',function(){return self.snapshot(true);}).then(function(fresh){
+                            if(!self.idle(event)||!self.ready()||!self.checkForeground(event,fresh))return false;
+                            self.beginCheck(event,'launch');return true;
+                        });
+                    });
+                }).catch(function(e){preparationFailed=true;throw e;});
             }).then(function () {
+                self.endCheck(event,'launch','complete');
                 if (!self.current(event)) return;
                 event.stage = 'verifying';
                 event.sent = self.now();
                 self.eventInfo.phase = 'verifying';
                 self.result('Launch requested', event);
             }).catch(function (e) {
-                if (self.current(event)) self.finish('Launch not completed: ' + e.message);
-            });
+                self.endCheck(event,'queue','error');self.endCheck(event,'launch','error');
+                if (!self.current(event)) return;
+                if (preparationFailed) {
+                    // The guard rejected before a launch command was sent. A
+                    // transient read may retry, with the same deadline and
+                    // activity/foreground baseline; a sent launch never does.
+                    self.error=e.message;
+                    if(self.idle(event)){event.dispatching=false;self.eventInfo.phase='waiting-for-readiness';}
+                } else self.finish('Launch not completed: ' + e.message);
             });
         });
     }).catch(function (e) {
@@ -288,3 +322,4 @@ StartupApp.prototype.tick = function () {
 };
 
 module.exports = {StartupApp: StartupApp, eligible: eligible, validId: validId, SETTLE_MS: SETTLE_MS, EVENT_MS: EVENT_MS, WAKE_MS:WAKE_MS};
+

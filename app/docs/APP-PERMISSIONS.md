@@ -4,7 +4,7 @@ Vetro can give an installed TV app selected controls through a versioned Tizen M
 
 ## Setup and use
 
-This build requires a Samsung **Partner** certificate because it declares `http://tizen.org/privilege/appmanager.certificate`. It also needs the Application, Package, MessagePort and private Filesystem APIs in the web service. Public-only signing is not sufficient for this manifest. App access stays unavailable when identity checks or package-change notifications cannot be established; there is no HTTP or shared-file fallback.
+This build requires a Samsung **Partner** certificate because it declares `http://tizen.org/privilege/appmanager.certificate`. It also needs the Application, Package, MessagePort and private Filesystem APIs in the web service. Public-only signing is not sufficient for this manifest. App access stays unavailable when identity checks or package-change notifications cannot be established. Every app operation must arrive through MessagePort; HTTP can only retrieve an authenticated reply.
 
 1. Open Vetro on the TV and [pair the dashboard](SIGN-IN.md).
 2. Open **App permissions** and turn on **App access**.
@@ -60,11 +60,23 @@ function closeApp(appId) { return vetro.call('tasks.stop', {appId:appId}); }
 </script>
 ```
 
-The public port is `VETRO_APP_ACCESS_V1` on application `vetrotvapp.svc`. Send one MessagePort item `{key:'json', value:JSON.stringify(message)}` and supply a local reply port. The SDK checks the service app ID and reply-port metadata on responses. Never infer caller identity from request JSON.
+The public port is `VETRO_APP_ACCESS_V1` on application `vetrotvapp.svc`. Send one MessagePort item `{key:'json', value:JSON.stringify(message)}` and supply a local reply port. In version 1, the SDK checks the service app ID and reply-port metadata on responses. Never infer caller identity from request JSON.
 
 ```json
 {"version":1,"id":"request_1","method":"apps.list","params":{"offset":0,"limit":20}}
 ```
+
+### Authenticated HTTP replies
+
+Clients can select version 2 with `new VetroAppAccess({httpReplies:true, crypto:window.crypto, pollReply:readReply})`. Copy `service/vendor/sha256.js` and its MIT license into the client, and load the script before the SDK. Native `crypto.getRandomValues` is required. The bundled js-sha256 v0.11.1 implementation supplies HMAC-SHA256; randomness never falls back to `Math.random`.
+
+The SDK creates an independent 32-byte reply ID and 32-byte key for each request. Both travel only in the native request's `reply:{id,key}` field alongside `version:2`. Vetro authorizes the request using Tizen sender metadata, installed identity and current permissions.
+
+`readReply(id)` retrieves `GET /app-replies/<id>` from Vetro on the same TV and returns `{status,body}`. Status 202 or 404 keeps polling within the request's 15-second deadline. Status 200 carries `{body:<exact serialized reply>,mac:<hex HMAC>}`. The SDK verifies HMAC-SHA256 over `VETRO_APP_REPLY_V2\n` + reply ID + `\n` + exact body before parsing the result. Native version 1 messages cannot resolve version 2 requests. Operations are sent once; polling never resubmits them.
+
+The HTTP endpoint accepts only the TV's own addresses, checks its Host header, and exposes no operation or reservation API. A client service may proxy the reply ID to Vetro's fixed port 8099, binding the source to the same TV address. Keep the key inside the widget and native request; do not put it in URLs, logs, persistent storage or proxy requests. Glass Home uses its own authenticated local service for this read.
+
+Reply records expire after 30 seconds, are limited to two per app and 32 total, and are invalidated by relevant permission or installation changes. Short-lived replay records prevent an evicted reply ID from executing a request again. A missing, malformed or unauthenticated reply has an unknown dispatch outcome and must not trigger a fallback launch.
 
 Success replies contain `version`, `id`, `ok:true`, and `result`. Errors contain `ok:false` and `error:{code,message,submitted}`. Unknown methods or extra operation parameters are rejected. Requests are capped at 4 KiB, replies at 16 KiB, pages at 20 apps, and admission at 20 requests per app per ten seconds, with one in flight per app and four total. There are at most 20 pending requests and 40 approvals.
 

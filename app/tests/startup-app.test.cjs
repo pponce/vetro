@@ -6,14 +6,15 @@ const HOME='com.samsung.tv.csfs';let sequence=0;
 function fixture(){
  const f={time:100000,power:'on',root:true,clock:{bootId:'boot-a',suspendOffset:0,uptimeSeconds:2},
   activity:{ready:true,sequence:0,lastAt:0,generation:1},foreground:{full:HOME,partial:'',sourceType:0},
-  apps:[{appId:'video.one',show:true,disabled:false,onboot:false,autorestart:false},{appId:'video.two',show:true,disabled:false},{appId:'hidden.app',show:false,disabled:false}],launches:[],reads:0,inside:[]};
+  apps:[{appId:'video.one',show:true,disabled:false,onboot:false,autorestart:false},{appId:'video.two',show:true,disabled:false},{appId:'hidden.app',show:false,disabled:false}],launches:[],reads:0,inside:[],lookups:[]};
  const n=sequence++;
  f.options={file:path.join(directory,'choice-'+n),sessionFile:path.join(directory,'session-'+n),now:()=>f.time,clock:()=>({...f.clock}),
   readPower:async()=>{f.reads++;if(f.powerError)throw Error('power unavailable');return f.power;},ready:()=>f.root,activity:()=>({...f.activity}),
-  inventory:async()=>{if(f.beforeInventory)await f.beforeInventory();return {apps:f.apps,registryError:f.registryError};},
+  inventory:async()=>{throw Error('startup must not refresh the full inventory');},
+  lookupApps:async(ids,timeoutMs)=>{f.lookups.push({ids,timeoutMs});if(f.beforeLookup)await f.beforeLookup();return {apps:f.apps.filter(row=>ids.includes(row.appId)),registryError:f.registryError};},
   snapshot:async inside=>{f.inside.push(inside);if(f.snapshotError)throw Error('foreground unavailable');return {...f.foreground};},
   presence:async()=>({foreground:{appId:f.foreground.full}}),
-  launch:async(id,guard)=>{if(f.beforeLaunch)await f.beforeLaunch();if(!await guard())throw Error('cancelled');f.launches.push(id);}};
+  launch:async(id,guard)=>{if(f.beforeLaunch)await f.beforeLaunch();if(!await guard())throw Error('cancelled');f.launches.push(id);if(f.launchError)throw Error('launch response unavailable');}};
  f.app=new StartupApp(f.options);
  f.tick=async(ms=2000)=>{f.time+=ms;await f.app.tick();};
  f.choose=id=>f.app.configure(id,f.app.status().revision,f.apps);
@@ -44,7 +45,7 @@ function fixture(){
  }
  f=fixture();f.choose('video.one');await f.startWake();f.press();await f.tick();assert.match(f.app.status().lastResult,/started using/);
  await f.tick(20000);assert.equal(f.launches.length,0);await f.wake();assert.equal(f.launches.length,1,'cancellation applies only to that wake');
- f=fixture();f.choose('video.one');f.beforeInventory=async()=>f.press();await f.wake();assert.equal(f.launches.length,0,'activity during inventory cancels');
+ f=fixture();f.choose('video.one');f.beforeLookup=async()=>f.press();await f.wake();assert.equal(f.launches.length,0,'activity during eligibility lookup cancels');
  f=fixture();f.choose('video.one');f.activity.ready=false;await f.wake();assert.equal(f.app.status().pending,true);
  f.activity.ready=true;f.activity.generation++;await f.tick();assert.equal(f.launches.length,0,'reconnected monitoring must settle');await f.tick();assert.equal(f.launches.length,1,'monitor recovery keeps the same wake alive');
  f=fixture();f.choose('video.one');f.power='standby';await f.tick();f.power='on';f.press();await f.tick(500);assert.match(f.app.status().lastResult,/activity at power-on/);
@@ -123,5 +124,67 @@ function fixture(){
  assert.equal(f.launches.length,0,'a full-screen system menu is never a resumable app');
  f=fixture();f.choose('video.one');f.foreground.full='video.two';await f.tick();await f.startWake();f.foreground.full=HOME;f.apps[1].disabled=true;
  f.beforeLaunch=()=>{f.foreground.full='video.two';};await f.tick();assert.equal(f.launches.length,0,'queued resume target must remain eligible even when the first check saw Home');
+ // Only the selected and positively observed resumed apps are read, after the
+ // queue drains. Full inventory work is never in this time-sensitive path.
+ f=fixture();f.choose('video.one');f.foreground.full='video.two';await f.tick();await f.wake();
+ assert.deepEqual(f.lookups,[{ids:['video.one','video.two'],timeoutMs:4000}]);
+ assert.deepEqual(Object.keys(f.app.status().event.checks).sort(),['dispatchForeground','eligibility','foreground','launch','power','queue']);
+ for(const check of Object.values(f.app.status().event.checks)){
+  assert.equal(check.outcome,'complete');assert.equal(check.durationMs,check.finishedAt-check.startedAt);
+ }
+ for(const cause of ['disabled','hidden','removed','unknown','resumed-disabled']){
+  f=fixture();f.choose('video.one');f.foreground.full='video.two';await f.tick();await f.startWake();
+  f.beforeLaunch=()=>{
+   if(cause==='disabled')f.apps[0].disabled=true;
+   if(cause==='hidden')f.apps[0].show=false;
+   if(cause==='removed')f.apps.shift();
+   if(cause==='unknown')f.apps[0].disabled=null;
+   if(cause==='resumed-disabled')f.apps[1].disabled=true;
+  };
+  await f.tick();assert.equal(f.launches.length,0,'fresh eligibility catches '+cause+' while queued');
+ }
+ for(const cause of ['source','overlay','native','intent','monitor','generation']){
+  f=fixture();f.choose('video.one');await f.startWake();
+  f.beforeLookup=()=>{
+   if(cause==='source')f.foreground.sourceType=13;
+   if(cause==='overlay')f.foreground.partial='org.tizen.menu';
+   if(cause==='native')f.foreground.navigation={kind:'home',token:'lookup:1',at:f.time,visible:false};
+   if(cause==='intent')f.app.noteNavigation();
+   if(cause==='monitor')f.activity.ready=false;
+   if(cause==='generation')f.activity.generation++;
+  };
+  await f.tick();assert.equal(f.launches.length,0,'eligibility lookup preserves '+cause+' cancellation');
+ }
+ f=fixture();f.choose('video.one');await f.startWake();
+ f.beforeLaunch=()=>{f.time=f.app.status().event.deadlineAt-1500;};
+ f.beforeLookup=()=>{f.time+=100;};await f.tick();
+ assert.equal(f.launches.length,1);assert.equal(f.lookups[0].timeoutMs,1500,'lookup is bounded by the remaining wake window');
+ assert.equal(f.app.status().event.checks.queue.durationMs,16500);
+ assert.equal(f.app.status().event.checks.eligibility.durationMs,100);
+ f=fixture();f.choose('video.one');await f.startWake();
+ f.beforeLaunch=()=>{f.time=f.app.status().event.deadlineAt;};await f.tick();
+ assert.equal(f.launches.length,0);assert.equal(f.lookups.length,0,'expired queue slot does not start another read');
+ assert.match(f.app.status().lastResult,/expired/);
+ f=fixture();f.choose('video.one');await f.startWake();
+ let releaseLookup;const heldLookup=new Promise(resolve=>{releaseLookup=resolve;});
+ let enteredLookup;const lookupStarted=new Promise(resolve=>{enteredLookup=resolve;});
+ f.beforeLookup=async()=>{enteredLookup();await heldLookup;};
+ const running=f.tick();await lookupStarted;
+ assert.equal(f.app.status().event.phase,'eligibility');assert.equal(f.app.status().event.checks.eligibility.outcome,'pending');
+ f.time=f.app.status().event.deadlineAt+1;releaseLookup();await running;
+ assert.equal(f.launches.length,0);assert.match(f.app.status().lastResult,/expired/);
+ assert.equal(f.app.status().event.checks.eligibility.durationMs,WAKE_MS-2000+1);
+ await f.tick();assert.equal(f.launches.length,0,'late read completion never replays a launch');
+ f=fixture();f.choose('video.one');f.beforeLookup=()=>{throw Error('registry temporarily unavailable');};await f.wake();
+ assert.equal(f.app.status().pending,true);assert.equal(f.app.status().event.checks.eligibility.outcome,'error');
+ f.beforeLookup=null;await f.tick();assert.equal(f.launches.length,1,'an unsent launch can retry a failed eligibility read');
+ assert.equal(Object.keys(f.app.status().event.checks).length,6,'retries do not grow diagnostics without bound');
+ f=fixture();f.choose('video.one');f.beforeLookup=()=>{f.activity.generation++;throw Error('read interrupted');};await f.wake();
+ assert.equal(f.app.status().pending,false);assert.match(f.app.status().lastResult,/monitoring was interrupted/);
+ f.beforeLookup=null;await f.tick();assert.equal(f.launches.length,0,'a failed read cannot conceal a monitoring gap inside the dispatch guard');
+ f=fixture();f.choose('video.one');f.launchError=true;await f.wake();await f.tick();await f.tick();
+ assert.equal(f.launches.length,1,'uncertain launch acknowledgement cannot retry a command that may have run');
+ assert.match(f.app.status().lastResult,/Launch not completed/);assert.equal(f.app.status().event.checks.launch.outcome,'error');
  console.log('PASS startup: bounded reconnect, verified resumed app, cold-boot age, activity/menu/input/native cancellation, queue guards, restart/no replay and timestamped sessions');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>fs.rmSync(directory,{recursive:true,force:true}));
+

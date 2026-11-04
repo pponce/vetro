@@ -21,7 +21,47 @@ function load(execute,probe){
         return {apps:rows,summary:apps.summarize(rows),source:'package registry + public probe',collectedAt:new Date().toISOString()};
     });
 }
+// Owner-selected foreground launches need current visibility/disabled flags for
+// at most the destination and a resumed app, not labels, icons or dependencies.
+// This is not the identity/permission inventory used by third-party app calls.
+function launchable(execute,appIds,timeoutMs){
+    return Promise.resolve().then(function(){
+        if(!Array.isArray(appIds)||!appIds.length||appIds.length>2||appIds.some(function(id){return typeof id!=='string'||!/^[A-Za-z0-9_.-]{1,120}$/.test(id);}))throw Error('Invalid foreground app selection');
+        var ids=appIds.filter(function(id,i){return appIds.indexOf(id)===i;}),ownerUid=typeof process.getuid==='function'?process.getuid():5001;
+        if(!Number.isInteger(ownerUid)||ownerUid<0)throw Error('TV owner identity unavailable');
+        var list=ids.map(function(id){return "'"+id+"'";}).join(','),ownerFile='/opt/dbspace/user/'+ownerUid+'/.pkgmgr_parser.db';
+        var base="SELECT hex('base'),hex(a.app_id),hex(a.app_nodisplay),hex(COALESCE((SELECT is_disabled FROM package_app_info_for_uid u WHERE u.app_id=a.app_id AND u.uid="+ownerUid+"),a.app_disable)) FROM package_app_info a WHERE a.app_component='uiapp' AND a.app_id IN ("+list+");";
+        var override="SELECT hex('owner'),hex(app_id),'',hex(is_disabled) FROM package_app_info_for_uid WHERE uid="+ownerUid+" AND app_id IN ("+list+");";
+        // A missing owner database has no override. An existing unreadable or
+        // malformed database is an error; do not silently use global flags.
+        var cmd=command(base)+' && { if [ -e "'+ownerFile+'" ] || [ -L "'+ownerFile+'" ]; then sqlite3 -readonly "'+ownerFile+'" "'+override+'"; fi; } && printf \'\\n646f6e65|||\\n\'';
+        var limit=typeof timeoutMs==='number'&&isFinite(timeoutMs)?Math.floor(timeoutMs):4000;
+        if(limit<1)throw Error('Foreground app validation expired');
+        return execute(cmd,Math.min(limit,4000)).then(function(r){
+            if(!r||r.exit_code!==0||r.timed_out||Buffer.byteLength(String(r.stdout||''))>4096)throw Error('Foreground app registry unavailable');
+            var rows=Object.create(null),overrides=Object.create(null),complete=false;
+            fields(r.stdout).forEach(function(f){
+                if(complete||f.length!==4)throw Error('Invalid foreground app registry response');
+                if(f[0]==='done'&&f[1]===''&&f[2]===''&&f[3]===''){complete=true;return;}
+                if(ids.indexOf(f[1])<0)throw Error('Invalid foreground app registry response');
+                if(f[0]==='base'){
+                    if(rows[f[1]])throw Error('Ambiguous foreground app registry response');
+                    var hidden=flag(f[2]);rows[f[1]]={appId:f[1],show:hidden===null?null:!hidden,disabled:flag(f[3])};
+                }else if(f[0]==='owner'){
+                    if(Object.prototype.hasOwnProperty.call(overrides,f[1])||f[2]!=='')throw Error('Ambiguous owner app registry response');
+                    overrides[f[1]]=flag(f[3]);
+                }else throw Error('Invalid foreground app registry response');
+            });
+            // The root transport may bound stdout. Incomplete output cannot
+            // establish that the owner database had no disabled override.
+            if(!complete)throw Error('Incomplete foreground app registry response');
+            Object.keys(overrides).forEach(function(id){if(rows[id])rows[id].disabled=overrides[id];});
+            return {apps:ids.filter(function(id){return !!rows[id];}).map(function(id){return rows[id];})};
+        });
+    });
+}
 function iconCommand(row){var p=row&&row.iconPath;if(typeof p!=='string'||!/^\/(?:usr\/apps|opt\/usr\/apps)\/[A-Za-z0-9_.\/-]+\.(?:png|jpg|jpeg)$/i.test(p)||p.split('/').indexOf('..')!==-1)return null;
     return 'if [ -f "'+p+'" ] && [ "$(stat -c %s "'+p+'")" -le 262144 ]; then base64 "'+p+'"; else exit 1; fi';
 }
-module.exports={load:load,fields:fields,iconCommand:iconCommand};
+module.exports={load:load,launchable:launchable,fields:fields,iconCommand:iconCommand};
+
