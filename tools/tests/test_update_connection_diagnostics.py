@@ -81,8 +81,8 @@ class UpdateDiagnosticTests(unittest.TestCase):
                  patch.object(M, 'checked', side_effect=[M.CLI_VERSION, json.dumps(cert), '']), \
                  patch.object(M, 'run', return_value=result) as install, patch.object(M, 'collect', side_effect=lambda *a: json.loads(json.dumps(captured))), \
                  contextlib.redirect_stdout(io.StringIO()):
-                M.main()
-                M.main()
+                self.assertEqual(M.main(), 1)
+                self.assertEqual(M.main(), 1)
             self.assertEqual(install.call_count, 1)
             directory = project / 'vetro-install/beta-recovery'
             self.assertTrue((directory / ('attempt-' + revision[:12] + '.json')).is_file())
@@ -91,6 +91,40 @@ class UpdateDiagnosticTests(unittest.TestCase):
             self.assertEqual([p['installation']['installSubmittedByThisRun'] for p in reports], [True, False])
             self.assertEqual(reports[1]['installation']['action'], 'collect-existing-attempt')
             self.assertTrue(all(duid not in json.dumps(p) for p in reports))
+
+    def test_ci_failure_returns_failure_without_submitting_install(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            arguments = ['updater', '--project-root', str(project), '--tv', '192.0.2.1', '--local-ip', '192.0.2.2',
+                         '--revision', 'b' * 40, '--expected-before', 'a' * 40, '--report-host', 'fixture@192.0.2.2', '--ci-run', '1']
+            output = io.StringIO()
+            with patch('sys.argv', arguments), patch.object(M, 'verify_ci', side_effect=RuntimeError('CI not complete')), \
+                 patch.object(M, 'run') as install, patch.object(M, 'read_json') as read, contextlib.redirect_stdout(output):
+                self.assertEqual(M.main(), 1)
+            install.assert_not_called()
+            read.assert_not_called()
+            directory = project / 'vetro-install/beta-recovery'
+            self.assertEqual(list(directory.glob('attempt-*.json')), [])
+            report = json.loads(next(directory.glob('connection-report-*.json')).read_text())
+            self.assertFalse(report['installation']['installSubmittedByThisRun'])
+            self.assertIn('CI not complete', report['installation']['errors'])
+            self.assertNotIn('VERIFIED:', output.getvalue())
+            self.assertIn('rsync -P fixture@192.0.2.2:', output.getvalue())
+
+    def test_success_requires_matching_service_screen_and_authenticated_screen(self):
+        for service, screen, authenticated in [(True, True, True), (True, True, False), (True, False, True), (False, True, True), (True, True, 1)]:
+            with self.subTest(service=service, screen=screen, authenticated=authenticated), tempfile.TemporaryDirectory() as temporary:
+                project = Path(temporary)
+                arguments = ['updater', '--project-root', str(project), '--tv', '192.0.2.1', '--local-ip', '192.0.2.2',
+                             '--revision', 'b' * 40, '--expected-before', 'a' * 40, '--report-host', 'fixture@192.0.2.2', '--ci-run', '1']
+                report = {'capture': {'runningServiceVerified': service, 'screenBuildVerified': screen,
+                                     'screenServiceAuthenticated': authenticated}, 'status': {}}
+                with patch('sys.argv', arguments), patch.object(M, 'verify_ci'), \
+                     patch.object(M, 'read_json', return_value={'connectionDiagnostics': {'sourceRevision': 'b' * 40, 'sourceDirty': False}}), \
+                     patch.object(M, 'checkout', return_value=project), patch.object(M, 'collect', return_value=report), \
+                     patch.object(M, 'run') as install, contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(M.main(), 0 if service is True and screen is True and authenticated is True else 1)
+                install.assert_not_called()
 
 
 if __name__ == '__main__':

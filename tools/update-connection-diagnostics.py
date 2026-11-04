@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -170,6 +171,7 @@ def main():
             'installSubmittedByThisRun': False, 'errors': []}
     report = {'capture': {'complete': False, 'expectedRevision': args.revision}, 'status': None}
     lock = None
+    verified = False
     try:
         lock = (directory / 'diagnostic-update.lock').open('a')
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -225,10 +227,13 @@ def main():
             print('Collecting only; no installation will be repeated.', flush=True)
         print('If Vetro is not visible, open it once with the TV remote. Leave its checks running.', flush=True)
         report = collect(worktree, args.tv, args.revision)
-        if report['capture']['runningServiceVerified'] and report['capture']['screenBuildVerified']:
-            print('VERIFIED: service and screen report the new revision.', flush=True)
+        capture = report.get('capture') or {}
+        verified = all(capture.get(key) is True for key in (
+            'runningServiceVerified', 'screenBuildVerified', 'screenServiceAuthenticated'))
+        if verified:
+            print('VERIFIED: service and authenticated screen report the new revision.', flush=True)
         else:
-            print('PARTIAL: the new service/screen revision could not both be verified.', flush=True)
+            print('PARTIAL: running service, screen revision and screen authentication were not all verified.', flush=True)
     except Exception as error:
         info['errors'].append(str(error) if isinstance(error, (RuntimeError, ValueError)) else type(error).__name__)
         print('STOPPED:', info['errors'][-1], flush=True)
@@ -242,7 +247,8 @@ def main():
         print('Report:', report_path)
         print('\nRun this on your Mac to retrieve the report:')
         print('rsync -P ' + args.report_host + ':' + str(report_path) + ' ~/Downloads/')
+    return 0 if verified else 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
