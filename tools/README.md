@@ -135,7 +135,14 @@ The running service must report the exact revision with connection diagnostics
 enabled. Keep TV-Store open and close other relay clients before starting. The
 collector uses directory listing and file reading operations only, with a
 90-second transport budget, directory/depth limits, and a 2 MiB file limit. It
-does not open a shell, create authentication keys, install packages, or change
+first reads `/usr/share/wrt/app/service/service_runner.js` directly, then
+prioritizes WRT and Node directories in its bounded search. A runtime source
+file may be a regular file or a symbolic link; actual bytes read remain capped.
+It records attempted source paths and a sample of directories left when the
+search limit is reached. An empty SDB directory reply does not establish that
+the directory exists or that access was granted.
+
+The collector does not open a shell, create authentication keys, install packages, or change
 settings. Output creation is exclusive so existing reports are preserved.
 
 The report distinguishes candidate source, partial reads, and unavailable access.

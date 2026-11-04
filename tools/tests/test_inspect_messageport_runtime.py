@@ -127,8 +127,9 @@ class InspectRuntimeTests(unittest.TestCase):
     def test_source_candidate_never_claims_loaded_runtime(self):
         class SourceReader:
             def list(self, path):
-                return [('service_runner.js', stat.S_IFREG, 4)] if path == '/usr/lib' else []
+                raise AssertionError('A successful direct read must not start a directory walk')
             def pull(self, path):
+                assert path == M.DIRECT_SOURCE
                 return b'code'
         report = dict(directoriesAttempted=0, directoriesRead=0, directoriesRefused=0,
                       sourceReadsRefused=0, sources=[], loadedRuntimeVerified=False)
@@ -136,6 +137,52 @@ class InspectRuntimeTests(unittest.TestCase):
         self.assertTrue(report['sourceRetrieved'])
         self.assertFalse(report['loadedRuntimeVerified'])
         self.assertEqual(report['assessment'], 'candidate-source-retrieved')
+        self.assertEqual(report['sourceReadsAttempted'], 1)
+        self.assertEqual(report['directoriesAttempted'], 0)
+        self.assertFalse(report['searchLimitReached'])
+
+    def test_runtime_priority_and_symlink_candidate(self):
+        visited = []
+        class SourceReader:
+            def list(self, path):
+                visited.append(path)
+                if path == '/usr/share/wrt':
+                    return [('alternate', stat.S_IFDIR, 0)]
+                if path == '/usr/share/wrt/alternate':
+                    return [('service_runner.js', stat.S_IFLNK, 32)]
+                if path == '/usr/lib':
+                    raise AssertionError('Broad directories must not preempt the runtime subtree')
+                return []
+            def pull(self, path):
+                if path == M.DIRECT_SOURCE:
+                    raise PermissionError('not found')
+                assert path == '/usr/share/wrt/alternate/service_runner.js'
+                return b'linked runtime source'
+        report = dict(directoriesAttempted=0, directoriesRead=0, directoriesRefused=0,
+                      sourceReadsRefused=0, sources=[], loadedRuntimeVerified=False)
+        M.inspect(SourceReader(), report)
+        self.assertTrue(report['sourceRetrieved'])
+        self.assertFalse(report['loadedRuntimeVerified'])
+        self.assertEqual(report['sourceReadsRefused'], 1)
+        self.assertEqual(report['sourceReadsAttempted'], 2)
+        self.assertEqual(report['sources'][0]['source'], 'linked runtime source')
+
+    def test_search_limit_is_not_an_absence_claim(self):
+        class SourceReader:
+            def list(self, path):
+                if path == '/usr/share/wrt':
+                    return [('module-' + str(i), stat.S_IFDIR, 0) for i in range(700)]
+                return []
+            def pull(self, path):
+                raise PermissionError('not found')
+        report = dict(directoriesAttempted=0, directoriesRead=0, directoriesRefused=0,
+                      sourceReadsRefused=0, sources=[], loadedRuntimeVerified=False)
+        M.inspect(SourceReader(), report)
+        self.assertEqual(report['directoriesAttempted'], 600)
+        self.assertFalse(report['sourceRetrieved'])
+        self.assertTrue(report['searchLimitReached'])
+        self.assertEqual(len(report['pendingDirectorySample']), 20)
+        self.assertEqual(report['assessment'], 'source-unavailable-within-read-only-search')
 
     def test_guards_prevent_connection_and_do_not_export_http_bodies(self):
         revision = 'a' * 40

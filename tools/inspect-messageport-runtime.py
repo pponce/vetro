@@ -6,9 +6,9 @@ install packages, register keys, or modify the TV. Candidate source files are
 not proof of which runtime the service loaded. Reports preserve that distinction.
 """
 import argparse
-from collections import deque
 import datetime
 import hashlib
+import heapq
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -23,6 +23,11 @@ MAX_SOURCE = 2 * 1024 * 1024
 MAX_FRAME = 1024 * 1024
 ROOTS = ('/usr/lib', '/usr/lib64', '/usr/share', '/usr/apps')
 INTERESTING = re.compile(r'wrt|node|web.?api|web.?app|service|javascript|tizen', re.I)
+# Path in the runtime stack fixture at SushyDev/tizen-homebrew, commit
+# f90b005c8c354cafc027f12b37fe04b6cf0162f2, service/test/log.js.
+# This is a candidate location, not proof that this TV uses that runtime.
+DIRECT_SOURCE = '/usr/share/wrt/app/service/service_runner.js'
+RUNTIME_DIRECTORY = re.compile(r'/(?:wrt(?:-service)?|node(?:js|_modules)?)(?:/|$)', re.I)
 
 
 class ReadFailure(RuntimeError):
@@ -191,11 +196,49 @@ class SdbReader:
             self.sock.close()
 
 
+def capture_source(reader, report, candidate, method):
+    report['sourceReadsAttempted'] += 1
+    attempt = {'path': candidate, 'method': method, 'result': 'started'}
+    report['sourceAttempts'].append(attempt)
+    try:
+        source = reader.pull(candidate)
+    except PermissionError:
+        report['sourceReadsRefused'] += 1
+        attempt['result'] = 'missing-or-refused'
+        return False
+    if not source:
+        attempt['result'] = 'empty-file'
+        return False
+    text = source.decode('utf-8', errors='strict')
+    attempt['result'] = 'retrieved'
+    report['sources'].append({'path': candidate, 'bytes': len(source),
+        'sha256': hashlib.sha256(source).hexdigest(),
+        'markers': {key: key in text for key in (
+            'LocalMessagePort', 'RemoteMessagePort', 'messagePortObj',
+            'org_remote_app_id', 'org_remote_port')}, 'source': text})
+    report['sourceRetrieved'] = True
+    report['assessment'] = 'candidate-source-retrieved'
+    return True
+
+
+def directory_priority(path):
+    return 0 if RUNTIME_DIRECTORY.search(path) else 1
+
+
 def inspect(reader, report):
-    queue = deque((path, 0, False) for path in ROOTS)
+    report.update(sourceReadsAttempted=0, sourceAttempts=[],
+                  nonemptyDirectoryReplies=0, emptyDirectoryReplies=0,
+                  pendingDirectorySample=[], searchLimitReached=False)
+    # RECV follows a file symlink and remains bounded by the actual bytes read.
+    # No prior directory traversal or size/type guess is needed at this location.
+    if capture_source(reader, report, DIRECT_SOURCE, 'runtime-stack-path'):
+        return
+    roots = ('/usr/share/wrt/app/service', '/usr/share/wrt') + ROOTS
+    queue = [(directory_priority(path), 0, path, path.startswith('/usr/share/wrt')) for path in roots]
+    heapq.heapify(queue)
     seen = set()
-    while queue and len(seen) < 600 and len(report['sources']) < 4:
-        path, depth, relevant = queue.popleft()
+    while queue and len(seen) < 600:
+        _, depth, path, relevant = heapq.heappop(queue)
         if path in seen:
             continue
         seen.add(path)
@@ -206,32 +249,26 @@ def inspect(reader, report):
             report['directoriesRefused'] += 1
             continue
         report['directoriesRead'] += 1
+        report['nonemptyDirectoryReplies' if entries else 'emptyDirectoryReplies'] += 1
         for name, mode, size in sorted(entries):
             candidate = path + '/' + name
-            if name == 'service_runner.js' and stat.S_ISREG(mode) and 0 < size <= MAX_SOURCE:
-                try:
-                    source = reader.pull(candidate)
-                except PermissionError:
-                    report['sourceReadsRefused'] += 1
-                    continue
-                text = source.decode('utf-8', errors='strict')
-                report['sources'].append({'path': candidate, 'bytes': len(source),
-                    'sha256': hashlib.sha256(source).hexdigest(),
-                    'markers': {key: key in text for key in (
-                        'LocalMessagePort', 'RemoteMessagePort', 'messagePortObj',
-                        'org_remote_app_id', 'org_remote_port')}, 'source': text})
+            if (name == 'service_runner.js' and candidate != DIRECT_SOURCE
+                    and (stat.S_ISREG(mode) or stat.S_ISLNK(mode)) and 0 < size <= MAX_SOURCE):
+                if capture_source(reader, report, candidate, 'directory-entry'):
+                    return
             elif stat.S_ISDIR(mode) and depth < 6:
                 matched = bool(INTERESTING.search(name))
                 if relevant or matched:
-                    queue.append((candidate, depth + 1, relevant or matched))
+                    heapq.heappush(queue, (directory_priority(candidate), depth + 1, candidate, relevant or matched))
     report['searchLimitReached'] = bool(queue)
+    report['pendingDirectorySample'] = [entry[2] for entry in sorted(queue)[:20]]
     report['sourceRetrieved'] = bool(report['sources'])
     report['assessment'] = ('candidate-source-retrieved' if report['sources'] else
                             'source-unavailable-within-read-only-search')
 
 
 def collect(tv, revision):
-    report = {'schema': 1, 'capturedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    report = {'schema': 2, 'capturedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
               'expectedRevision': revision, 'serviceRevisionVerified': False,
               'directoriesAttempted': 0, 'directoriesRead': 0, 'directoriesRefused': 0,
               'sourceReadsRefused': 0, 'sources': [], 'sourceRetrieved': False,
@@ -259,7 +296,7 @@ def collect(tv, revision):
         inspect(reader, report)
     except Exception as error:
         # Only locally defined fixed messages are included; no device banners,
-        # credentials, HTTP bodies, directory listings or command output.
+        # credentials, HTTP bodies, full directory listings or command output.
         report['errors'].append(str(error) if isinstance(error, ReadFailure) else type(error).__name__)
         report['assessment'] = 'partial-source' if report['sources'] else 'read-blocked'
     finally:

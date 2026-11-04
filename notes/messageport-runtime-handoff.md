@@ -52,6 +52,24 @@ metadata, read limits, refusal of writes/unrelated files, and partial reports.
 These are host/model tests, not hardware success. Consult the inspection branch's
 Source checks run for full repository CI results.
 
+## First hardware source inspection
+
+The first inspection report verified the installed revision and reached 600
+directory replies with no source candidates. `searchLimitReached=true`; there
+were no explicit errors. This does not establish that the source is absent or
+inaccessible. SDB can return an empty directory response for a failed opendir,
+so the reply count also does not establish access to 600 existing directories.
+
+The collector now attempts `/usr/share/wrt/app/service/service_runner.js` before
+walking directories. This concrete candidate is in the stack fixture in
+`SushyDev/tizen-homebrew`, commit `f90b005c8c354cafc027f12b37fe04b6cf0162f2`,
+`service/test/log.js`; it is not yet confirmed on this TV. Fallback search gives
+WRT and Node directories priority and accepts a service_runner.js file symlink.
+Reports now include each source attempt and bounded remaining-directory samples.
+Ten collector tests pass, including direct-read short-circuiting, runtime subtree
+priority, symlink source retrieval, and explicit reporting of the directory cap.
+No application/service changes or installations are included.
+
 ## Decisions and next steps
 
 1. Keep the installed revision and all prior installation records.
