@@ -121,3 +121,23 @@ and held in memory for the service's lifetime; no diagnostic files are written.
 This telemetry is readable by an unpaired client that can reach the service.
 Ordinary builds omit it. Build without the flag to remove its public exposure;
 the installed service has no HTTP or runtime-environment switch to enable it.
+
+## Read service runtime source
+
+`inspect-messageport-runtime.py` collects system `service_runner.js` candidates
+through an idle TV-Store SDB relay using Python's standard library:
+
+```sh
+python3 tools/inspect-messageport-runtime.py --tv TV_IPV4 --revision INSTALLED_COMMIT --output runtime-source.json
+```
+
+The running service must report the exact revision with connection diagnostics
+enabled. Keep TV-Store open and close other relay clients before starting. The
+collector uses directory listing and file reading operations only, with a
+90-second transport budget, directory/depth limits, and a 2 MiB file limit. It
+does not open a shell, create authentication keys, install packages, or change
+settings. Output creation is exclusive so existing reports are preserved.
+
+The report distinguishes candidate source, partial reads, and unavailable access.
+Retrieving a candidate does not verify that the service loaded it; compare its
+implementation with the observed runtime functions before drawing that conclusion.
