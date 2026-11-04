@@ -41,13 +41,17 @@ def progress(status, revision):
     checks_done = screen_ok and screen.get('runningChecks') is False
     matrix_done = detail.get('schema') == 2 and detail.get('phase') == 'complete'
     session_received = screen_ok and screen.get('sessionReceived') is True
+    private_bootstrap = (diagnostic.get('widgetBootstrap') or {}).get('transport') == 'private-storage'
+    authenticated = screen_ok and screen.get('serviceAuthenticated') is True
     return {
         'runningServiceVerified': service_ok,
         'screenBuildVerified': screen_ok,
         'screenChecksFinished': checks_done,
         'replyMatrixComplete': matrix_done,
         'screenSessionReceived': session_received,
-        'complete': service_ok and checks_done and (matrix_done or session_received)
+        'screenServiceAuthenticated': authenticated,
+        'bootstrapTransport': 'private-storage' if private_bootstrap else 'messageport',
+        'complete': service_ok and checks_done and (private_bootstrap or matrix_done or session_received)
     }
 
 def collect(url, revision, wait=180, fetch=read_status, clock=time.monotonic, pause=time.sleep, announce=print):
@@ -67,9 +71,14 @@ def collect(url, revision, wait=180, fetch=read_status, clock=time.monotonic, pa
         if state['complete'] or elapsed >= wait:
             break
         if elapsed >= next_notice:
-            announce('Waiting for Vetro to finish its screen checks (' + str(round(elapsed)) + ' seconds)...')
+            phase = ('screen checks finished; checking authentication evidence' if state['screenChecksFinished']
+                     else 'waiting for matching revisions and screen results')
+            announce('Collecting connection evidence (' + str(round(elapsed)) + ' seconds): ' + phase + '...')
             next_notice = elapsed + 15
         pause(min(3, wait - elapsed))
+    if state['bootstrapTransport'] == 'private-storage' and state['runningServiceVerified'] and state['screenChecksFinished']:
+        announce('AUTHENTICATED: the screen completed an authenticated service request.' if state['screenServiceAuthenticated']
+                 else 'AUTHENTICATION NOT VERIFIED: screen checks finished; failure evidence saved.')
     return {
         'capture': dict(schema=1, expectedRevision=revision,
                         capturedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),

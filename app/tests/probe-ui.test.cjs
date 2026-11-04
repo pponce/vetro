@@ -35,7 +35,8 @@ async function run(options) {
     document: {readyState: o.readyState || 'complete', getElementById: id => elements[id], hidden: false, addEventListener: (n, f) => { listeners[n] = f; }},
     window: {a2sService: o.Service, innerWidth: 1920, innerHeight: 1080, addEventListener: (n, f) => { windowListeners[n] = f; }},
     XMLHttpRequest: XHR, WebSocket: WS,
-    VetroAppAccess: function(){this.call=async()=>{sessions++;return o.session ? o.session(sessions) : {token:"a".repeat(64),expires:Date.now()+300000};};}, setInterval(){},
+    VetroAppAccess: function(){throw Error('Screen authentication must not require MessagePort');},
+    VetroWidgetSession: {read:async()=>{sessions++;return o.session ? o.session(sessions) : {token:"a".repeat(64),expires:Date.now()+300000};}}, setInterval(){},
     fetch: async () => { if (o.failFetch && o.failFetch.n-- > 0) throw new Error('refused'); return {status: 200}; },
     tizen: {
       tvinputdevice: {getSupportedKeys: () => [{name: 'VolumeUp'}]},
@@ -243,3 +244,4 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   for(const request of good.sent.filter(s=>s.method==='POST'))assert.ok(!JSON.stringify(request.body).includes('"token"'));
   console.log('PASS TV screen: probe report kept, quick pairing, manual inventory, visible connection failures, stale sessions, bounded polls, safe idle');
 })().catch(e => {console.error(e); process.exitCode = 1;});
+

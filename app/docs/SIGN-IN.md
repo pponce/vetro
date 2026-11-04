@@ -8,6 +8,8 @@ There can be at most 20 paired devices. Credentials expire after one year. Sign-
 
 Use the TV's IP address or localhost as the host. Remote websites and packaged apps with an opaque origin cannot use owner endpoints. Native scripts may omit Origin but still need their own paired bearer token. The transport remains HTTP: pairing does not protect credentials from someone who can intercept the network. Do not expose the management port to the internet or an untrusted LAN.
 
+The TV screen reads a separate credential from Vetro's package-private storage. It expires after five minutes and is renewed while the service runs. It permits only local screen/status reads, pairing-code reads and screen diagnostic submissions; it never grants browser owner access. A service restart invalidates the previous screen credentials.
+
 ## Scripts
 
 A script can pair by POSTing JSON to `/auth/pair` with a short `name`, then POSTing `{id,code}` to `/auth/confirm` using the request ID and the code read from the TV. A successful confirmation returns `token`. Send it as `Authorization: Bearer TOKEN` on subsequent requests. Do not place tokens in URL parameters, committed files, screenshots or reports.
@@ -18,4 +20,5 @@ The bundled benchmark and boot-test Python scripts read `VETRO_TOKEN` from the e
 
 Running `node service/main.js` without Tizen and with the app-only adapter remains an unauthenticated local development mode with device operations unavailable. This exception does not apply to an app-only package running on a TV.
 
-The pairing screen and flow adapt [zerodevb's dashboard-auth PR #9](https://github.com/andrearicci93/vetro/pull/9), commit `0983b97f980acbed7e43ac64181f07089f2313c8`, under this project's MIT license. The local trust exception from that proposal is replaced here by the verified-widget and scoped-app paths.
+The pairing screen and flow adapt [zerodevb's dashboard-auth PR #9](https://github.com/andrearicci93/vetro/pull/9), commit `0983b97f980acbed7e43ac64181f07089f2313c8`, under this project's MIT license.
+

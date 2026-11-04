@@ -23,6 +23,7 @@ function Diagnostics(info) {
         startedAt:new Date().toISOString(),
         lifecycle:{starts:0,requests:0,stops:0},
         storage:{phase:'not-started',authReady:false,appsReady:false,error:null},
+        widgetBootstrap:{transport:'private-storage',ready:false,publications:0,error:null},
         appPort:{available:false,error:null},
         widget:{portCreated:false,listenerRegistered:false,received:0,rejected:0,
             accepted:0,sessionsIssued:0,repliesSent:0,replyErrors:0,
@@ -38,6 +39,11 @@ Diagnostics.prototype.storage=function(phase,authReady,appsReady,error) {
 };
 Diagnostics.prototype.appPort=function(available,error) {
     this.state.appPort={available:available===true,error:error?errorName(error):null};
+};
+Diagnostics.prototype.bootstrap=function(state) {
+    this.state.widgetBootstrap={transport:'private-storage',ready:state.ready===true,
+        publications:typeof state.publications==='number'?Math.max(0,Math.min(1000000,state.publications)):0,
+        error:state.error?errorName({name:state.error}):null};
 };
 Diagnostics.prototype.widget=function(stage,error) {
     if(STAGES.indexOf(stage)<0)return;

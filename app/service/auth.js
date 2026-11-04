@@ -34,7 +34,7 @@ function validateState(s){
 }
 function Auth(options){
     options=options||{};this.now=options.now||Date.now;this.store=new Store(validateState);
-    this.state={schema:1,sessions:[]};this.pending=null;this.lastPairAt=null;this.widgets=[];
+    this.state={schema:1,sessions:[]};this.pending=null;this.lastPairAt=null;this.widgets=[];this.privateWidgets=[];
     if(options.file)this.configure(options.file);
 }
 Auth.prototype.configure=function(file){try{this.state=this.store.configure(file,this.state);}catch(_){}};
@@ -46,6 +46,14 @@ Auth.prototype.issueWidget=function(){
     this.widgets.push({hash:hash(key),expires:now+300000});
     return {token:key,expires:now+300000};
 };
+Auth.prototype.issuePrivateWidget=function(){
+    if(this.store.error)throw Error('Private security storage is unavailable');
+    var now=this.now(),key=crypto.randomBytes(32).toString('hex');
+    this.privateWidgets=this.privateWidgets.filter(function(x){return x.expires>now;}).slice(-2);
+    this.privateWidgets.push({hash:hash(key),expires:now+300000});
+    return {token:key,expires:now+300000};
+};
+Auth.prototype.revokePrivateWidgets=function(){this.privateWidgets=[];};
 Auth.prototype.session=function(req){
     var h=req.headers||{},authorization=h.authorization,m;
     if(authorization!==undefined){m=/^Bearer ([a-f0-9]{64})$/.exec(authorization);if(!m)return null;}
@@ -102,11 +110,11 @@ Auth.prototype.gate=function(req,res,url,options){
     if(options.open)return origin&&(hostOk(req)||!h.host)?false:(json(res,403,{error:'Cross-site request refused'}),true);
     if(!hostOk(req)){json(res,403,{error:'Open Vetro using the TV IP address'});return true;}
     if(this.store.error){unavailable(503,this.store.error);return true;}
-    // Widget bootstrap is available only over the trusted MessagePort to vetrotvapp.app.
+    // Credentials come from package-private storage or the verified widget MessagePort.
     if(h['x-vetro-widget']!==undefined){
         var token=h['x-vetro-widget'],address=req.socket&&req.socket.remoteAddress;
         var local=['127.0.0.1','::1','::ffff:127.0.0.1'].indexOf(address)>=0;
-        var now=this.now(),valid=typeof token==='string'&&/^[a-f0-9]{64}$/.test(token)&&this.widgets.some(function(w){return w.expires>now&&same(w.hash,hash(token));});
+        var now=this.now(),valid=typeof token==='string'&&/^[a-f0-9]{64}$/.test(token)&&this.widgets.concat(this.privateWidgets).some(function(w){return w.expires>now&&same(w.hash,hash(token));});
         if(!local||!hostOk(req)||!valid){json(res,401,{error:'Reconnect the Vetro widget'});return true;}
         if(url==='/auth/pending'&&req.method==='GET'){
             var p=this.pending&&this.pending.expires>now?this.pending:null;

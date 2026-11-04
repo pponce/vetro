@@ -122,7 +122,7 @@ Report.prototype.snapshot=function() {
 };
 function screen(params) {
     var result={receivedAt:new Date().toISOString(),client:{},checks:{}};
-    ['visible','runningChecks','fullCheck','pairingVisible','summaryReady','sessionReceived'].forEach(function(k){result[k]=params[k]===true;});
+    ['visible','runningChecks','fullCheck','pairingVisible','summaryReady','sessionReceived','serviceAuthenticated'].forEach(function(k){result[k]=params[k]===true;});
     result.sourceRevision=typeof params.sourceRevision==='string'&&/^[a-f0-9]{40}$/.test(params.sourceRevision)?params.sourceRevision:null;
     result.screenError=scrub(params.screenError,[],512);result.pairingError=scrub(params.pairingError,[],512);
     var c=params.client||{};

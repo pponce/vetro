@@ -102,6 +102,7 @@ var appAccess = new (require('./app-access.js').Access)({
     })
 });
 var appPorts = null, appStorageReady = false, appInitializing = false, appInitialization = 0;
+var widgetBootstrap = null, appPrivateDirectory = null;
 var connectionDiagnostics = new (require('./connection-diagnostics.js').Diagnostics)(buildInfo);
 function startAppCommunication() {
     // The service runtime finishes native API setup before its lifecycle callbacks.
@@ -110,7 +111,11 @@ function startAppCommunication() {
     appIdentity.tizen = tizenRuntime;
     if (!tizenRuntime || appInitializing || appPorts && appPorts.ready) return;
     if (appPorts) { appPorts.stop(); appPorts = null; }
-    function connect() { appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth,connectionDiagnostics); }
+    function connect() {
+        if(!widgetBootstrap)widgetBootstrap=new (require('./widget-bootstrap.js').Publisher)(auth,connectionDiagnostics);
+        widgetBootstrap.start(appPrivateDirectory);
+        appPorts = require('./app-ports.js').start(tizenRuntime,appAccess,auth,connectionDiagnostics);
+    }
     if (appStorageReady) { connect(); return; }
     appInitializing = true;
     connectionDiagnostics.storage('resolving',false,false);
@@ -120,6 +125,7 @@ function startAppCommunication() {
         appInitializing = false;
         if (error) { connectionDiagnostics.storage('failed',false,false,error);return; }
         auth.configure(require('path').join(directory,'vetro-sign-in.json'));
+        appPrivateDirectory = directory;
         appAccess.configure(require('path').join(directory,'vetro-app-access.json'));
         connectionDiagnostics.storage(auth.store.error||appAccess.store.error?'blocked':'ready',
             !auth.store.error,!appAccess.store.error);
@@ -131,6 +137,7 @@ function startAppCommunication() {
 function stopAppCommunication() {
     ++appInitialization; appInitializing = false;
     if (appPorts) { appPorts.stop(); appPorts = null; }
+    if (widgetBootstrap) { widgetBootstrap.stop(); widgetBootstrap = null; }
 }
 module.exports.onStart = function(){connectionDiagnostics.lifecycle('starts');startAppCommunication();};
 module.exports.onRequest = function(){connectionDiagnostics.lifecycle('requests');startAppCommunication();};

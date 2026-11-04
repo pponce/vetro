@@ -4,6 +4,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="$WEBAPIS/webapis/webapis.js"></script>
 <script src="service/app-access-client.js"></script>
+<script src="service/widget-bootstrap-client.js"></script>
 <!-- DIAGNOSTICS_SCRIPT -->
 <style>
 /* Values from design-system/tokens.css (dark), status colours from the dashboard. Static page: solid surfaces,
@@ -75,19 +76,23 @@ var report = {probe: {}, apps: [], packages: [], settings: {}};
 var delivered = false, running = false, idleTimer = null, canIdle = false, fullCheck = false;
 var screenError = '', pairingError = '', pairingVisible = false, summaryReady = false;
 var widgetClient=null,widgetCredential=null,widgetConnecting=null,pairingBusy=false;
+var widgetServiceAuthenticated=false;
 function widgetSession() {
   if(widgetCredential && widgetCredential.expires>Date.now()+30000)return Promise.resolve(widgetCredential.token);
   if(widgetConnecting)return widgetConnecting;
   widgetConnecting=Promise.resolve().then(function(){
-    if(!widgetClient)widgetClient=new VetroAppAccess({widget:true,timeout:2000,diagnostics:window.VetroConnectionDiagnostics});
-    return widgetClient.call('widget.connect',{});
+    // Optional one-way diagnostics do not participate in credential delivery.
+    if(window.VetroConnectionDiagnostics&&!widgetClient)try{
+      widgetClient=new VetroAppAccess({widget:true,timeout:2000,diagnostics:window.VetroConnectionDiagnostics});
+    }catch(_){}
+    return VetroWidgetSession.read(typeof tizen==='undefined'?null:tizen,2500);
   }).then(function(d){
     if(!d||typeof d.token!=='string'||!/^[a-f0-9]{64}$/.test(d.token)||typeof d.expires!=='number'||!isFinite(d.expires)||d.expires<=Date.now())throw Error('Widget identity was not verified');
     widgetCredential=d;return d.token;
   }).then(function(token){widgetConnecting=null;return token;},function(e){widgetConnecting=null;throw e;});
   return widgetConnecting;
 }
-// Bound every HTTP read as well as the MessagePort handshake. A restarted service
+// Bound every HTTP read as well as the private credential read. A restarted service
 // invalidates widget sessions; renew only after its explicit authentication refusal.
 function widgetRequest(method, route, body, timeout, renewed) {
   return widgetSession().then(function(token){return new Promise(function(resolve,reject){
@@ -97,11 +102,12 @@ function widgetRequest(method, route, body, timeout, renewed) {
     if(body!==undefined)xhr.setRequestHeader('Content-Type','application/json');
     xhr.onload=function(){
       if(xhr.status===401){
+        widgetServiceAuthenticated=false;
         if(widgetCredential&&widgetCredential.token===token)widgetCredential=null;
         if(!renewed)return resolve(widgetRequest(method,route,body,timeout,true));
       }
       if(xhr.status!==200)return reject(Error('Service replied HTTP '+xhr.status));
-      try{resolve(JSON.parse(xhr.responseText));}catch(e){reject(Error('Service response is not JSON'));}
+      try{var response=JSON.parse(xhr.responseText);widgetServiceAuthenticated=true;resolve(response);}catch(e){reject(Error('Service response is not JSON'));}
     };
     xhr.onerror=function(){reject(Error('The authenticated request did not answer on port 8099.'));};
     xhr.ontimeout=function(){reject(Error('Service request timed out'));};
@@ -131,7 +137,7 @@ function pollPairing() {
       document.getElementById('pairing').hidden=true;
       document.getElementById('pairingCode').textContent='';
       resetIdle();
-    }).then(function(){pairingBusy=false;pairingStatus();});
+    }).then(function(){pairingBusy=false;pairingStatus();if(widgetClient&&widgetClient.diagnostics)widgetClient.diagnostics.publish();});
 }
 
 // The service keeps running without this page; a resident page only holds memory.

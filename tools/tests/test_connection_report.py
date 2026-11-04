@@ -53,6 +53,26 @@ class ConnectionReportTests(unittest.TestCase):
         value['connectionDiagnostics']['screen']['sessionReceived'] = True
         self.assertTrue(self.run_capture([value])['capture']['complete'])
 
+    def test_private_bootstrap_reports_completed_failure_without_waiting_for_matrix(self):
+        value = status(matrix=False)
+        value['connectionDiagnostics']['widgetBootstrap'] = {'transport': 'private-storage', 'ready': True}
+        value['connectionDiagnostics']['screen']['sessionReceived'] = True
+        captured = self.run_capture([value])['capture']
+        self.assertTrue(captured['complete'])
+        self.assertEqual(captured['waitedSeconds'], 0)
+        self.assertEqual(captured['bootstrapTransport'], 'private-storage')
+        self.assertFalse(captured['screenServiceAuthenticated'], 'reading a credential is not HTTP authentication')
+
+    def test_private_bootstrap_requires_an_explicit_authenticated_screen_result(self):
+        value = status(matrix=False)
+        value['connectionDiagnostics']['widgetBootstrap'] = {'transport': 'private-storage', 'ready': True}
+        value['connectionDiagnostics']['screen'].update(sessionReceived=True, serviceAuthenticated=True)
+        self.assertTrue(self.run_capture([value])['capture']['screenServiceAuthenticated'])
+        value['connectionDiagnostics']['screen']['sourceRevision'] = '2' * 40
+        captured = self.run_capture([value], wait=0)['capture']
+        self.assertFalse(captured['complete'])
+        self.assertFalse(captured['screenServiceAuthenticated'])
+
     def test_denied_status_body_is_read_without_credentials(self):
         value = status()
         class Opener:
@@ -68,3 +88,4 @@ class ConnectionReportTests(unittest.TestCase):
     def test_rejects_invalid_revision(self):
         with self.assertRaises(ValueError):
             report.collect('unused', 'not-a-revision', fetch=lambda _: {})
+

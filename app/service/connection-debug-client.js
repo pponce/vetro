@@ -21,7 +21,8 @@ root.VetroConnectionDiagnostics=function(client){
             try {
                 var state={sourceRevision:revision,visible:root.document.hidden===false,runningChecks:root.running===true,
                     fullCheck:root.fullCheck===true,pairingVisible:root.pairingVisible===true,summaryReady:root.summaryReady===true,
-                    sessionReceived:!!root.widgetCredential,screenError:clean(root.screenError),pairingError:clean(root.pairingError),
+                    sessionReceived:!!root.widgetCredential,serviceAuthenticated:root.widgetServiceAuthenticated===true,
+                    screenError:clean(root.screenError),pairingError:clean(root.pairingError),
                     client:{trusted:client.trusted===true,closed:client.closed===true,replyTrusted:client.local.isTrusted===true,
                         sequence:client.sequence,pending:Object.keys(client.pending).length},checks:{}};
                 var checks=(root.report||{}).probe||{};
