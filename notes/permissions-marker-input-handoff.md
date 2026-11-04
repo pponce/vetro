@@ -1,5 +1,7 @@
 # Permission registry markers and input evidence — 2026-11-04
 
+Current checkpoint: the attempted marker update was blocked by CI and did not install. Corrected reports now identify retained input-helper state. Continue with [the input lifecycle handoff](input-lifecycle-handoff.md), whose combined candidate includes these marker fixes and has passed all four CI jobs. The block below is retained as a record.
+
 ## Objective and verified state
 
 Restore approved Glass Home app-list/launch access, reliable input routing, power-on selection and return behavior.
