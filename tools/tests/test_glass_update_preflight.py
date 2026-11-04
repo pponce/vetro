@@ -2,12 +2,15 @@
 import ast
 import contextlib
 import http.server
+import io
 import json
 from pathlib import Path
 import re
 import subprocess
 import threading
+import tempfile
 import unittest
+from unittest import mock
 import urllib.error
 
 NOTE = Path(__file__).parents[2] / 'notes/permissions-reply-startup-handoff.md'
@@ -89,6 +92,50 @@ class PreflightTests(unittest.TestCase):
         self.assertIn('--report-host', BLOCK)
         self.assertIn('pedro@192.168.84.2', BLOCK)
         self.assertGreater(BLOCK.index('=== Glass Home authenticated reply update END ==='), BLOCK.index('\nPYGLASS'))
+
+    def test_full_block_collects_before_install_and_refuses_changed_helper(self):
+        # Run the exact shipped Python with only its project root and external
+        # effects replaced. All four on-disk helper hashes are checked for real.
+        nodes = [n for n in ast.parse(SOURCE).body if not (
+            isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'project' for t in n.targets))]
+        code = compile(ast.Module(body=nodes, type_ignores=[]), str(NOTE), 'exec')
+        for tampered in (False, True):
+            with self.subTest(tampered=tampered), tempfile.TemporaryDirectory() as temporary:
+                project = Path(temporary)
+                directory = project / 'vetro-install/bin/permissions-recovery-160d3b7f8921'
+                directory.mkdir(parents=True)
+                for name in ('install-glass-permissions.py', 'vetro_owner.py', 'diagnose-app-access.py', 'app_access_input_audit.py'):
+                    (directory / name).write_bytes((NOTE.parents[1] / 'tools' / name).read_bytes())
+                if tampered:
+                    (directory / 'vetro_owner.py').write_text('changed')
+                calls = []
+                def request(req, timeout):
+                    if req.full_url.endswith('/status'):
+                        raise urllib.error.HTTPError(req.full_url, 401, 'Unauthorized', {}, io.BytesIO(json.dumps(self.evidence()).encode()))
+                    self.assertTrue(req.full_url.endswith('/41796862889'))
+                    response = io.BytesIO(json.dumps({'head_sha': '30c490194f1748d523262a1ac8985fe45f735729',
+                                                      'status': 'completed', 'conclusion': 'success'}).encode())
+                    response.getcode = lambda: 200
+                    return response
+                opener = mock.Mock()
+                opener.open.side_effect = request
+                def run(args, check):
+                    calls.append(args)
+                    if any(str(a).endswith('diagnose-app-access.py') for a in args):
+                        report = project / 'vetro-install/access-diagnostics/app-access-fixture.json'
+                        report.parent.mkdir(parents=True)
+                        report.write_text('{}')
+                output = io.StringIO()
+                with mock.patch('urllib.request.build_opener', return_value=opener), mock.patch('subprocess.run', side_effect=run), contextlib.redirect_stdout(output):
+                    exec(code, {'project': project})
+                if tampered:
+                    self.assertEqual(calls, [])
+                    self.assertIn('Helper checksum mismatch', output.getvalue())
+                else:
+                    self.assertEqual(len(calls), 2)
+                    self.assertIn(str(directory / 'diagnose-app-access.py'), calls[0])
+                    self.assertIn(str(directory / 'install-glass-permissions.py'), calls[1])
+                    self.assertIn('rsync -P pedro@192.168.84.2:', output.getvalue())
 
 
 if __name__ == '__main__':

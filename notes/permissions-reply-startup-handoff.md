@@ -27,7 +27,7 @@ The last startup hardware evidence predates this installed candidate: a standby 
 
 Focused local tests cover actual HTTP routing, native request metadata, permission revocation, exact-body MACs, replay/expiry/resource limits, SDK browser compatibility, Glass service integration and installer resume behavior. The Glass integration test completes approval, app listing and launch with native reply delivery unavailable; native TV APIs are modeled. Full repository CI is required for the exact candidate commits before installation.
 
-The corrected bootstrap has four real-HTTP/shell tests. The collector has five tests covering exact production SQL, failures, UID selection and report filtering; the input audit has two tests, including its shell running against simulated process/socket data. These are host-tool checks, not proof of a hardware correction.
+The corrected bootstrap has five real-HTTP/shell tests, including execution of the complete shipped block with installation simulated and a changed-helper refusal. The collector has five tests covering exact production SQL, failures, UID selection and report filtering; the input audit has two tests, including its shell running against simulated process/socket data. All 12 pass. These are host-tool checks, not proof of a hardware correction.
 
 Hardware app reply delivery through the new path, approval, full inventory, power-on launch and return remain unverified. Do not treat green CI, signed package installation, or a successful HTTP poll as hardware acceptance by themselves. Vetro candidate `3d6a431727687cbd1e3ec5fe01d01471e79a151f` also passed four CI jobs and improves live screen status, but it is not installed and does not repair this currently disconnected bridge.
 
@@ -89,14 +89,17 @@ Before continuing, require the Vetro report's `capture.runningServiceVerified`, 
 
 ### 2. Update Glass Home
 
+Host tooling is pinned to `160d3b7f892187f18307ac3daae96488133e45d6` on `combined/runtime-wrapper-inspection-20261103`. This block collects the current state first, then updates only Glass Home. If maintenance pairing is needed, enter the TV code in the SSH terminal. Return the generated JSON and installer log using the final Mac commands.
+
 ```bash
 {
 printf '%s\n' '=== Glass Home authenticated reply update START ==='
 python3 - <<'PYGLASS'
 from pathlib import Path
-import hashlib, json, subprocess, urllib.error, urllib.request
+import hashlib, json, shlex, subprocess, urllib.error, urllib.request
 project = Path('/home/pedro/devProjects/samsung-tv-tools')
 revision = '30c490194f1748d523262a1ac8985fe45f735729'
+tool_revision = '160d3b7f892187f18307ac3daae96488133e45d6'
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -135,6 +138,11 @@ def verify_vetro_status(url):
             screen.get('serviceAuthenticated') is not True):
         raise RuntimeError('The matching Vetro service and authenticated screen are not verified')
 
+def reports():
+    return set(project.glob('vetro-install/access-diagnostics/app-access-*.json')) | set(
+        project.glob('launcher-playground/logs/glass-home-permissions-*.txt'))
+
+previous_reports = reports()
 phase = 'checking the project folder'
 try:
     if not project.is_dir():
@@ -146,17 +154,20 @@ try:
     phase = 'checking the installed Vetro revision'
     verify_vetro_status('http://192.168.84.19:8099/status')
     phase = 'verifying the installer files'
-    directory = project / 'vetro-install/bin/permissions-fc0b236878a2'
+    directory = project / 'vetro-install/bin/permissions-recovery-160d3b7f8921'
+    installer_revision = 'fc0b236878a2249906edf774888f5a39f46842c0'
     files = {
-        'install-glass-permissions.py': 'fbf392b5122143f5cdc1ad62caaed63c6ada994bdd651575d22cf33d14e70d12',
-        'vetro_owner.py': '56c6a1de5b079216e72029aabdf1482ebbd508e034eecda40ae2e13b0f1e3f00'
+        'install-glass-permissions.py': (installer_revision, 'fbf392b5122143f5cdc1ad62caaed63c6ada994bdd651575d22cf33d14e70d12'),
+        'vetro_owner.py': (installer_revision, '56c6a1de5b079216e72029aabdf1482ebbd508e034eecda40ae2e13b0f1e3f00'),
+        'diagnose-app-access.py': (tool_revision, '4da9a9b556e7259511b0d7ce56575dcdf4cd7dea5ec8028e837c7a3d3193f301'),
+        'app_access_input_audit.py': (tool_revision, '4f24189ebbe2865a25a6f2f17f6f657385ae9d2c232e2c48c7e3da42046821ad')
     }
-    for name, digest in files.items():
+    for name, (source_revision, digest) in files.items():
         target = directory / name
         if target.is_file():
             source = target.read_bytes()
         else:
-            url = 'https://raw.githubusercontent.com/pponce/vetro/fc0b236878a2249906edf774888f5a39f46842c0/tools/' + name
+            url = 'https://raw.githubusercontent.com/pponce/vetro/' + source_revision + '/tools/' + name
             with opener.open(url, timeout=30) as reply:
                 source = reply.read(200000)
         if hashlib.sha256(source).hexdigest() != digest:
@@ -164,12 +175,22 @@ try:
         if not target.is_file():
             directory.mkdir(parents=True, exist_ok=True)
             target.write_bytes(source)
+    phase = 'collecting read-only permission and input evidence'
+    print('Reading permission registry and input process state; allow up to three minutes.', flush=True)
+    subprocess.run(['python3', '-u', str(directory / 'diagnose-app-access.py'),
+        '--tv', '192.168.84.19', '--project-root', str(project),
+        '--report-host', 'pedro@192.168.84.2'], check=True)
     phase = 'running the owner-paired Glass Home installer'
+    print('Starting the pinned Glass Home update.', flush=True)
     subprocess.run(['python3', str(directory / 'install-glass-permissions.py'),
         '--tv', '192.168.84.19', '--mint', '192.168.84.2', '--project-root', str(project),
         '--expected-commit', revision, '--report-host', 'pedro@192.168.84.2'], check=True)
 except Exception as error:
     print('STOPPED while ' + phase + ': ' + str(error))
+finally:
+    for report in sorted(reports() - previous_reports):
+        print('Run this on your Mac to retrieve the report:')
+        print('rsync -P ' + shlex.quote('pedro@192.168.84.2:' + str(report)) + ' ~/Downloads/')
 PYGLASS
 printf '%s\n' '=== Glass Home authenticated reply update END ==='
 }
