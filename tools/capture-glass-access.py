@@ -55,7 +55,59 @@ class CaptureError(RuntimeError):
 
 
 def error_detail(error):
-    return str(error) if isinstance(error, CaptureError) else type(error).__name__
+    if isinstance(error, CaptureError):
+        return str(error)
+    if isinstance(error, transport.ReadFailure):
+        # Retain known local protocol reasons without exporting TV response text.
+        reasons = {
+            'Inspection time limit reached': 'SDB operation time limit reached',
+            'SDB closed the connection': 'SDB connection closed before the response completed',
+            'Invalid SDB frame header': 'Invalid SDB frame header',
+            'Invalid SDB frame checksum': 'Invalid SDB frame checksum',
+            'SDB requires authentication; no key was created or registered': 'SDB requires authentication; no key was created or registered',
+            'Unexpected SDB handshake': 'Unexpected SDB handshake',
+            'SDB closed the file-reading stream': 'SDB stream closed',
+            'SDB buffer limit exceeded': 'SDB response exceeded its size limit',
+            'Unexpected SDB stream frame': 'Unexpected SDB stream frame',
+        }
+        detail = str(error)
+        if detail in reasons:
+            return reasons[detail]
+        if detail.startswith('Unexpected SDB stream identity: '):
+            return 'SDB response belonged to a different stream'
+        if detail.startswith('Unexpected frame for retired SDB stream: '):
+            return 'Unexpected response on a retired SDB stream'
+        return 'Other SDB protocol failure'
+    return type(error).__name__
+
+
+def stream_evidence(stream):
+    if stream is None:
+        return []
+    result = []
+    for frame in list(getattr(stream, 'frames', []))[-48:]:
+        result.append({
+            'direction': frame.get('direction') if frame.get('direction') in ('send', 'receive') else 'other',
+            'command': frame.get('command') if frame.get('command') in ('CNXN', 'AUTH', 'OPEN', 'OKAY', 'WRTE', 'CLSE') else 'other',
+            **{k: frame.get(k) if type(frame.get(k)) is int and 0 <= frame[k] <= 0xffffffff else None
+               for k in ('arg0', 'arg1', 'payloadBytes')},
+        })
+    return result
+
+
+def relay_summary(value):
+    relay = value.get('relay') if isinstance(value, dict) else None
+    relay = relay if isinstance(relay, dict) else {}
+    failure = relay.get('lastFailure') if isinstance(relay.get('lastFailure'), dict) else {}
+    stamp = failure.get('at')
+    return {
+        'enabled': relay.get('enabled') is True, 'listening': relay.get('listening') is True,
+        'hasError': bool(relay.get('error')),
+        **{key: relay.get(key) if type(relay.get(key)) is int and relay[key] >= 0 else None
+           for key in ('sessions', 'served', 'failures')},
+        'lastFailureAt': stamp if isinstance(stamp, str) and re.fullmatch(r'[0-9TZ:.+\-]{20,40}', stamp) else None,
+        'lastFailureCode': failure.get('code') if failure.get('code') in ('SDBD_DROPPED', 'SDBD_CLOSED', 'SDBD_CONNECT_FAILED') else 'other' if failure else None,
+    }
 
 
 class Stream(transport.SdbReader):
@@ -84,15 +136,33 @@ class Stream(transport.SdbReader):
         return bytes(result)
 
 
-def connect(tv, relay_port, service, seconds=30):
-    stream = Stream(socket.create_connection((tv, relay_port), timeout=8), seconds=seconds)
+def connect(tv, relay_port, service=None, seconds=30, report=None, purpose='inspector'):
+    stream = None
+    attempt = {'purpose': purpose, 'stage': 'tcp-connect', 'connected': False}
+    if report is not None:
+        report.setdefault('transportAttempts', []).append(attempt)
     try:
+        stream = Stream(socket.create_connection((tv, relay_port), timeout=8), seconds=seconds)
+        attempt['stage'] = 'sdb-handshake'
         stream.connect()
-        stream.open_service(service)
+        if service is not None:
+            attempt['stage'] = 'service-open'
+            stream.open_service(service)
+        attempt['connected'] = True
+        attempt['stage'] = 'ready'
         return stream
-    except BaseException:
-        stream.close()
+    except BaseException as error:
+        attempt['error'] = error_detail(error)
+        attempt['frames'] = stream_evidence(stream)
+        if stream:
+            try:
+                stream.close()
+            except Exception:
+                pass
         raise
+    finally:
+        if 'frames' not in attempt:
+            attempt['frames'] = stream_evidence(stream)
 
 
 def headers(stream):
@@ -109,8 +179,8 @@ def headers(stream):
     return int(match[1]), values
 
 
-def inspector_pages(tv, relay_port, port):
-    stream = connect(tv, relay_port, 'tcp:' + str(port))
+def inspector_pages(tv, relay_port, port, report=None):
+    stream = connect(tv, relay_port, 'tcp:' + str(port), report=report, purpose='inspector-page-list')
     try:
         stream.write(('GET /json/list HTTP/1.1\r\nHost: 127.0.0.1:' + str(port) +
                       '\r\nConnection: close\r\n\r\n').encode('ascii'))
@@ -152,6 +222,8 @@ def inspector_pages(tv, relay_port, port):
             raise CaptureError('Invalid inspector page list')
         return result
     finally:
+        if report is not None:
+            report['pageListFrames'] = stream_evidence(stream)
         stream.close()
 
 
@@ -382,7 +454,10 @@ def verify_glass(owner):
 
 def collect(owner, tv, duration, report):
     stream = None
+    debug = None
     relaunch = False
+    relay_checked = False
+    phase = 'service-preflight'
     evidence = NetworkEvidence(tv)
     try:
         status = owner.raw('/status', timeout=8)
@@ -391,25 +466,38 @@ def collect(owner, tv, duration, report):
             'sourceDirty': build.get('sourceDirty'), 'rootConnected': (status.get('agent') or {}).get('connected') is True}
         if report['service']['sourceRevision'] != REVISION or report['service']['sourceDirty'] is not False or not report['service']['rootConnected']:
             raise CaptureError('Expected clean Vetro revision with root access was not verified')
-        relay = read_json('http://' + tv + ':8077/relay').get('relay') or {}
+        phase = 'relay-preflight'
+        relay_data = read_json('http://' + tv + ':8077/relay')
+        report['relayBefore'] = relay_summary(relay_data)
+        relay_checked = True
+        relay = relay_data.get('relay') or {}
         relay_port = relay.get('port')
         if relay.get('enabled') is not True or relay.get('listening') is not True or relay.get('error') or type(relay.get('sessions')) is not int or relay['sessions'] != 0:
             raise CaptureError('TV-Store relay must be ready with no other debug sessions')
         if type(relay_port) is not int or not 1024 <= relay_port <= 65535:
             raise CaptureError('Invalid TV-Store relay port')
+        phase = 'glass-health'
         health = read_json('http://' + tv + ':8090/health')
         report['glassService'] = {k: health.get(k) for k in ('ok', 'version', 'vetroApps', 'vetroLaunch', 'vetroPermissions', 'dockPreferences') if type(health.get(k)) in (int, bool, str)}
         if health.get('name') != 'Glass Home' or health.get('vetroPermissions') != 2:
             raise CaptureError('Open Glass Home normally once; its version 2 service is required')
+        phase = 'glass-file-verification'
         report['glassFilesMatch'] = verify_glass(owner)
         if not all(report['glassFilesMatch'].values()):
             raise CaptureError('Installed Glass Home files differ from the expected candidate; no debug launch was attempted')
         report['before'] = summarize_access(owner.raw('/app-access', timeout=8))
+        phase = 'sdb-preflight'
+        print('Checking the SDB connection before closing Glass Home...', flush=True)
+        debug = connect(tv, relay_port, seconds=70, report=report, purpose='debug-session')
+        report['sdbPreflightPassed'] = True
         print('Reopening only the Glass Home screen in Web Inspector mode...', flush=True)
+        phase = 'glass-ui-stop'
         relaunch = True
         remote(owner, '/usr/bin/app_launcher -k ' + APP + ' >/dev/null 2>&1\n:')
-        debug = connect(tv, relay_port, 'shell:0 debug ' + APP, seconds=30)
         try:
+            phase = 'debug-service-open'
+            debug.open_service('shell:0 debug ' + APP)
+            phase = 'debug-port-response'
             output = bytearray()
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
@@ -429,12 +517,16 @@ def collect(owner, tv, duration, report):
             if not match or not 1024 <= int(match[1]) <= 65535:
                 raise CaptureError('TV did not return a Glass Home inspector port; no launch was retried')
             port = int(match[1])
+            report['debugPortReceived'] = True
         finally:
+            report['debugFrames'] = stream_evidence(debug)
             debug.close()
+            debug = None
+        phase = 'inspector-page-list'
         pages = None
         for attempt in range(6):
             try:
-                pages = inspector_pages(tv, relay_port, port)
+                pages = inspector_pages(tv, relay_port, port, report=report)
                 if pages:
                     break
             except Exception:
@@ -449,11 +541,16 @@ def collect(owner, tv, duration, report):
         address = urllib.parse.urlsplit(candidates[0]['webSocketDebuggerUrl'])
         if address.scheme != 'ws' or address.query or address.fragment or not re.fullmatch(r'/devtools/page/[A-Za-z0-9_.-]+', address.path):
             raise CaptureError('Unexpected Glass Home inspector endpoint')
-        stream = connect(tv, relay_port, 'tcp:' + str(port), seconds=duration + 100)
+        phase = 'inspector-connection'
+        stream = connect(tv, relay_port, 'tcp:' + str(port), seconds=duration + 100, report=report, purpose='inspector-websocket')
+        phase = 'inspector-upgrade'
         inspector = Inspector(stream, port, address.path)
         inspector.handler = evidence.event
+        phase = 'inspector-runtime-enable'
         inspector.call('Runtime.enable')
+        phase = 'inspector-network-enable'
         inspector.call('Network.enable')
+        phase = 'widget-snapshot'
         initial = inspector.call('Runtime.evaluate', {'expression': SNAPSHOT, 'returnByValue': True})
         value = sanitize_snapshot((initial.get('result') or {}).get('value'))
         if not value['present'] or not value['adapter']:
@@ -466,6 +563,7 @@ def collect(owner, tv, duration, report):
         started = time.monotonic()
         last = value
         notice = 0
+        phase = 'request-observation'
         while time.monotonic() - started < duration:
             value = inspector.call('Runtime.evaluate', {'expression': SNAPSHOT, 'returnByValue': True})
             value = sanitize_snapshot((value.get('result') or {}).get('value'))
@@ -482,15 +580,28 @@ def collect(owner, tv, duration, report):
         evidence.drain(inspector)
         report['captureComplete'] = True
     except Exception as error:
+        report['failedPhase'] = phase
         report['errors'].append(error_detail(error))
-        print('CAPTURE LIMIT: ' + error_detail(error), flush=True)
+        print('CAPTURE LIMIT [' + phase + ']: ' + error_detail(error), flush=True)
     finally:
         report['network'] = evidence.snapshot()
+        if debug:
+            report['debugFrames'] = stream_evidence(debug)
+            try:
+                debug.close()
+            except Exception:
+                pass
         if stream:
+            report['inspectorFrames'] = stream_evidence(stream)
             try:
                 stream.close()
             except Exception:
                 pass
+        if relay_checked:
+            try:
+                report['relayAfter'] = relay_summary(read_json('http://' + tv + ':8077/relay'))
+            except Exception as error:
+                report['relayReadError'] = error_detail(error)
         try:
             report['after'] = summarize_access(owner.raw('/app-access', timeout=8))
         except Exception as error:

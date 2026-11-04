@@ -6,7 +6,7 @@ from pathlib import Path
 import struct
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -166,6 +166,25 @@ class SdbTests(unittest.TestCase):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_known_sdb_error_survives_without_arbitrary_transport_text(self):
+        self.assertEqual(capture.error_detail(capture.transport.ReadFailure('SDB closed the connection')),
+                         'SDB connection closed before the response completed')
+        self.assertEqual(capture.error_detail(capture.transport.ReadFailure('Unexpected SDB stream identity: private-text')),
+                         'SDB response belonged to a different stream')
+        self.assertEqual(capture.error_detail(capture.transport.ReadFailure('private-device-response')),
+                         'Other SDB protocol failure')
+
+    def test_transport_and_relay_evidence_omit_banners_and_peer_addresses(self):
+        stream = Mock(frames=[{'direction': 'receive', 'command': 'AUTH', 'arg0': 1,
+            'arg1': 2, 'payloadBytes': 64, 'payload': 'private-token'}])
+        relay = capture.relay_summary({'relay': {'enabled': True, 'listening': True,
+            'failures': 10, 'lastFailure': {'at': '2026-11-04T20:01:06.123Z',
+            'code': 'SDBD_DROPPED', 'client': 'private-address', 'reason': 'private-device-text'}}})
+        self.assertEqual(relay['lastFailureCode'], 'SDBD_DROPPED')
+        self.assertEqual(relay['failures'], 10)
+        serialized = json.dumps([capture.stream_evidence(stream), relay])
+        self.assertNotIn('private', serialized)
+
     def test_poll_observation_excludes_key_id_and_mac(self):
         evidence = capture.NetworkEvidence()
         ident = 'a' * 64
@@ -245,6 +264,8 @@ class LifecycleTests(unittest.TestCase):
             remote = 1
             def __init__(self):
                 self.buffer = bytearray()
+            def open_service(self, service):
+                pass
             def pump(self):
                 self.buffer.extend(b'port: 45678\n')
             def close(self):
@@ -294,10 +315,14 @@ class LifecycleTests(unittest.TestCase):
 
     def test_debug_failure_restores_ui_once_without_service_or_permission_writes(self):
         owner, result = Owner(), report()
+        debug = Mock(frames=[])
+        debug.open_service.side_effect = capture.transport.ReadFailure('SDB closed the connection')
         with patch.object(capture, 'read_json', side_effect=json_read), patch.object(capture, 'verify_glass', return_value={'file': True}), \
-             patch.object(capture, 'connect', side_effect=RuntimeError('sensitive transport output')) as connect:
+             patch.object(capture, 'connect', return_value=debug) as connect:
             capture.collect(owner, '192.168.84.19', 1, result)
         self.assertEqual(connect.call_count, 1)
+        self.assertEqual(result['failedPhase'], 'debug-service-open')
+        self.assertIn('SDB connection closed before the response completed', result['errors'])
         commands = [base64.b64decode(body['cmd'].split()[2]).decode() for path, body in owner.calls if path == '/exec']
         self.assertEqual(len(commands), 2)
         self.assertTrue(all('GlassHome1.Photos' not in c and 'vetrotvapp' not in c for c in commands))
@@ -305,6 +330,33 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(result['normalRelaunchCommandCompleted'])
         self.assertNotIn('sensitive', json.dumps(result))
         self.assertTrue(all(body is None for path, body in owner.calls if path != '/exec'))
+
+    def test_preflight_failure_leaves_ui_running_and_preserves_handshake_evidence(self):
+        owner, result = Owner(), report()
+        class ClosedSocket(SdbSocket):
+            def sendall(self, data):
+                # This peer closes before answering the initial CNXN.
+                pass
+        sock = ClosedSocket()
+        with patch.object(capture, 'read_json', side_effect=json_read), patch.object(capture, 'verify_glass', return_value={'file': True}), \
+             patch.object(capture.socket, 'create_connection', return_value=sock):
+            capture.collect(owner, '192.168.84.19', 1, result)
+        self.assertEqual(result['failedPhase'], 'sdb-preflight')
+        self.assertIn('SDB connection closed before the response completed', result['errors'])
+        self.assertTrue(sock.closed)
+        self.assertFalse(any(path == '/exec' for path, body in owner.calls))
+        attempt = result['transportAttempts'][0]
+        self.assertEqual(attempt['stage'], 'sdb-handshake')
+        self.assertEqual([f['command'] for f in attempt['frames']], ['CNXN'])
+        self.assertNotIn('normalRelaunchCommandCompleted', result)
+
+    def test_preflight_does_not_open_any_sdb_service(self):
+        sock, result = SdbSocket(), report()
+        with patch.object(capture.socket, 'create_connection', return_value=sock):
+            stream = capture.connect('192.168.84.19', 26201, report=result, purpose='debug-session')
+        self.assertEqual([command for command, a, b, payload in sock.sent], [b'CNXN'])
+        self.assertTrue(result['transportAttempts'][0]['connected'])
+        stream.close()
 
     def test_existing_relay_session_is_not_interrupted(self):
         owner, result = Owner(), report()

@@ -1,5 +1,30 @@
 # Glass Home request capture — 2026-11-04
 
+## First capture result and corrected transport reporting
+
+`glass-request-20261104-200106-317015.json` passed the clean Vetro revision,
+root connection, Glass service capability and all seven installed file checks.
+The inspector never attached; permission state remained enabled/available with
+no Glass Home event or pending request. The normal UI relaunch command completed.
+The capture stored only `ReadFailure`, so neither the failed SDB stage nor the
+underlying transport reason can be recovered from this report. It supplies no
+new evidence about the Connect action itself.
+
+The host helper now records the exact collection phase, allowlisted SDB error
+reason, bounded protocol frame headers, and relay counters/error-code timestamps
+before and after the attempt. Banners, command payloads and free-form relay text
+are excluded. It completes the SDB handshake before stopping the Glass Home UI
+and reuses that connection for the single debug launch. A failed preflight leaves
+the UI running. No live app code or permissions were changed. All 42 tests in the
+capture, SDB transport and owner-client suites pass, including the reproduced
+closed-handshake case and preservation of its failure evidence.
+
+Next: run the updated pinned entrypoint. If it stops again, use `failedPhase`,
+`transportAttempts`, `debugFrames`/`pageListFrames` and the before/after relay
+summary to choose the next step. Do not treat a historical relay failure reason
+as proof of a current Developer Mode setting and do not repeat an uninstrumented
+debug attempt or reinstall either app.
+
 ## Objective and current evidence
 
 Restore Glass Home's owner-approved app list and app launch access, then finish
