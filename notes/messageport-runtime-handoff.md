@@ -1,3 +1,92 @@
+# Current checkpoint: input conflict, Glass replies and power-on inspection
+
+## Installed source and verified progress
+
+Installed Vetro remains `95098ef5a6f472f49a542d8737d291fd65d6168b`, candidate
+branch `combined/runtime-wrapper-observation-20261103`, all four CI jobs passed
+in run 41782387008. No application code has changed during this inspection.
+The private-storage screen bootstrap and browser pairing are hardware-confirmed.
+The TV screenshot reports service running, root connected and launcher running.
+The user subsequently reran full checks and reports TV APIs available.
+
+## Remote-input evidence
+
+The saved Smart Control 2016 binding pointed to event4, now an AUTO_MODE_DEVICE.
+Current same-name candidates were event6, event18 and event19. Vetro resolves
+by name and key capabilities, so the stale saved path alone does not identify
+the failure. The native log reported EVIOCGRAB on event6 failing with errno 16
+(EBUSY). A read-only process inspection found enlightenment and a Vetro-owned
+SamsungTvRemoteInputAgent.dll process with event6 open. The helper was in filter
+mode for Home code 63. An open descriptor is not proof of exclusive ownership.
+
+The inspection's escaping mangled displayed zeros and its final awk failed.
+The earlier read-only inspection did not modify a process. A guarded single-PID
+restart was prepared but NEVER DELIVERED OR EXECUTED: the user chose a cold boot
+instead. Do not reuse pre-boot process IDs. The post-boot input outcome has not
+been supplied yet.
+
+Current helper source AND packaged DLL already poll callback disconnect while
+input is idle and release evdev/uinput resources on return. No missing native
+watchdog was established. The current launcher never acquires EVIOCGRAB.
+Service lifecycle stop only cleans app communication; physical input/timer
+cleanup is a separate potential lifecycle gap, not a proven hardware cause.
+
+## Glass Home app permissions
+
+Glass Home branch `combined/vetro-permissions` remains
+`195e499e76ad4e9297c9962ce4347ad16bdb20be`. The user approved it in Vetro,
+then observed Checking Vetro followed by Vetro did not respond / saved app list.
+Refresh apps performs access.status followed by paginated apps.list. Its SDK
+times out after 15 seconds if no reply passes service-ID/port/framing checks.
+Approval is persisted server-side; this protocol issues no app credential.
+The shared service MessagePort reply path remains unresolved for external apps.
+Do not equate successful Vetro-screen HTTP pairing with Glass reply delivery.
+
+An asymmetric MessagePort-request / HMAC-authenticated HTTP-result protocol was
+reviewed ONLY AS A DESIGN. Nothing was implemented or published. Requests would
+retain native caller identity, installation/signer and scope checks; per-call
+CSPRNG IDs/secrets would authenticate exact response bytes without sending the
+secret over HTTP. Bounds, duplicate suppression, revocation invalidation, and
+no retry of uncertain mutations are required.
+
+A major feasibility issue remains: Glass already handles cross-package loopback
+isolation in app/service/vetro.js. Its own authenticated local-service proxy
+might be needed; direct widget-to-Vetro loopback is unverified. Its TV-local
+address fallback would need an explicit receiver policy. Do not implement or
+claim this design working without settling that path and its trust boundary.
+
+## Power-on inspection requested by user
+
+Confirmed in startup-app.js and main.js:
+- Startup requires the remote input policy to be connected AND in filter mode,
+  with input not paused. Missing or broken remote filtering can block startup.
+- Cold boot has 10 seconds from Linux uptime, not from service readiness.
+- Standby wake has 20 seconds; the monitor must settle for 1 second. Input restore
+  polls every 5 seconds and itself depends on root readiness.
+- Expiry consumes that power-on attempt; later root/input recovery does not
+  launch late. Remote/navigation/app/source guards also intentionally cancel.
+- The UI still describes 10 seconds for both cases, although wake uses 20.
+
+Executed the actual StartupApp class with an in-memory filesystem:
+first cold-boot observation at uptime 12 s, with root/monitor ready, yields
+zero launches and Skipped: power-on launch expired before Vetro was ready.
+Early boot with monitor unavailable yields zero launches and
+Skipped: power-on launch expired; remote activity monitoring was not ready.
+These reproduce code behavior; the TV's latest actual skip reason is pending.
+
+A suspected return-navigation command escaping defect was explicitly retracted:
+direct execution produces newline byte 10 and a matching PID header. No fix is
+needed on that evidence.
+
+Next: read authenticated GET /startup-app and GET /input together from the paired
+dashboard. Inspect lastResult, event.kind/phase/timing, current input policy and
+Home readiness. Establish whether cold boot cleared the input conflict and which
+guard skipped the latest startup before selecting a correction. Preserve the
+user-navigation protection and do not simply remove monitoring or add late
+unbounded retries. Glass replies remain outstanding alongside startup/return.
+
+## Previous checkpoints
+
 # Hardware milestone: screen authentication and browser pairing verified
 
 ## Current state
