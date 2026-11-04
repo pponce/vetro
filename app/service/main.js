@@ -141,11 +141,11 @@ function stopAppCommunication() {
     appReplies.clear();
     if (widgetBootstrap) { widgetBootstrap.stop(); widgetBootstrap = null; }
 }
-module.exports.onStart = function(){connectionDiagnostics.lifecycle('starts');startAppCommunication();};
-module.exports.onRequest = function(){connectionDiagnostics.lifecycle('requests');startAppCommunication();};
+module.exports.onStart = function(){connectionDiagnostics.lifecycle('starts');startAppCommunication();startInputLifecycle();};
+module.exports.onRequest = function(){connectionDiagnostics.lifecycle('requests');startAppCommunication();startInputLifecycle();};
 // TV Node services use onExit; other Tizen service runtimes use onStop.
-module.exports.onExit = function(){connectionDiagnostics.lifecycle('stops');stopAppCommunication();};
-module.exports.onStop = function(){connectionDiagnostics.lifecycle('stops');stopAppCommunication();};
+module.exports.onExit = function(){connectionDiagnostics.lifecycle('stops');stopInputLifecycle();stopAppCommunication();};
+module.exports.onStop = function(){connectionDiagnostics.lifecycle('stops');stopInputLifecycle();stopAppCommunication();};
 function developmentOnly() { return !tizenRuntime && platform.status().mode === 'app-only'; }
 
 
@@ -710,6 +710,7 @@ function remoteActivity() {
         sequence:remoteActivitySequence,lastAt:remoteActivityAt,generation:inputGeneration};
 }
 var physical=new PhysicalInput(agentExecute,function(event){
+    if(!inputLifecycleActive)return;
     noteRemoteActivity(event);
     if(event.action!=='down'||event.decision!=='blocked')return;
     if (homeRouting && homeRouting.busy) return;
@@ -717,9 +718,14 @@ var physical=new PhysicalInput(agentExecute,function(event){
     if(pendingActions>=8){inputPaused=true;physical.stop();inputError='input action queue exceeded';return;}
     noteReturnActions(actions);
     pendingActions++;
-    actionQueue=actionQueue.then(function(){return generation===inputGeneration?runActions(actions):{ok:true};}).then(function(r){inputError=r.launcherFallback||null;}).catch(function(e){inputError=e.message;inputPaused=true;physical.stop();}).finally(function(){pendingActions--;});
+    actionQueue=actionQueue.then(function(){return inputLifecycleActive&&generation===inputGeneration?runActions(actions):{ok:true};}).then(function(r){if(inputLifecycleActive&&generation===inputGeneration)inputError=r.launcherFallback||null;}).catch(function(e){if(inputLifecycleActive&&generation===inputGeneration){inputError=e.message;inputPaused=true;physical.stop();}}).finally(function(){pendingActions--;});
 });
-var inputObservers=[], inputPaused=false, inputRestoring=false, inputGeneration=0;
+var inputObservers=[], inputPaused=false, inputRestoring=false, inputGeneration=0, inputLifecycleActive=!tizenRuntime;
+function startInputLifecycle(){
+    if(inputLifecycleActive)return;
+    inputLifecycleActive=true;inputPaused=false;restoreInput();
+}
+function stopInputLifecycle(){inputLifecycleActive=false;stopInput();}
 function inputPreference(){var p=remapStore.input;return p&&p.enabled===true&&typeof p.device==='string'?p:{enabled:false};}
 function saveInputPreference(preference){
     var previous=remapStore.input;remapStore.input=preference;
@@ -743,11 +749,12 @@ var homeRouting = new HomeRouting.HomeRouting({
 });
 function inputTokens(){return HomeRouting.plan(remapStore).tokens;}
 function startInputPlan() {
+    if(!inputLifecycleActive)return Promise.reject(Error('Remote service is stopped'));
     var plan=HomeRouting.plan(remapStore), generation=inputGeneration;
     if (!plan.tokens.length) return Promise.resolve();
     if (!platform.status().agent.connected) return Promise.reject(Error('Root service is not ready. Home setup was not completed.'));
     return physical.inventory().then(function(list){
-        if(generation!==inputGeneration||inputPaused)throw Error('Remote setup cancelled');
+        if(!inputLifecycleActive||generation!==inputGeneration||inputPaused)throw Error('Remote setup cancelled');
         var candidates=list.filter(function(d){return d.selectable&&d.name===plan.remote.device;});
         var keyed=candidates.filter(hasRemoteKeys);
         var device=candidates.length===1?candidates[0]:keyed.length===1?keyed[0]:keyed.find(function(d){return d.node===plan.remote.node;})||null;
@@ -755,13 +762,20 @@ function startInputPlan() {
         return physical.start(device.node,'filter',plan.tokens);
     });
 }
-function applyInputPlan() { stopInput(); inputPaused=false; return startInputPlan().then(function(){inputError=null;}); }
-function restoreInput(){
-    if(inputPaused||inputRestoring||homeRouting.busy||physical.status().policy.connected||!platform.status().agent.connected||!inputTokens().length)return;
-    inputRestoring=true;
-    return startInputPlan().then(function(){inputError=null;}).catch(function(e){inputError=e.message;}).finally(function(){inputRestoring=false;});
+function applyInputPlan() {
+    stopInput();inputPaused=false;var generation=inputGeneration;
+    return startInputPlan().then(function(){
+        if(!inputLifecycleActive||generation!==inputGeneration)throw Error('Remote setup cancelled');
+        inputError=null;
+    });
 }
-function stopInput(){++inputGeneration;inputObservers.forEach(function(b){b.stop();});inputObservers=[];physical.stop();}
+function restoreInput(){
+    if(!inputLifecycleActive||inputPaused||inputRestoring||homeRouting.busy||physical.status().policy.connected||!platform.status().agent.connected||!inputTokens().length)return;
+    var generation=inputGeneration;
+    inputRestoring=true;
+    return startInputPlan().then(function(){if(inputLifecycleActive&&generation===inputGeneration)inputError=null;}).catch(function(e){if(inputLifecycleActive&&generation===inputGeneration)inputError=e.message;}).finally(function(){if(generation===inputGeneration)inputRestoring=false;});
+}
+function stopInput(){++inputGeneration;inputRestoring=false;inputObservers.forEach(function(b){b.stop();});inputObservers=[];physical.stop();}
 
 function inputSnapshot(){
     if(!inputObservers.length)return Object.assign({},physical.status(),{preference:inputPreference()});
@@ -772,7 +786,10 @@ function inputSnapshot(){
 }
 function handleInput(req,res){
     if(req.method==='GET')return physical.inventory().then(function(list){serveJson(res,{devices:list,status:inputSnapshot(),home:homeRouting.status(),error:inputError});}).catch(function(e){serveJson(res,{devices:[],status:inputSnapshot(),error:e.message});});
+    if(!inputLifecycleActive)return serveJson(res,{error:'Remote service is stopped'},503);
+    var bodyGeneration=inputGeneration;
     readJsonBody(req,res,function(p){
+        if(!inputLifecycleActive||bodyGeneration!==inputGeneration)return serveJson(res,{ok:false,error:'Remote setup cancelled'},503);
         if(!p||typeof p.mode!=='string')return serveJson(res,{error:'Input mode required'},400);
         if(homeRouting.busy)return serveJson(res,{error:'A remote shortcut change is already in progress'},409);
         var tokens=remapStore.rules.filter(function(r){return r.enabled&&r.trigger.type==='physical';}).map(function(r){return r.trigger.value;});
@@ -784,8 +801,9 @@ function handleInput(req,res){
                 try { saveInputPreference(Object.assign({},remapStore.input,{enabled:false})); }
                 catch(e){remapStore.home=previousHome;throw e;}
             } } catch(e){return serveJson(res,{ok:false,error:e.message},503);}
-            return applyInputPlan().then(function(){serveJson(res,{ok:true,persisted:true,status:inputSnapshot()});})
-                .catch(function(e){inputError=e.message;serveJson(res,{ok:false,error:e.message,status:inputSnapshot()},503);});
+            var applying=applyInputPlan(), resumeGeneration=inputGeneration;
+            return applying.then(function(){serveJson(res,{ok:true,persisted:true,status:inputSnapshot()});})
+                .catch(function(e){if(inputLifecycleActive&&resumeGeneration===inputGeneration)inputError=e.message;serveJson(res,{ok:false,error:e.message,status:inputSnapshot()},503);});
         }
         var home=HomeRouting.binding(remapStore), homeRule=HomeRouting.rule(remapStore);
         if(p.mode==='filter'&&home&&homeRule&&homeRule.enabled&&p.device!==home.node&&p.device!==home.device)return serveJson(res,{error:'Select the remote assigned to Home, or detect Home on the new remote first'},409);
@@ -793,20 +811,23 @@ function handleInput(req,res){
         if(p.mode==='filter'&&p.device==='auto')return serveJson(res,{error:'select the detected node before intercepting'},400);
         inputPaused=true;
         if(p.mode==='observe'&&p.device==='auto'){
-            stopInput();return physical.inventory().then(function(list){
+            stopInput();var observerGeneration=inputGeneration;return physical.inventory().then(function(list){
+                if(!inputLifecycleActive||observerGeneration!==inputGeneration)throw Error('Remote setup cancelled');
                 var candidates=list.filter(function(d){return d.selectable;});
                 if(!candidates.length)throw new Error('no physical remote devices found');
                 inputObservers=candidates.map(function(){return new PhysicalInput(agentExecute,noteRemoteActivity);});
                 return Promise.all(candidates.map(function(d,i){return inputObservers[i].start(d.node,'observe',[]).catch(function(e){return {error:e.message};});}));
-            }).then(function(){var s=inputSnapshot();if(!s.policy.connected)throw new Error(s.error||'input helpers unavailable');serveJson(res,{ok:true,status:s});})
-            .catch(function(e){stopInput();serveJson(res,{ok:false,error:e.message},503);});
+            }).then(function(){if(!inputLifecycleActive||observerGeneration!==inputGeneration)throw Error('Remote setup cancelled');var s=inputSnapshot();if(!s.policy.connected)throw new Error(s.error||'input helpers unavailable');serveJson(res,{ok:true,status:s});})
+            .catch(function(e){if(observerGeneration===inputGeneration)stopInput();serveJson(res,{ok:false,error:e.message},503);});
         }
         if(p.device==='auto')return serveJson(res,{error:'select the detected node before intercepting'},400);
-        stopInput();
+        stopInput();var requestGeneration=inputGeneration;
         physical.start(p.device,p.mode,tokens).then(function(status){
+            if(!inputLifecycleActive||requestGeneration!==inputGeneration)throw Error('Remote setup cancelled');
             if(p.mode==='filter'){saveInputPreference({enabled:true,device:status.policy.device,node:status.policy.node});inputPaused=false;}
             serveJson(res,{ok:true,persisted:p.mode==='filter',status:inputSnapshot()});
         }).catch(function(e){
+            if(!inputLifecycleActive||requestGeneration!==inputGeneration)return serveJson(res,{ok:false,error:e.message},503);
             physical.stop();
             if(p.mode!=='filter')return serveJson(res,{ok:false,error:e.message},503);
             return applyInputPlan().then(function(){serveJson(res,{ok:false,error:e.message,status:inputSnapshot()},503);})
