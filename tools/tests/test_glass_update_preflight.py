@@ -1,0 +1,95 @@
+"""Run the shipped SSH block's HTTP preflight against an actual local server."""
+import ast
+import contextlib
+import http.server
+import json
+from pathlib import Path
+import re
+import subprocess
+import threading
+import unittest
+import urllib.error
+
+NOTE = Path(__file__).parents[2] / 'notes/permissions-reply-startup-handoff.md'
+BLOCK = re.search(r'### 2\. Update Glass Home.*?```bash\n(.*?)\n```', NOTE.read_text(), re.S).group(1)
+SOURCE = re.search(r"python3 - <<'PYGLASS'\n(.*?)\nPYGLASS", BLOCK, re.S).group(1)
+NODES = ast.parse(SOURCE).body
+SELECTED = [n for n in NODES if isinstance(n, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef)) or
+            isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'opener' for t in n.targets)]
+ENV = {}
+exec(compile(ast.Module(body=SELECTED, type_ignores=[]), str(NOTE), 'exec'), ENV)
+REVISION = 'fc0b236878a2249906edf774888f5a39f46842c0'
+
+
+@contextlib.contextmanager
+def endpoint(status, body):
+    requests = []
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(dict(self.headers))
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            if status == 302:
+                self.send_header('Location', '/elsewhere')
+            self.end_headers()
+            self.wfile.write(body if isinstance(body, bytes) else json.dumps(body).encode())
+        def log_message(self, *_):
+            pass
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield 'http://127.0.0.1:' + str(server.server_port) + '/status', requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+class PreflightTests(unittest.TestCase):
+    def evidence(self):
+        return {'error': 'Pair this device first', 'connectionDiagnostics': {
+            'sourceRevision': REVISION, 'sourceDirty': False,
+            'screen': {'sourceRevision': REVISION, 'serviceAuthenticated': True}}}
+
+    def test_diagnostic_401_is_evidence_not_owner_authorization(self):
+        for status in (200, 401):
+            with self.subTest(status=status), endpoint(status, self.evidence()) as (url, requests):
+                ENV['verify_vetro_status'](url)
+                self.assertEqual(len(requests), 1)
+                self.assertNotIn('Authorization', requests[0])
+        with endpoint(401, self.evidence()) as (url, _):
+            with self.assertRaises(urllib.error.HTTPError):
+                ENV['read_json'](url)  # GitHub and other reads never accept 401.
+
+    def test_other_status_and_redirect_do_not_pass(self):
+        for status in (202, 302, 403, 503):
+            with self.subTest(status=status), endpoint(status, self.evidence()) as (url, requests):
+                with self.assertRaises((RuntimeError, urllib.error.HTTPError)):
+                    ENV['verify_vetro_status'](url)
+                self.assertEqual(len(requests), 1)
+
+    def test_bad_or_unverified_evidence_does_not_pass(self):
+        variants = [{}, [], {'connectionDiagnostics': []}, {'connectionDiagnostics': {'screen': []}}]
+        for field, value in [('sourceRevision', '0' * 40), ('sourceDirty', True), ('sourceDirty', 0)]:
+            item = self.evidence(); item['connectionDiagnostics'][field] = value; variants.append(item)
+        for field, value in [('sourceRevision', '0' * 40), ('serviceAuthenticated', False), ('serviceAuthenticated', 1)]:
+            item = self.evidence(); item['connectionDiagnostics']['screen'][field] = value; variants.append(item)
+        for body in variants + [b'not json', b' ' * 2097153]:
+            with self.subTest(body=str(body)[:80]), endpoint(401, body) as (url, _):
+                with self.assertRaises((RuntimeError, ValueError)):
+                    ENV['verify_vetro_status'](url)
+
+    def test_complete_shell_block_keeps_ssh_session_and_report_arguments(self):
+        result = subprocess.run(['bash', '-n'], input=BLOCK, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(BLOCK.startswith('{\n'))
+        self.assertTrue(BLOCK.endswith('\n}'))
+        self.assertNotRegex(BLOCK, r'\bexit\b|set -e')
+        self.assertIn('--report-host', BLOCK)
+        self.assertIn('pedro@192.168.84.2', BLOCK)
+        self.assertGreater(BLOCK.index('=== Glass Home authenticated reply update END ==='), BLOCK.index('\nPYGLASS'))
+
+
+if __name__ == '__main__':
+    unittest.main()
