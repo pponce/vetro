@@ -1,10 +1,23 @@
 """Bounded, read-only process/socket evidence for Vetro input diagnostics."""
+import base64
 import re
 
 
 def command(service_pid):
     if not isinstance(service_pid, int) or isinstance(service_pid, bool) or not 1 <= service_pid <= 2147483647:
         raise ValueError('A valid current service PID is required')
+    return _shell_envelope(_script(service_pid))
+
+
+def _shell_envelope(script):
+    # Older native agents double backslashes when constructing ProcessStartInfo
+    # arguments. Send an ASCII payload without backslashes, then decode it for
+    # sh so awk/tr/printf receive the intended bytes. No TV file is written.
+    encoded = base64.b64encode(script.encode('utf-8')).decode('ascii')
+    return "printf '%s' '" + encoded + "' | base64 -d | /bin/sh"
+
+
+def _script(service_pid):
     return r'''printf 'VETRO_INPUT_AUDIT|1\nSERVICE|__SERVICE_PID__\n'
 probe_seen=0
 probe_ids=':__SERVICE_PID__:'
@@ -101,6 +114,8 @@ def summarize(result):
     data = result if isinstance(result, dict) else {}
     text = data.get('output', '')
     out = {'complete': False, 'coverage': 'best-effort-non-atomic', 'currentServicePid': None, 'processes': [], 'helpers': [], 'launchers': [], 'tcp': [], 'limits': [],
+           'execExitCode': data.get('exit_code') if type(data.get('exit_code')) is int else None,
+           'timedOut': data.get('timed_out') is True, 'stderrPresent': bool(data.get('stderr')),
            'limitation': 'Complete means the bounded collection finished, not that every process was readable. Exited or unreadable /proc entries may be absent. Open input file descriptors do not prove which process holds an exclusive EVIOCGRAB; absent socket ownership is not proof that no connection exists.'}
     if not isinstance(text, str) or len(text.encode('utf-8')) > 65536:
         out['limits'].append('output-unavailable-or-too-large')

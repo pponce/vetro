@@ -1,8 +1,11 @@
 import importlib.util
+import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
@@ -27,10 +30,88 @@ def fixture(base=None, owner=None, base_rc=0, owner_rc=0, complete=True, stderr=
     return {'exit_code': 0, 'timed_out': False, 'output': '\n'.join(output), 'stderr': stderr}
 
 
+def old_agent_command(command):
+    # QuoteArgument in the installed SamsungTvRootAgent.cs, followed by the
+    # single-argument rules from dotnet/runtime v6.0.0 Process.Unix.cs
+    # GetNextArgument (lines 853-928). Only slashes before a quote are halved.
+    text = '"' + command.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    result, position, in_quotes = [], 0, False
+    while position < len(text):
+        count = 0
+        while position < len(text) and text[position] == '\\':
+            count += 1
+            position += 1
+        if count:
+            if position == len(text) or text[position] != '"':
+                result.append('\\' * count)
+            else:
+                result.append('\\' * (count // 2))
+                if count % 2:
+                    result.append('"')
+                    position += 1
+            continue
+        character = text[position]
+        if character == '"':
+            if in_quotes and position + 1 < len(text) and text[position + 1] == '"':
+                result.append('"')
+                position += 1
+            else:
+                in_quotes = not in_quotes
+        else:
+            result.append(character)
+        position += 1
+    return ''.join(result)
+
+
 class DiagnosticTests(unittest.TestCase):
+    def test_shell_through_installed_argument_quoting_preserves_framing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            fake_sqlite = directory / 'sqlite3'
+            rows = [['base', M.TARGET, 'GlassHome1', 'wgt', 'uiapp', 'false', 'true', '1.0', 'false', 'false', 'false']]
+            rows += [['base', 'private.app' + str(i), 'private.package' + str(i), 'wgt', 'uiapp', 'false', 'true', '1', 'false', 'false', 'false'] for i in range(585)]
+            fake_sqlite.write_text('#!' + sys.executable + '\nprint(' + repr('\n'.join(encoded(row) for row in rows)) + ')\n')
+            fake_sqlite.chmod(0o700)
+            command = M.registry_command(5001).replace('/opt/dbspace/user/5001/.pkgmgr_parser.db', str(directory / 'absent-owner.db'))
+            self.assertNotIn('\\', command)
+            old = command.replace("\n'", "\\n'")
+            env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ.get('PATH', ''))
+            def execute(source):
+                result = subprocess.run(['sh', '-c', old_agent_command(source)], text=True, capture_output=True, env=env, timeout=10)
+                return M.parse_registry({'exit_code': result.returncode, 'timed_out': False, 'output': result.stdout, 'stderr': result.stderr})
+            broken = execute(old)
+            self.assertEqual(broken['unexpectedRows'], 587)
+            self.assertEqual(broken['invalidHexRows'], 0)
+            self.assertEqual(broken['base']['rows'], 0)
+            self.assertFalse(broken['diagnosticComplete'])
+            self.assertFalse(broken['completionMarker'])
+            self.assertIn('base_result_unavailable', broken['readerRejectionReasons'])
+            self.assertNotIn('base_query_failed', broken['readerRejectionReasons'])
+            fixed = execute(command)
+            self.assertTrue(fixed['diagnosticComplete'], fixed)
+            self.assertTrue(fixed['completionMarker'])
+            self.assertTrue(fixed['sourceReaderFactsAccepted'])
+            self.assertEqual(fixed['base']['rows'], 586)
+            self.assertEqual(fixed['target']['rows'], 1)
+            self.assertEqual(fixed['base']['exitCode'], 0)
+            self.assertEqual(fixed['owner']['exitCode'], 0)
+            self.assertNotIn('private.app', json.dumps(fixed))
+
     def test_exact_service_queries(self):
-        script = "process.getuid=()=>5001;require('./app/service/app-permission-registry').load(c=>{console.log(c);return Promise.reject(Error());}).catch(()=>{});"
-        result = subprocess.run(['node', '-e', script], cwd=TOOLS.parent, text=True, capture_output=True, check=True)
+        # Host-tool branches need not contain the application candidate. Execute
+        # the immutable installed source fixture instead of silently testing a
+        # different checkout's SQL. No network is needed by this regression.
+        fixture = json.loads((TOOLS / 'tests/fixtures/permission-registry-fc0.json').read_text())
+        self.assertEqual(fixture['revision'], 'fc0b236878a2249906edf774888f5a39f46842c0')
+        self.assertEqual(hashlib.sha256(fixture['source'].encode()).hexdigest(), fixture['sha256'])
+        script = """const fs=require('fs'),vm=require('vm');
+const source=JSON.parse(fs.readFileSync(0,'utf8')).source;
+const sandbox={module:{exports:{}},process:{getuid:()=>5001},require:()=>({}),Buffer};
+vm.runInNewContext(source,sandbox);
+sandbox.module.exports.load(c=>{console.log(c);return Promise.reject(Error());}).catch(()=>{});
+"""
+        result = subprocess.run(['node', '-e', script], input=json.dumps(fixture), cwd=TOOLS.parent,
+                                text=True, capture_output=True, check=True)
         for sql in M.registry_sql(5001):
             self.assertIn(sql, result.stdout)
             self.assertIn(sql, M.registry_command(5001))

@@ -12,6 +12,41 @@ audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
 
 
+def installed_agent_shell_argument(command):
+    # Model SamsungTvRootAgent.QuoteArgument plus .NET 6 Process.Unix.cs
+    # GetNextArgument. In particular, ordinary backslashes remain literal;
+    # only runs immediately before a double quote have special treatment.
+    argument = '"' + command.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    index, quoted, result = 0, False, []
+    while index < len(argument):
+        count = 0
+        while index < len(argument) and argument[index] == '\\':
+            index += 1
+            count += 1
+        if count:
+            if index == len(argument) or argument[index] != '"':
+                result.append('\\' * count)
+            else:
+                result.append('\\' * (count // 2))
+                if count % 2:
+                    result.append('"')
+                    index += 1
+            continue
+        value = argument[index]
+        if value == '"':
+            if quoted and index + 1 < len(argument) and argument[index + 1] == '"':
+                result.append('"')
+                index += 1
+            else:
+                quoted = not quoted
+        elif value in ' \t' and not quoted:
+            raise AssertionError('Command unexpectedly split into multiple arguments')
+        else:
+            result.append(value)
+        index += 1
+    return ''.join(result)
+
+
 class InputAuditTests(unittest.TestCase):
     def test_real_shell_fake_proc_correlates_services_and_masks_arguments(self):
         with tempfile.TemporaryDirectory(prefix='.input-audit-', dir=Path(__file__).parent) as temporary:
@@ -49,7 +84,15 @@ class InputAuditTests(unittest.TestCase):
                                           tcp(903, 8099, 0, '0A', '00000000', '00000000') +
                                           tcp(905, 5000, 0, '0A', remote_address='00000000') + tcp(906, 5000, 44001) + tcp(907, 44001, 5000))
             (proc / 'net/tcp6').write_text('header\n')
-            result = subprocess.run(['sh', '-c', audit.command(42).replace('/proc', str(proc))], capture_output=True, text=True, timeout=10)
+            script = audit._script(42).replace('/proc', str(proc))
+            broken = subprocess.run(['sh', '-c', installed_agent_shell_argument(script)], capture_output=True, text=True, timeout=10)
+            self.assertEqual(broken.returncode, 0, broken.stderr)
+            self.assertIn('VETRO_INPUT_AUDIT|1\\nSERVICE|42\\n', broken.stdout)
+            self.assertFalse(audit.summarize({'exit_code': 0, 'output': broken.stdout})['complete'])
+            envelope = audit._shell_envelope(script)
+            self.assertNotIn('\\', envelope)
+            self.assertEqual(installed_agent_shell_argument(envelope), envelope)
+            result = subprocess.run(['sh', '-c', installed_agent_shell_argument(envelope)], capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stderr, '')
             self.assertNotIn('SECRET', result.stdout)
@@ -69,6 +112,14 @@ class InputAuditTests(unittest.TestCase):
             self.assertEqual(sorted(input_processes), [99, 100, 101])
             self.assertTrue(all(item['startTicks'] == 12345 for item in report['processes']))
             self.assertNotIn('SECRET', json.dumps(report))
+
+    def test_envelope_preserves_printf_and_null_record_delimiters(self):
+        script = r"printf 'Smart Control 2016\000Second\000' | tr '\000' '\n'"
+        broken = subprocess.run(['sh', '-c', installed_agent_shell_argument(script)], capture_output=True, text=True, check=True)
+        self.assertNotEqual(broken.stdout, 'Smart Control 2016\nSecond\n')
+        fixed = subprocess.run(['sh', '-c', installed_agent_shell_argument(audit._shell_envelope(script))], capture_output=True, text=True, check=True)
+        self.assertEqual(fixed.stdout, 'Smart Control 2016\nSecond\n')
+        self.assertLess(len(audit.command(42).encode()), 65536)
 
     def test_partial_and_malformed_output_never_becomes_complete(self):
         for value in [None, True, -1, 0, '12; kill', 2147483648]:

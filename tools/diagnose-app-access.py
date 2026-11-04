@@ -38,32 +38,34 @@ def registry_command(uid):
     base, owner = registry_sql(uid)
     owner_file = '/opt/dbspace/user/' + str(uid) + '/.pkgmgr_parser.db'
     # Identical read-only SQL and optional-file semantics to the service reader.
-    # Extra fixed delimiters identify stages without writing a TV file.
+    # Extra fixed delimiters identify stages without writing a TV file. Keep
+    # literal newlines in printf formats: the installed agent's Arguments
+    # quoting doubles backslashes before the shell receives this command.
     return '\n'.join([
-        "printf '%s\\n' '" + PREFIX + "|base|start'",
-        "printf '%s\\n' '" + PREFIX + "|base' >&2",
+        "printf '%s\n' '" + PREFIX + "|base|start'",
+        "printf '%s\n' '" + PREFIX + "|base' >&2",
         'vetro_diag_started=$(date +%s)',
         'sqlite3 -readonly "/opt/dbspace/.pkgmgr_parser.db" "' + base + '"',
         'vetro_diag_base_rc=$?',
         'vetro_diag_base_seconds=$(($(date +%s)-vetro_diag_started))',
-        "printf '%s|base|end|%s|%s\\n' '" + PREFIX + "' \"$vetro_diag_base_rc\" \"$vetro_diag_base_seconds\"",
-        "printf '%s\\n' '" + PREFIX + "|owner|start'",
-        "printf '%s\\n' '" + PREFIX + "|owner' >&2",
+        "printf '%s|base|end|%s|%s\n' '" + PREFIX + "' \"$vetro_diag_base_rc\" \"$vetro_diag_base_seconds\"",
+        "printf '%s\n' '" + PREFIX + "|owner|start'",
+        "printf '%s\n' '" + PREFIX + "|owner' >&2",
         'vetro_diag_started=$(date +%s)',
         'vetro_diag_owner_rc=0',
         'if [ -e "' + owner_file + '" ] || [ -L "' + owner_file + '" ]; then',
-        "printf '%s\\n' '" + PREFIX + "|owner|present'",
+        "printf '%s\n' '" + PREFIX + "|owner|present'",
         'sqlite3 -readonly "' + owner_file + '" "' + owner + '"',
         'vetro_diag_owner_rc=$?',
         'else',
-        "printf '%s\\n' '" + PREFIX + "|owner|absent'",
+        "printf '%s\n' '" + PREFIX + "|owner|absent'",
         'fi',
         'vetro_diag_owner_seconds=$(($(date +%s)-vetro_diag_started))',
-        "printf '%s|owner|end|%s|%s\\n' '" + PREFIX + "' \"$vetro_diag_owner_rc\" \"$vetro_diag_owner_seconds\"",
+        "printf '%s|owner|end|%s|%s\n' '" + PREFIX + "' \"$vetro_diag_owner_rc\" \"$vetro_diag_owner_seconds\"",
         'if [ "$vetro_diag_base_rc" -eq 0 ] && [ "$vetro_diag_owner_rc" -eq 0 ]; then',
-        "printf '%s\\n' 636f6d706c657465",
+        "printf '%s\n' 636f6d706c657465",
         'fi',
-        "printf '%s\\n' '" + PREFIX + "|done'",
+        "printf '%s\n' '" + PREFIX + "|done'",
     ])
 
 
@@ -176,7 +178,9 @@ def parse_registry(result):
     if any(report[key] for key in ('invalidHexRows', 'wrongFieldCountRows', 'unexpectedRows')):
         reasons.append('invalid_output_framing')
     for stage in ('base', 'owner'):
-        if report[stage].get('exitCode') != 0:
+        if report[stage].get('exitCode') is None:
+            reasons.append(stage + '_result_unavailable')
+        elif report[stage]['exitCode'] != 0:
             reasons.append(stage + '_query_failed')
         if report[stage]['duplicateAppIds'] or report[stage]['invalidAppIds']:
             reasons.append(stage + '_invalid_or_duplicate_app_ids')

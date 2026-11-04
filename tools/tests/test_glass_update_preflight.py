@@ -2,6 +2,7 @@
 import ast
 import contextlib
 import http.server
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -94,18 +95,33 @@ class PreflightTests(unittest.TestCase):
         self.assertGreater(BLOCK.index('=== Glass Home authenticated reply update END ==='), BLOCK.index('\nPYGLASS'))
 
     def test_full_block_collects_before_install_and_refuses_changed_helper(self):
-        # Run the exact shipped Python with only its project root and external
-        # effects replaced. All four on-disk helper hashes are checked for real.
+        # Run the shipped Python with external effects and artifact inputs
+        # replaced. Historical pinned files are independent of this branch's
+        # current sources; real SHA-256 checks still reject changed fixture bytes.
+        names = ('install-glass-permissions.py', 'vetro_owner.py', 'diagnose-app-access.py', 'app_access_input_audit.py')
+        sources = {name: ('# controlled test artifact: ' + name + '\n').encode() for name in names}
+        file_assignment = next(n for n in ast.walk(ast.parse(SOURCE)) if isinstance(n, ast.Assign)
+                               and any(isinstance(t, ast.Name) and t.id == 'files' for t in n.targets))
+        self.assertEqual({key.value for key in file_assignment.value.keys}, set(names))
+        for value in file_assignment.value.values:
+            self.assertRegex(value.elts[1].value, r'^[a-f0-9]{64}$')
+        fixture_files = {name: ('f' * 40, hashlib.sha256(source).hexdigest()) for name, source in sources.items()}
+        class ArtifactInputs(ast.NodeTransformer):
+            def visit_Assign(self, node):
+                if any(isinstance(t, ast.Name) and t.id == 'files' for t in node.targets):
+                    node.value = ast.copy_location(ast.Name(id='fixture_files', ctx=ast.Load()), node.value)
+                return node
         nodes = [n for n in ast.parse(SOURCE).body if not (
             isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'project' for t in n.targets))]
-        code = compile(ast.Module(body=nodes, type_ignores=[]), str(NOTE), 'exec')
+        module = ArtifactInputs().visit(ast.Module(body=nodes, type_ignores=[]))
+        code = compile(ast.fix_missing_locations(module), str(NOTE), 'exec')
         for tampered in (False, True):
             with self.subTest(tampered=tampered), tempfile.TemporaryDirectory() as temporary:
                 project = Path(temporary)
                 directory = project / 'vetro-install/bin/permissions-recovery-160d3b7f8921'
                 directory.mkdir(parents=True)
-                for name in ('install-glass-permissions.py', 'vetro_owner.py', 'diagnose-app-access.py', 'app_access_input_audit.py'):
-                    (directory / name).write_bytes((NOTE.parents[1] / 'tools' / name).read_bytes())
+                for name, source in sources.items():
+                    (directory / name).write_bytes(source)
                 if tampered:
                     (directory / 'vetro_owner.py').write_text('changed')
                 calls = []
@@ -127,7 +143,7 @@ class PreflightTests(unittest.TestCase):
                         report.write_text('{}')
                 output = io.StringIO()
                 with mock.patch('urllib.request.build_opener', return_value=opener), mock.patch('subprocess.run', side_effect=run), contextlib.redirect_stdout(output):
-                    exec(code, {'project': project})
+                    exec(code, {'project': project, 'fixture_files': fixture_files})
                 if tampered:
                     self.assertEqual(calls, [])
                     self.assertIn('Helper checksum mismatch', output.getvalue())
