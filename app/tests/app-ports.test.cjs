@@ -2,12 +2,19 @@
 const assert=require('assert').strict,fixture=require('./app-access-fixture.cjs'),{start,APP_PORT,WIDGET_PORT}=require('../service/app-ports'),Client=require('../service/app-access-client');
 (async()=>{const f=fixture();try{const ports={},received=[];let issuing=0;
  function port(name,trusted){return ports[name]={messagePortName:name,isTrusted:trusted,addMessagePortListener(fn){this.callback=fn;return 1;},removeMessagePortListener(){}};}
- f.tizen.messageport={requestLocalMessagePort:n=>port(n,false),requestTrustedLocalMessagePort:n=>port(n,true)};
+ function outbound(appId,name){assert.equal(name,'CLIENT_REPLY');return {sendMessage(data,p){received.push({appId,p,data:JSON.parse(data[0].value)});}};}
+ f.tizen.messageport={requestLocalMessagePort:n=>port(n,false),requestTrustedLocalMessagePort:n=>port(n,true),requestRemoteMessagePort:outbound,requestTrustedRemoteMessagePort:outbound};
  const started=start(f.tizen,f.access,{issueWidget(){issuing++;return {token:'secret'};}});assert.equal(f.access.transport.available,true);await f.approve();
  const msg=(id,method,params={})=>[{key:'json',value:JSON.stringify({version:1,id,method,params})}];
- const remote={appId:'garage.app',sendMessage(data,p){received.push({p,data:JSON.parse(data[0].value)});}};
+ const remote={appId:'garage.app',messagePortName:'CLIENT_REPLY',isTrusted:false,sendMessage(){throw Error('Callback sends must not be used');}};
  ports[APP_PORT].callback(msg('1','apps.list'),remote);await new Promise(r=>setImmediate(r));assert.equal(received.pop().data.ok,true);
  ports[APP_PORT].callback(msg('2','apps.list',{appId:'garage.app'}),{...remote,appId:'imposter.app'});await new Promise(r=>setImmediate(r));assert.equal(received.pop().data.ok,false);
+ const call=f.access.call;let dispatches=0;f.access.call=function(){dispatches++;return call.apply(this,arguments);};
+ for(const fields of [{appId:undefined},{appId:''},{messagePortName:undefined},{messagePortName:''},{isTrusted:undefined},{isTrusted:'false'},{sendMessage:undefined}]) {
+  ports[APP_PORT].callback(msg('bad-app','access.request',{scopes:['apps.read']}),{...remote,...fields});
+  ports[WIDGET_PORT].callback(msg('bad-widget','widget.connect'),{...remote,appId:'vetrotvapp.app',...fields});
+ }
+ assert.equal(dispatches,0,'incomplete callback metadata never reaches app access');
  for(const r of [{...remote,appId:'garage.app',isTrusted:true},{...remote,appId:'garage.app',isTrusted:false},{...remote,appId:'vetrotvapp.app',isTrusted:null},null])ports[WIDGET_PORT].callback(msg('3','widget.connect'),r);assert.equal(issuing,0);
  ports[WIDGET_PORT].callback(msg('4','widget.connect'),{...remote,appId:'vetrotvapp.app',isTrusted:true});assert.equal(issuing,1);assert.equal(received.pop().data.result.token,'secret');
  const forged=JSON.parse(msg('5','apps.list')[0].value);forged.appId='garage.app';ports[APP_PORT].callback([{key:'json',value:JSON.stringify(forged)}],remote);assert.equal(received.length,0);

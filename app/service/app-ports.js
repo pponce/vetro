@@ -5,6 +5,11 @@ var MAX_REQUEST=4096,MAX_RESPONSE=16384;
 function start(tizen,access,auth,diagnostics) {
     var local,internal,widgetReply,listener,widgetListener,widgetReplyListener,watching=false,widgetStage='port-create';
     function trace(stage,error) { if(diagnostics)diagnostics.widget(stage,error); }
+    function hasReplyTarget(remote) {
+        return remote && typeof remote.appId==='string' && remote.appId.length>0 &&
+            typeof remote.messagePortName==='string' && remote.messagePortName.length>0 &&
+            typeof remote.isTrusted==='boolean' && typeof remote.sendMessage==='function';
+    }
     function decode(data) {
         if (!Array.isArray(data) || data.length!==1 || data[0].key!=='json' || typeof data[0].value!=='string' || Buffer.byteLength(data[0].value)>MAX_REQUEST) throw Error('Invalid app request');
         var p=JSON.parse(data[0].value);
@@ -20,7 +25,13 @@ function start(tizen,access,auth,diagnostics) {
         var encoded=JSON.stringify(message);
         if(Buffer.byteLength(encoded)>MAX_RESPONSE)encoded=JSON.stringify({version:1,id:p.id,ok:false,error:{code:'limit',message:'Response is too large. Request a smaller page.'}});
         try {
-            remote.sendMessage([{key:'json',value:encoded}],port);
+            // Use the public outbound factory so the service runtime handles its
+            // local-port objects. The validated callback supplies the destination;
+            // outbound wrappers need not expose the callback's identity properties.
+            var method=remote.isTrusted?'requestTrustedRemoteMessagePort':'requestRemoteMessagePort';
+            var outbound=tizen.messageport[method](remote.appId,remote.messagePortName);
+            if(!outbound||typeof outbound.sendMessage!=='function')throw Error('Reply port unavailable');
+            outbound.sendMessage([{key:'json',value:encoded}],port);
             if(port===internal||port===widgetReply)trace('reply-sent');
         } catch (error) {
             if(port===internal||port===widgetReply) {
@@ -39,7 +50,7 @@ function start(tizen,access,auth,diagnostics) {
         listener=local.addMessagePortListener(function(data,remote){
             var p;
             try {
-                if (!remote || typeof remote.sendMessage!=='function' || typeof remote.appId!=='string') return;
+                if (!hasReplyTarget(remote)) return;
                 p=decode(data);
                 if(p.method==='access.request' && Object.keys(p.params).some(function(k){return k!=='scopes';}) ||
                    p.method==='access.status' && Object.keys(p.params).length) throw Error('Invalid app request');
@@ -72,8 +83,7 @@ function start(tizen,access,auth,diagnostics) {
             try {
                 // The receiving port enforces the signer. remote.isTrusted describes
                 // the sender's reply port, which may be regular without changing identity.
-                if(!remote||remote.appId!=='vetrotvapp.app'||typeof remote.isTrusted!=='boolean'||
-                    typeof remote.sendMessage!=='function'){trace('sender-rejected');return;}
+                if(!hasReplyTarget(remote)||remote.appId!=='vetrotvapp.app'){trace('sender-rejected');return;}
                 replyPort=remote.isTrusted?internal:widgetReply;
                 try { p=decode(data); } catch(error) { trace('frame-rejected',error);return; }
                 if(diagnostics&&typeof diagnostics.consume==='function'&&diagnostics.consume(p,remote))return;

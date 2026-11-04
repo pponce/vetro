@@ -9,7 +9,10 @@ const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-
   c.inventory=async()=>({apps:f.rows});
   server=http.createServer(router);await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
   async function api(route,body,headers={}){const r=await fetch(base+route,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...headers},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json()};}
-  function ipc(port,appId,method,params={},trusted=false){return new Promise(resolve=>callbacks[port]([{key:'json',value:JSON.stringify({version:1,id:'http_test',method,params})}],{appId,isTrusted:trusted,sendMessage(data){resolve(JSON.parse(data[0].value));}}));}
+  function ipc(port,appId,method,params={},trusted=false){return new Promise(resolve=>{
+   f.tizen.messageport[trusted?'requestTrustedRemoteMessagePort':'requestRemoteMessagePort']=(id,name)=>{assert.equal(id,appId);assert.equal(name,'CLIENT_REPLY');return {sendMessage(data){resolve(JSON.parse(data[0].value));}};};
+   callbacks[port]([{key:'json',value:JSON.stringify({version:1,id:'http_test',method,params})}],{appId,messagePortName:'CLIENT_REPLY',isTrusted:trusted,sendMessage(){throw Error('Callback sends must not be used');}});
+  });}
   for(const route of ['/startup-app','/return-app','/dock','/remap','/app-access','/exec','/probe','/screen','/status','/monitor','/control','/install','/diagnostics/download'])assert.equal((await api(route)).status,401,route);
   const widget=await ipc(ports.WIDGET_PORT,'vetrotvapp.app','widget.connect',{},false);assert.equal(widget.ok,true);const wh={'X-Vetro-Widget':widget.result.token,Origin:'null'};
   assert.equal((await api('/app-access',undefined,wh)).status,403);assert.equal((await api('/status',undefined,wh)).status,200);
@@ -41,3 +44,4 @@ const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-
   console.log('PASS real HTTP router + MessagePort: closed owner API, widget handshake, pairing, approval, scoped app reads and immediate revocation');
  }finally{if(server)await new Promise(r=>server.close(r));f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
+

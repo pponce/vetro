@@ -47,8 +47,11 @@ function setup(options = {}) {
   }
   function widget(appId = 'vetrotvapp.app', trusted = false) {
     let response;
+    function outbound(id,name){assert.equal(id,appId);assert.equal(name,'CLIENT_REPLY');return {sendMessage(data){response=JSON.parse(data[0].value);}};}
+    f.tizen.messageport.requestRemoteMessagePort=outbound;
+    f.tizen.messageport.requestTrustedRemoteMessagePort=outbound;
     listeners.get(WIDGET_PORT)([{key: 'json', value: JSON.stringify({version: 1, id: 'lifecycle', method: 'widget.connect', params: {}})}],
-      {appId, isTrusted: trusted, sendMessage(data) {response = JSON.parse(data[0].value);}});
+      {appId, messagePortName: 'CLIENT_REPLY', isTrusted: trusted, sendMessage() {throw Error('Callback sends must not be used');}});
     return response;
   }
   return Object.assign(service, {f, events, pending, listeners, gate, widget,
@@ -144,3 +147,4 @@ function setup(options = {}) {
 }
 
 console.log('PASS service lifecycle: delayed native setup, trusted handshake, idempotent callbacks, pending stop, partial retry and closed security failures');
+

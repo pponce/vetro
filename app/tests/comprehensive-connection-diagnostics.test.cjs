@@ -55,12 +55,18 @@ for(const mode of ['source','callback','value-array','native-array']) {
         screenError:'No confirmation',pairingError:'No confirmation',widgetCredential:null,Date,console});
     vm.runInContext(fs.readFileSync(require.resolve('../service/connection-debug-client.js'),'utf8'),context);
     const client=new Client({widget:true,tizen:{messageport:network.api(UI)},timeout:1000,diagnostics:context.VetroConnectionDiagnostics});
-    let settled=false;
-    const pending=client.call('widget.connect',{}).then(()=>{settled=true;},()=>{settled=true;});
+    let settled=false,authenticated=false;
+    const pending=client.call('widget.connect',{}).then(()=>{settled=true;authenticated=true;},()=>{settled=true;});
     try {
         for(let i=0;i<8;i++)await tick();
         const report=d.snapshot(),detail=report.widget.replyDiagnostics;
         assert.equal(issued,1,'fixed test messages never issue extra credentials');
+        if(mode==='callback'){
+            assert.equal(authenticated,true,'public factory avoids the incompatible callback sender');
+            assert.equal(report.widget.repliesSent,1);assert.equal(report.widget.replyErrors,0);
+            assert.ok(!detail,'successful authentication requires no diagnostic probes');
+            continue;
+        }
         assert.equal(detail.schema,2);assert.equal(detail.tests.length,12);
         assert.equal(detail.initialError.name,'TypeMismatchError');
         assert.ok(detail.initialError.message.length>0);assert.ok(detail.initialError.stack.length>0);

@@ -7,13 +7,13 @@ const {Diagnostics} = require('../service/connection-diagnostics');
 const {Report} = require('../service/message-reply-diagnostics');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-// This models the observed JavaScript type boundary, not the unknown native
-// routing layer. In particular, it cannot establish service identity after an
-// unwrap, or explain which property is absent/different on a fresh remote.
+// Model the captured callback/factory distinction and local-port conversion.
+// Physical TV routing remains a hardware acceptance check; widget-transport
+// separately exercises client authentication with registered sender metadata.
 function runtimeModel() {
-    const locals = new Map(), sends = [], failures = [];
+    const locals = new Map(), sends = [], failures = [], lookups = [];
     class LocalMessagePort {
-        constructor(name, trusted) { this.messagePortName=name; this.isTrusted=trusted; }
+        constructor(name, trusted) { this.owner='vetrotvapp.svc'; this.messagePortName=name; this.isTrusted=trusted; }
         addMessagePortListener(fn) { this.callback=fn; return 0; }
         removeMessagePortListener() { this.callback=null; }
     }
@@ -24,6 +24,8 @@ function runtimeModel() {
             this.isTrusted=native.isTrusted;
         }
         get [Symbol.toStringTag]() { return 'LocalMessagePortRouter'; }
+        toString() { return 'LocalMessagePortRouter'; }
+        get() { return this.messagePortObj; }
         // The captured listener takes one native callback argument and obtains
         // the reply target from org_remote fields. The producer of those fields
         // and its identity guarantees are deliberately outside this model.
@@ -55,6 +57,21 @@ function runtimeModel() {
             sends.push({target:this, data, source:source || null});
         }
     }
+    // Public factory results expose neither appId nor isTrusted on this runtime.
+    class OutboundMessagePort {
+        constructor(appId,name,trusted) {
+            this.remoteAppId=appId;this.messagePortName=name;
+            this.messagePortObj=new RemoteMessagePort(appId,name,trusted);
+        }
+        sendMessage(data,source) {
+            if(source=='LocalMessagePortRouter')source=source.get();
+            this.messagePortObj.sendMessage(data,source);
+        }
+    }
+    function outbound(appId,name,trusted) {
+        lookups.push({appId,name,trusted});
+        return new OutboundMessagePort(appId,name,trusted);
+    }
     function local(name, trusted) {
         if(!locals.has(name)) locals.set(name, new LocalMessagePort(name, trusted));
         return new LocalMessagePortRouter(locals.get(name));
@@ -64,9 +81,11 @@ function runtimeModel() {
         if(appId) data.push({key:'org_remote_app_id', value:appId}, {key:'org_remote_port', value:'CLIENT_REPLY'});
         locals.get(name).callback(data);
     }
-    return {locals,sends,failures,receive,RemoteMessagePort,api:{
+    return {locals,sends,failures,lookups,receive,RemoteMessagePort,api:{
         requestLocalMessagePort:name=>local(name,false),
-        requestTrustedLocalMessagePort:name=>local(name,true)
+        requestTrustedLocalMessagePort:name=>local(name,true),
+        requestRemoteMessagePort:(id,name)=>outbound(id,name,false),
+        requestTrustedRemoteMessagePort:(id,name)=>outbound(id,name,true)
     }};
 }
 const frame=(id,method,params={})=>[{key:'json',value:JSON.stringify({version:1,id,method,params})}];
@@ -83,19 +102,25 @@ const frame=(id,method,params={})=>[{key:'json',value:JSON.stringify({version:1,
         assert.equal(issued,0);
         model.receive(WIDGET_PORT,frame('connect','widget.connect'),'vetrotvapp.app');
         assert.equal(issued,1);
-        assert.equal(model.sends.length,0,'native send is never reached');
-        assert.equal(model.failures[0].name,'TypeMismatchError');
-        assert.equal(model.failures[0].message,'Cannot convert LocalMessagePortRouter to LocalMessagePort.');
-        assert.equal(diagnostics.snapshot().widget.replyErrors,1);
-        assert.equal(diagnostics.snapshot().widget.repliesSent,0);
+        assert.equal(model.sends.length,1);
+        assert.equal(model.failures.length,0);
+        assert.equal(model.sends[0].source.owner,'vetrotvapp.svc');
+        assert.equal(model.sends[0].source.messagePortName,WIDGET_REPLY_PORT);
+        assert.equal(model.sends[0].target.appId,'vetrotvapp.app');
+        assert.equal(diagnostics.snapshot().widget.replyErrors,0);
+        assert.equal(diagnostics.snapshot().widget.repliesSent,1);
 
         await f.approve();
         model.receive(APP_PORT,frame('app-ok','apps.list'),'garage.app');
         await tick();
         model.receive(APP_PORT,frame('app-denied','apps.list'),'other.app');
         await tick();
-        assert.equal(model.failures.length,3,'successful and denied app-access replies hit the same boundary');
-        assert.equal(model.sends.length,0);
+        assert.equal(model.failures.length,0);
+        assert.equal(model.sends.length,3,'widget, granted and denied app-access replies use the factory');
+        assert.equal(JSON.parse(model.sends[1].data[0].value).ok,true);
+        assert.equal(JSON.parse(model.sends[2].data[0].value).ok,false);
+        assert.ok(model.sends.slice(1).every(send=>send.source.messagePortName===APP_PORT&&send.source.owner==='vetrotvapp.svc'));
+        assert.deepEqual(model.lookups.map(x=>x.appId),['vetrotvapp.app','garage.app','other.app']);
 
         const source=model.api.requestLocalMessagePort(WIDGET_REPLY_PORT);
         const refreshed=model.api.requestLocalMessagePort(WIDGET_REPLY_PORT);
@@ -107,21 +132,28 @@ const frame=(id,method,params={})=>[{key:'json',value:JSON.stringify({version:1,
             assert.throws(()=>remote.sendMessage([{key:'json',value}],refreshed),{name:'TypeMismatchError'});
             remote.sendMessage([{key:'json',value}]);
         }
-        assert.equal(model.sends.length,2);
-        assert.ok(model.sends.every(send=>send.source===null),'no-source success supplies no identity evidence');
+        assert.equal(model.failures[0].name,'TypeMismatchError');
+        assert.equal(model.failures[0].message,'Cannot convert LocalMessagePortRouter to LocalMessagePort.');
+        assert.equal(model.sends.length,5);
+        assert.ok(model.sends.slice(-2).every(send=>send.source===null),'no-source success supplies no identity evidence');
 
-        // The report discarded fresh-object metadata after a failed guard.
-        // Any of these distinct mismatches yields the observed seven skips;
-        // none can be identified as the hardware cause from that report.
-        for(const mismatch of [{appId:undefined},{messagePortName:undefined},{isTrusted:undefined},{sendMessage:undefined}]) {
-            const api={...model.api,requestRemoteMessagePort:()=>Object.assign(
-                new model.RemoteMessagePort('vetrotvapp.app','CLIENT_REPLY',false),mismatch)};
-            const report=new Report({messageport:api},remote,source,frame('r','widget.connect'),
-                JSON.stringify({version:1,id:'r',ok:true,result:{token:'synthetic'}}),model.failures[0]).snapshot();
-            assert.equal(report.lookup.error.message,'Unexpected reply target');
-            assert.equal(report.lookup.port,undefined);
-            assert.equal(report.tests.filter(row=>row.skipped).length,7);
+        // Retain the observed failed diagnostic guard as evidence: the public
+        // outbound wrapper has the requested name, but no callback identity fields.
+        const report=new Report({messageport:model.api},remote,source,frame('r','widget.connect'),
+            JSON.stringify({version:1,id:'r',ok:true,result:{token:'synthetic'}}),model.failures[0]).snapshot();
+        assert.equal(report.lookup.error.message,'Unexpected reply target');
+        assert.deepEqual(report.lookupObservation.matches,{appId:false,messagePortName:true,isTrusted:false});
+        assert.equal(report.tests.filter(row=>row.skipped).length,7);
+
+        // A failed factory must never fall back to the raw callback or no source.
+        const sent=model.sends.length;
+        for(const factory of [()=>{throw Error('Target unavailable');},()=>null,()=>({})]) {
+            model.api.requestRemoteMessagePort=factory;
+            model.receive(WIDGET_PORT,frame('factory-failed','widget.connect'),'vetrotvapp.app');
+            assert.equal(model.sends.length,sent);
         }
+        assert.equal(diagnostics.snapshot().widget.replyErrors,3);
+        assert.equal(diagnostics.snapshot().widget.repliesSent,1);
     } finally { handle.stop(); f.close(); }
 
     // Independently exercise the real SDK's receiving guard for both clients.
@@ -148,5 +180,5 @@ const frame=(id,method,params={})=>[{key:'json',value:JSON.stringify({version:1,
         assert.deepEqual(await pending,{synthetic:true});
         client.close();
     }
-    console.log('PASS wrapper-boundary characterization: exact type mismatch, widget and app-access reply failures, refreshed wrapper failure, ambiguous lookup guard, strict client metadata checks; no runtime correction modeled');
+    console.log('PASS wrapper boundary: exact raw-send failure, public-factory widget and app-access replies, observed wrapper metadata, closed factory failures and strict client sender checks');
 })().catch(error=>{console.error(error);process.exitCode=1;});
