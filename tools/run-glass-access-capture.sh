@@ -5,10 +5,10 @@ from pathlib import Path
 import hashlib, subprocess, urllib.request
 
 project = Path('/home/pedro/devProjects/samsung-tv-tools')
-revision = '151bdf94e2074ccc47827fa3141243710baef135'
-directory = project / 'vetro-install/bin/glass-request-151bdf94e207'
+revision = 'f3ba2c7d68698540e7b9d30d15f0fee0327f03de'
+directory = project / 'vetro-install/bin/glass-request-f3ba2c7d6869'
 expected = {
-    'capture-glass-access.py': 'db5bcf6972e0de62ea27f384c4508bd26f7ae8f492fb026fdff4c0dba87f06a0',
+    'capture-glass-access.py': '9fb606099f33fd0c57671c9f289d61613f61c5eb204a3b3357f2b3d150880b31',
     'inspect-messageport-runtime.py': 'c4828bd5612b8d21cde7c6a23c8b9f3286d9269bf56fb011d33f922370b042b6',
     'vetro_owner.py': '56c6a1de5b079216e72029aabdf1482ebbd508e034eecda40ae2e13b0f1e3f00'
 }

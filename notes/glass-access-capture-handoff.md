@@ -59,7 +59,7 @@ the older failure to use an existing approval.
 - Authoritative combined branch: `combined/permissions-startup-return`; unchanged.
 - Host capture tools: `pponce/vetro`,
   `combined/runtime-wrapper-inspection-20261103`, based on `8c96c3ef86fa7a2336d65316b41c76e0942ec7e7`.
-  Capture helper revision: `151bdf94e2074ccc47827fa3141243710baef135`.
+  Current capture helper revision: `f3ba2c7d68698540e7b9d30d15f0fee0327f03de` (supersedes `151bdf94e2074ccc47827fa3141243710baef135`).
 - Glass Home: `pponce/glass-home-samsung-tv`, `combined/vetro-permissions`,
   `30c490194f1748d523262a1ac8985fe45f735729`; no new application build prepared.
 
