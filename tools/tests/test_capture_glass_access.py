@@ -138,6 +138,23 @@ class SdbSocket:
         self.closed = True
 
 
+class ClosedSocket(SdbSocket):
+    def sendall(self, data):
+        super().sendall(data)
+        self.incoming.clear()
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
 class SdbTests(unittest.TestCase):
     def test_fragmented_frames_and_data_before_ack(self):
         sock = SdbSocket()
@@ -163,6 +180,107 @@ class SdbTests(unittest.TestCase):
         sock.incoming.extend(sdb_frame(b'WRTE', 74, 1, b'wrong stream'))
         with self.assertRaises(capture.transport.ReadFailure):
             stream.read(1)
+
+    def test_dropped_handshake_retries_before_opening_inspector_stream(self):
+        dropped, accepted, result = ClosedSocket(), SdbSocket(), report()
+        with patch.object(capture.socket, 'create_connection', side_effect=[dropped, accepted]), \
+             patch.object(capture.time, 'sleep') as sleep:
+            stream = capture.connect('192.168.84.19', 26201, 'tcp:45678', report=result,
+                                     purpose='inspector-websocket')
+        self.assertTrue(dropped.closed)
+        self.assertFalse(accepted.closed)
+        self.assertEqual([c for c, a, b, payload in dropped.sent], [b'CNXN'])
+        self.assertEqual([c for c, a, b, payload in accepted.sent], [b'CNXN', b'OPEN'])
+        sleep.assert_called_once_with(0.4)
+        self.assertEqual([a['connected'] for a in result['transportAttempts']], [False, True])
+        self.assertEqual(result['transportAttempts'][0]['retryDelaySeconds'], 0.4)
+        stream.close()
+
+    def test_authentication_is_not_retried(self):
+        class AuthSocket(SdbSocket):
+            def sendall(self, data):
+                super().sendall(data)
+                self.incoming = bytearray(sdb_frame(b'AUTH', 1, 0, b'private-challenge'))
+        sock, result = AuthSocket(), report()
+        with patch.object(capture.socket, 'create_connection', return_value=sock) as create, \
+             patch.object(capture.time, 'sleep') as sleep:
+            with self.assertRaises(capture.transport.ReadFailure):
+                capture.connect('192.168.84.19', 26201, report=result)
+        create.assert_called_once()
+        sleep.assert_not_called()
+        self.assertTrue(sock.closed)
+        self.assertNotIn('private-challenge', json.dumps(result))
+
+    def test_service_open_failure_does_not_repeat_a_debug_launch(self):
+        class RefusedSocket(SdbSocket):
+            def sendall(self, data):
+                super().sendall(data)
+                if self.sent[-1][0] == b'OPEN':
+                    self.incoming = bytearray(sdb_frame(b'CLSE', 0, self.sent[-1][1]))
+        sock, result = RefusedSocket(), report()
+        with patch.object(capture.socket, 'create_connection', return_value=sock) as create, \
+             patch.object(capture.time, 'sleep') as sleep:
+            with self.assertRaises(capture.CaptureError):
+                capture.connect('192.168.84.19', 26201, 'shell:0 debug ' + capture.APP, report=result)
+        create.assert_called_once()
+        sleep.assert_not_called()
+        self.assertEqual([c for c, a, b, payload in sock.sent], [b'CNXN', b'OPEN'])
+        self.assertEqual(result['transportAttempts'][0]['stage'], 'service-open')
+
+
+class StartupTests(unittest.TestCase):
+    def test_inspector_page_may_take_more_than_six_seconds(self):
+        clock, result = Clock(), report()
+        def pages(*args, **kwargs):
+            if clock.now < 15:
+                return []
+            return [{'title': 'Glass Home', 'webSocketDebuggerUrl': 'ws://127.0.0.1:45678/devtools/page/1'}]
+        with patch.object(capture, 'inspector_pages', side_effect=pages), \
+             patch.object(capture.time, 'monotonic', clock.monotonic), patch.object(capture.time, 'sleep', clock.sleep):
+            path = capture.wait_for_inspector_page('192.168.84.19', 26201, 45678, result)
+        self.assertEqual(path, '/devtools/page/1')
+        self.assertEqual(result['pageWaitSeconds'], 15)
+
+    def test_missing_inspector_page_stops_at_deadline(self):
+        clock, result = Clock(), report()
+        with patch.object(capture, 'inspector_pages', return_value=[]), \
+             patch.object(capture.time, 'monotonic', clock.monotonic), patch.object(capture.time, 'sleep', clock.sleep):
+            with self.assertRaises(capture.CaptureError):
+                capture.wait_for_inspector_page('192.168.84.19', 26201, 45678, result, seconds=5)
+        self.assertEqual(clock.now, 5)
+
+    def test_page_wait_does_not_retry_persistent_sdb_failure(self):
+        with patch.object(capture, 'inspector_pages', side_effect=capture.transport.ReadFailure('SDB closed the connection')) as pages, \
+             patch.object(capture.time, 'sleep') as sleep:
+            with self.assertRaises(capture.transport.ReadFailure):
+                capture.wait_for_inspector_page('192.168.84.19', 26201, 45678, report())
+        pages.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_widget_waits_for_visibility_and_app_check(self):
+        clock, result = Clock(), report()
+        client = Mock()
+        def call(method, params):
+            return {'result': {'value': {'present': True, 'adapter': True, 'documentReady': True,
+                'appsPresent': True, 'visible': clock.now >= 10, 'appsLoading': clock.now < 20}}}
+        client.call.side_effect = call
+        with patch.object(capture.time, 'monotonic', clock.monotonic), patch.object(capture.time, 'sleep', clock.sleep):
+            value = capture.wait_for_widget(client, result)
+        self.assertTrue(result['widgetReady'])
+        self.assertEqual(result['startupWaitSeconds'], 20)
+        self.assertFalse(value['appsLoading'])
+        self.assertTrue(value['visible'])
+
+    def test_hidden_widget_does_not_start_capture(self):
+        clock, result = Clock(), report()
+        client = Mock()
+        client.call.return_value = {'result': {'value': {'present': True, 'adapter': True,
+            'documentReady': True, 'appsPresent': True, 'visible': False}}}
+        with patch.object(capture.time, 'monotonic', clock.monotonic), patch.object(capture.time, 'sleep', clock.sleep):
+            with self.assertRaises(capture.CaptureError):
+                capture.wait_for_widget(client, result, seconds=5)
+        self.assertEqual(clock.now, 5)
+        self.assertNotIn('widgetReady', result)
 
 
 class EvidenceTests(unittest.TestCase):
@@ -270,13 +388,6 @@ class LifecycleTests(unittest.TestCase):
                 self.buffer.extend(b'port: 45678\n')
             def close(self):
                 pass
-        class Clock:
-            now = 0
-            def monotonic(self):
-                self.now += 0.1
-                return self.now
-            def sleep(self, seconds):
-                self.now += seconds
         clock = Clock()
         class Client:
             def __init__(self, *args):
@@ -284,9 +395,11 @@ class LifecycleTests(unittest.TestCase):
             def call(self, method, params=None):
                 if method == 'Runtime.evaluate':
                     self.evaluations += 1
-                    return {'result': {'value': {'present': True, 'adapter': True,
-                        'state': 'timeout' if self.evaluations > 2 else 'unknown',
-                        'busy': self.evaluations == 2}}}
+                    return {'result': {'value': {'present': True, 'adapter': clock.now >= 7,
+                        'documentReady': clock.now >= 5, 'visible': clock.now >= 12,
+                        'appsPresent': clock.now >= 8, 'appsLoading': clock.now < 20,
+                        'state': 'timeout' if clock.now >= 22 else 'unknown',
+                        'busy': 20 < clock.now < 22}}}
                 return {}
         with patch.object(capture, 'read_json', side_effect=json_read), patch.object(capture, 'verify_glass', return_value={'file': True}), \
              patch.object(capture, 'connect', side_effect=lambda *a, **k: Debug()) as connect, \
@@ -294,6 +407,9 @@ class LifecycleTests(unittest.TestCase):
              patch.object(capture, 'Inspector', Client), patch.object(capture.time, 'monotonic', clock.monotonic), patch.object(capture.time, 'sleep', clock.sleep):
             capture.collect(owner, '192.168.84.19', 3, result)
         self.assertTrue(result['captureComplete'])
+        self.assertEqual(result['startupWaitSeconds'], 20)
+        self.assertEqual(result['captureSeconds'], 3)
+        self.assertEqual(result['captureWindowSeconds'], 3)
         self.assertTrue(result['connectBusyObserved'])
         self.assertEqual(result['samples'][-1]['widget']['state'], 'timeout')
         self.assertTrue(result['normalRelaunchCommandCompleted'])
@@ -333,17 +449,16 @@ class LifecycleTests(unittest.TestCase):
 
     def test_preflight_failure_leaves_ui_running_and_preserves_handshake_evidence(self):
         owner, result = Owner(), report()
-        class ClosedSocket(SdbSocket):
-            def sendall(self, data):
-                # This peer closes before answering the initial CNXN.
-                pass
-        sock = ClosedSocket()
+        sockets = [ClosedSocket() for _ in range(3)]
         with patch.object(capture, 'read_json', side_effect=json_read), patch.object(capture, 'verify_glass', return_value={'file': True}), \
-             patch.object(capture.socket, 'create_connection', return_value=sock):
+             patch.object(capture.socket, 'create_connection', side_effect=sockets) as connect, \
+             patch.object(capture.time, 'sleep'):
             capture.collect(owner, '192.168.84.19', 1, result)
         self.assertEqual(result['failedPhase'], 'sdb-preflight')
         self.assertIn('SDB connection closed before the response completed', result['errors'])
-        self.assertTrue(sock.closed)
+        self.assertTrue(all(sock.closed for sock in sockets))
+        self.assertEqual(connect.call_count, 3)
+        self.assertEqual(len(result['transportAttempts']), 3)
         self.assertFalse(any(path == '/exec' for path, body in owner.calls))
         attempt = result['transportAttempts'][0]
         self.assertEqual(attempt['stage'], 'sdb-handshake')

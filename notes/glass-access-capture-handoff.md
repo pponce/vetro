@@ -1,6 +1,44 @@
 # Glass Home request capture — 2026-11-04
 
-## First capture result and corrected transport reporting
+## Latest capture: early inspector connection drop and startup waiting
+
+`glass-request-20261104-202022-238012.json` again verified the clean Vetro
+revision, root connection, Glass service capability 2 and all seven installed
+file hashes. The initial SDB handshake and the single debug launch succeeded.
+The first fresh connection for `/json/list` was dropped before the TV answered
+CNXN; a retry after one second succeeded and returned the Glass Home page.
+The next fresh connection, for the inspector WebSocket, was dropped at the same
+CNXN stage. That path had no retry and triggered cleanup about two seconds
+after the capture started. The user correctly observed that the helper did
+not leave enough time for Glass Home to open and for the Connect test.
+
+This is evidence of a capture transport failure, not evidence that the widget
+never sent an access request. No inspector attached and no user Connect action
+was captured. Relay failures increased from 4 to 6; the report retained frame
+headers proving both drops occurred before an SDB service was opened. The
+normal UI relaunch command completed. The report still has no pending request,
+grant or Glass Home handler event.
+
+The corrected host helper retries a dropped/reset SDB handshake at most twice,
+with 0.4- and 0.8-second waits, before opening any SDB service. Authentication,
+invalid protocol frames and service-open failures are not retried by that
+connection helper. The debug launch itself is issued only once. Inspector-page
+readiness and widget startup each have a separate 60-second wait with progress
+messages. Widget readiness requires a visible, fully loaded document, the
+permission adapter and app-list adapter, and a completed app-list check. The
+user's 60-second capture window starts only after that readiness check, at
+CAPTURING. The new report records both waits, connection attempts, readiness
+samples and actual capture duration. No installed application code changed.
+
+Validation: all 50 local capture, SDB transport and owner-client tests pass.
+Cases cover a dropped handshake followed by success, persistent drops, no
+retry for authentication or an uncertain debug launch, late inspector-page
+availability, hidden/loading widgets, and a 20-second startup followed by the
+full capture window. The read-only JavaScript snapshot was also executed
+against missing and loaded widget globals. These are local transport/model
+checks; the updated helper still needs the TV run below.
+
+## Earlier capture and transport reporting
 
 `glass-request-20261104-200106-317015.json` passed the clean Vetro revision,
 root connection, Glass service capability and all seven installed file checks.
@@ -15,9 +53,9 @@ reason, bounded protocol frame headers, and relay counters/error-code timestamps
 before and after the attempt. Banners, command payloads and free-form relay text
 are excluded. It completes the SDB handshake before stopping the Glass Home UI
 and reuses that connection for the single debug launch. A failed preflight leaves
-the UI running. No live app code or permissions were changed. All 42 tests in the
-capture, SDB transport and owner-client suites pass, including the reproduced
-closed-handshake case and preservation of its failure evidence.
+the UI running. No live app code or permissions were changed. Its 42 local tests
+passed, including the reproduced closed-handshake case and preservation of its
+failure evidence.
 
 Next: run the updated pinned entrypoint. If it stops again, use `failedPhase`,
 `transportAttempts`, `debugFrames`/`pageListFrames` and the before/after relay
@@ -59,7 +97,8 @@ the older failure to use an existing approval.
 - Authoritative combined branch: `combined/permissions-startup-return`; unchanged.
 - Host capture tools: `pponce/vetro`,
   `combined/runtime-wrapper-inspection-20261103`, based on `8c96c3ef86fa7a2336d65316b41c76e0942ec7e7`.
-  Current capture helper revision: `f3ba2c7d68698540e7b9d30d15f0fee0327f03de` (supersedes `151bdf94e2074ccc47827fa3141243710baef135`).
+  The current helper revision and hashes are pinned in `tools/run-glass-access-capture.sh`.
+  The readiness/retry correction supersedes `f3ba2c7d68698540e7b9d30d15f0fee0327f03de`.
 - Glass Home: `pponce/glass-home-samsung-tv`, `combined/vetro-permissions`,
   `30c490194f1748d523262a1ac8985fe45f735729`; no new application build prepared.
 
@@ -85,8 +124,8 @@ a substitute for identifying the failed stage.
 relay. It verifies the clean Vetro revision, Glass Home service capability 2,
 and hashes of seven relevant installed Glass Home files. It stops only the
 Glass Home UI and starts that UI once using the existing Apps2Samsung debug
-command. It attaches the standard Web Inspector, observes a user-initiated
-Connect action for 60 seconds, and reopens the UI in normal mode in its cleanup
+command. It attaches the standard Web Inspector, waits for widget readiness,
+observes a user-initiated Connect action for 60 seconds, and reopens the UI in normal mode in its cleanup
 path. It does not install, pair, grant, revoke, clear settings, alter input or
 restart either background service. An uncertain debug launch is not repeated.
 
@@ -99,23 +138,21 @@ Debug mode may change timing. `captureComplete` means collection completed;
 `connectBusyObserved` and the actual samples establish whether the Connect
 operation was observed. Neither field asserts permission or hardware success.
 
-Nineteen new local tests pass, covering WebSocket framing and size bounds, SDB
-fragmentation and interleaved acknowledgement/data, wrong-stream rejection,
-report redaction, source/session preflight gates, normal reopen after a failed
-debug launch and successful collection of widget state transitions. These are
-transport/model checks; this new collector has not run on the TV. All 38 tests
-in the capture, reused SDB transport and owner-client suites pass together.
+The test suite also covers WebSocket framing and size bounds, SDB fragmentation
+and interleaved acknowledgement/data, wrong-stream rejection, report redaction,
+source/session preflight gates and normal reopen after a failed debug launch.
 
 ## Exact next steps
 
 1. Open Glass Home normally once so its service is running. Keep TV-Store's relay
    running, Developer Mode on and the Host PC IP unchanged. Close any other
    Apps2Samsung debug session.
-2. Run the pinned capture helper with the existing project root. At CAPTURING,
+2. Run the pinned capture helper with the existing project root. Let the helper
+   reopen Glass Home and finish its inspector/startup waits. At CAPTURING,
    open Glass Home's + panel, wait for Checking apps to finish, then choose
    Connect to Vetro once. Keep Glass Home visible through the capture.
    `tools/run-glass-access-capture.sh` is the complete checksum-verified SSH
-   block for this test, pinned to the helper revision above.
+   block for this test, with the helper revision and checksums pinned inside it.
 3. Retrieve the new `vetro-install/access-diagnostics/glass-request-*.json`
    using the complete rsync command printed by the helper. Return partial
    reports too; do not reinstall to work around a capture failure.

@@ -137,32 +137,49 @@ class Stream(transport.SdbReader):
 
 
 def connect(tv, relay_port, service=None, seconds=30, report=None, purpose='inspector'):
-    stream = None
-    attempt = {'purpose': purpose, 'stage': 'tcp-connect', 'connected': False}
-    if report is not None:
-        report.setdefault('transportAttempts', []).append(attempt)
-    try:
-        stream = Stream(socket.create_connection((tv, relay_port), timeout=8), seconds=seconds)
-        attempt['stage'] = 'sdb-handshake'
-        stream.connect()
-        if service is not None:
-            attempt['stage'] = 'service-open'
-            stream.open_service(service)
-        attempt['connected'] = True
-        attempt['stage'] = 'ready'
-        return stream
-    except BaseException as error:
-        attempt['error'] = error_detail(error)
-        attempt['frames'] = stream_evidence(stream)
-        if stream:
-            try:
-                stream.close()
-            except Exception:
-                pass
-        raise
-    finally:
-        if 'frames' not in attempt:
+    deadline = time.monotonic() + seconds
+    for number in range(1, 4):
+        stream = None
+        started = time.monotonic()
+        remaining = deadline - started
+        if remaining <= 0:
+            raise CaptureError('SDB connection time limit reached')
+        attempt = {'purpose': purpose, 'attempt': number, 'stage': 'tcp-connect', 'connected': False}
+        if report is not None:
+            report.setdefault('transportAttempts', []).append(attempt)
+        try:
+            sock = socket.create_connection((tv, relay_port), timeout=min(8, remaining))
+            stream = Stream(sock, seconds=max(0, deadline - time.monotonic()))
+            attempt['stage'] = 'sdb-handshake'
+            stream.connect()
+            if service is not None:
+                attempt['stage'] = 'service-open'
+                stream.open_service(service)
+            attempt['connected'] = True
+            attempt['stage'] = 'ready'
+            return stream
+        except BaseException as error:
+            attempt['error'] = error_detail(error)
             attempt['frames'] = stream_evidence(stream)
+            if stream:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            # A fresh SDB connection can be dropped immediately after teardown.
+            # Retry only the handshake, before any shell/debug command was sent.
+            dropped = (isinstance(error, transport.ReadFailure) and
+                       str(error) == 'SDB closed the connection') or isinstance(error, (ConnectionResetError, BrokenPipeError))
+            delay = 0.4 * number
+            if number == 3 or attempt['stage'] != 'sdb-handshake' or not dropped or time.monotonic() + delay >= deadline:
+                raise
+            attempt['retryDelaySeconds'] = delay
+            print('SDB dropped a fresh connection; waiting before retry ' + str(number) + '/2...', flush=True)
+        finally:
+            attempt['seconds'] = round(time.monotonic() - started, 3)
+            if 'frames' not in attempt:
+                attempt['frames'] = stream_evidence(stream)
+        time.sleep(delay)
 
 
 def headers(stream):
@@ -179,8 +196,8 @@ def headers(stream):
     return int(match[1]), values
 
 
-def inspector_pages(tv, relay_port, port, report=None):
-    stream = connect(tv, relay_port, 'tcp:' + str(port), report=report, purpose='inspector-page-list')
+def inspector_pages(tv, relay_port, port, report=None, seconds=30):
+    stream = connect(tv, relay_port, 'tcp:' + str(port), seconds=seconds, report=report, purpose='inspector-page-list')
     try:
         stream.write(('GET /json/list HTTP/1.1\r\nHost: 127.0.0.1:' + str(port) +
                       '\r\nConnection: close\r\n\r\n').encode('ascii'))
@@ -225,6 +242,43 @@ def inspector_pages(tv, relay_port, port, report=None):
         if report is not None:
             report['pageListFrames'] = stream_evidence(stream)
         stream.close()
+
+
+def wait_for_inspector_page(tv, relay_port, port, report, seconds=60):
+    print('Waiting for the Glass Home inspector page (up to ' + str(seconds) + ' seconds)...', flush=True)
+    started = time.monotonic()
+    notice = 10
+    report['pageWaitAttempts'] = 0
+    while time.monotonic() - started < seconds:
+        report['pageWaitAttempts'] += 1
+        remaining = seconds - (time.monotonic() - started)
+        try:
+            pages = inspector_pages(tv, relay_port, port, report=report, seconds=min(15, remaining))
+        except (CaptureError, TimeoutError) as error:
+            # A page/server may not exist yet. Authentication and malformed SDB
+            # frames are not startup delays and must still stop the capture.
+            if isinstance(error, CaptureError) and str(error) not in (
+                    'TV did not open the inspector stream', 'Inspector page list is unavailable'):
+                raise
+            pages = []
+            report['pageWaitLastError'] = error_detail(error)
+        candidates = [p for p in pages if isinstance(p, dict) and
+            p.get('type', 'page') == 'page' and isinstance(p.get('webSocketDebuggerUrl'), str) and
+            (APP.split('.')[0] in str(p.get('url', '')) or p.get('title') == 'Glass Home')]
+        elapsed = time.monotonic() - started
+        report['pageWaitSeconds'] = round(elapsed, 1)
+        if len(candidates) > 1:
+            raise CaptureError('Could not identify exactly one Glass Home page')
+        if candidates:
+            address = urllib.parse.urlsplit(candidates[0]['webSocketDebuggerUrl'])
+            if address.scheme != 'ws' or address.query or address.fragment or not re.fullmatch(r'/devtools/page/[A-Za-z0-9_.-]+', address.path):
+                raise CaptureError('Unexpected Glass Home inspector endpoint')
+            return address.path
+        if elapsed >= notice:
+            print('Still waiting for the Glass Home inspector page (' + str(round(elapsed)) + 's)...', flush=True)
+            notice = elapsed + 10
+        time.sleep(max(0, min(1, seconds - elapsed)))
+    raise CaptureError('Glass Home inspector page did not become ready within the startup wait')
 
 
 class Inspector:
@@ -307,9 +361,10 @@ class Inspector:
 
 SNAPSHOT = r'''(function(){
 var g=window.GH,p=g&&g.vetroPermissions, d=document.getElementById('panel-diag'),
- s=document.getElementById('panel-app-status'), t=window.tizen;
+ s=document.getElementById('panel-app-status'), t=window.tizen, v=g&&g.vetro;
 return {present:!!g,adapter:!!p,state:p&&p.state,busy:!!(p&&p.busy),
  scopes:p&&p.scopes,visible:document.visibilityState==='visible',
+ documentReady:document.readyState==='complete',appsPresent:!!v,appsLoading:!!(v&&v.loading),
  messagePort:!!(t&&t.messageport),crypto:!!(window.crypto&&window.crypto.getRandomValues),
  hash:!!(window.sha256&&window.sha256.hmac),
  timeoutShown:!!(s&&/did not respond|did not reply|timed out/i.test(s.textContent||'')),
@@ -321,10 +376,42 @@ def sanitize_snapshot(value):
     if not isinstance(value, dict):
         raise CaptureError('Glass Home widget snapshot unavailable')
     result = {k: value.get(k) is True for k in ('present', 'adapter', 'busy', 'visible',
+        'documentReady', 'appsPresent', 'appsLoading',
         'messagePort', 'crypto', 'hash', 'timeoutShown', 'pendingShown')}
     result['state'] = value.get('state') if value.get('state') in STATES else 'other'
     result['scopes'] = [x for x in value.get('scopes', []) if x in ('apps.read', 'apps.launch')] if isinstance(value.get('scopes'), list) else []
     return result
+
+
+def widget_snapshot(inspector):
+    result = inspector.call('Runtime.evaluate', {'expression': SNAPSHOT, 'returnByValue': True})
+    return sanitize_snapshot((result.get('result') or {}).get('value'))
+
+
+def wait_for_widget(inspector, report, seconds=60):
+    print('Waiting up to ' + str(seconds) + ' seconds for Glass Home to be visible and finish its app check...', flush=True)
+    print('Wait for CAPTURING before choosing Connect to Vetro.', flush=True)
+    started = time.monotonic()
+    report['startupSamples'] = []
+    last = None
+    notice = 0
+    while time.monotonic() - started < seconds:
+        value = widget_snapshot(inspector)
+        elapsed = round(time.monotonic() - started, 1)
+        report['startupWaitSeconds'] = elapsed
+        if value != last and len(report['startupSamples']) < 80:
+            report['startupSamples'].append({'seconds': elapsed, 'widget': value})
+            last = value
+        if all(value[k] for k in ('present', 'adapter', 'documentReady', 'visible', 'appsPresent')) and not value['appsLoading']:
+            report['widgetReady'] = True
+            return value
+        if elapsed >= notice:
+            print('Startup ' + str(round(elapsed)) + 's: visible=' + str(value['visible']).lower() +
+                  ', controls loaded=' + str(value['adapter']).lower() +
+                  ', checking apps=' + str(value['appsLoading']).lower(), flush=True)
+            notice = elapsed + 10
+        time.sleep(1)
+    raise CaptureError('Glass Home did not become visible and finish loading within the startup wait')
 
 
 def summarize_access(value):
@@ -523,41 +610,23 @@ def collect(owner, tv, duration, report):
             debug.close()
             debug = None
         phase = 'inspector-page-list'
-        pages = None
-        for attempt in range(6):
-            try:
-                pages = inspector_pages(tv, relay_port, port, report=report)
-                if pages:
-                    break
-            except Exception:
-                if attempt == 5:
-                    raise
-            time.sleep(1)
-        candidates = [p for p in pages or [] if isinstance(p, dict) and
-            p.get('type', 'page') == 'page' and isinstance(p.get('webSocketDebuggerUrl'), str) and
-            (APP.split('.')[0] in str(p.get('url', '')) or p.get('title') == 'Glass Home')]
-        if len(candidates) != 1:
-            raise CaptureError('Could not identify exactly one Glass Home page')
-        address = urllib.parse.urlsplit(candidates[0]['webSocketDebuggerUrl'])
-        if address.scheme != 'ws' or address.query or address.fragment or not re.fullmatch(r'/devtools/page/[A-Za-z0-9_.-]+', address.path):
-            raise CaptureError('Unexpected Glass Home inspector endpoint')
+        path = wait_for_inspector_page(tv, relay_port, port, report)
         phase = 'inspector-connection'
         stream = connect(tv, relay_port, 'tcp:' + str(port), seconds=duration + 100, report=report, purpose='inspector-websocket')
         phase = 'inspector-upgrade'
-        inspector = Inspector(stream, port, address.path)
+        inspector = Inspector(stream, port, path)
+        report['inspectorAttached'] = True
         inspector.handler = evidence.event
         phase = 'inspector-runtime-enable'
         inspector.call('Runtime.enable')
         phase = 'inspector-network-enable'
         inspector.call('Network.enable')
-        phase = 'widget-snapshot'
-        initial = inspector.call('Runtime.evaluate', {'expression': SNAPSHOT, 'returnByValue': True})
-        value = sanitize_snapshot((initial.get('result') or {}).get('value'))
-        if not value['present'] or not value['adapter']:
-            raise CaptureError('Expected Glass Home permission adapter is not loaded')
-        report['inspectorAttached'] = True
+        phase = 'widget-startup'
+        value = wait_for_widget(inspector, report)
         report['samples'] = [{'seconds': 0, 'widget': value}]
         report['connectBusyObserved'] = value['busy']
+        report['captureWindowSeconds'] = duration
+        report['pollsAtCaptureStart'] = evidence.started
         print('CAPTURING: in Glass Home open +, wait for Checking apps to finish, then choose Connect to Vetro ONCE.', flush=True)
         print('Leave Glass Home visible for ' + str(duration) + ' seconds. No access is granted by this script.', flush=True)
         started = time.monotonic()
@@ -565,8 +634,7 @@ def collect(owner, tv, duration, report):
         notice = 0
         phase = 'request-observation'
         while time.monotonic() - started < duration:
-            value = inspector.call('Runtime.evaluate', {'expression': SNAPSHOT, 'returnByValue': True})
-            value = sanitize_snapshot((value.get('result') or {}).get('value'))
+            value = widget_snapshot(inspector)
             report['connectBusyObserved'] = report['connectBusyObserved'] or value['busy']
             elapsed = round(time.monotonic() - started, 1)
             if value != last and len(report['samples']) < 100:
@@ -578,6 +646,7 @@ def collect(owner, tv, duration, report):
                 notice = elapsed + 10
             time.sleep(1)
         evidence.drain(inspector)
+        report['captureSeconds'] = round(time.monotonic() - started, 1)
         report['captureComplete'] = True
     except Exception as error:
         report['failedPhase'] = phase
