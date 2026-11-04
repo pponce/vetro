@@ -122,6 +122,16 @@ This telemetry is readable by an unpaired client that can reach the service.
 Ordinary builds omit it. Build without the flag to remove its public exposure;
 the installed service has no HTTP or runtime-environment switch to enable it.
 
+On the first reply type mismatch, a diagnostic build also records bounded
+wrapper implementation text and fresh-target metadata, including rejected
+targets. It attempts one read of the fixed system file
+`/usr/share/wrt/app/service/service_runner.js`, capped at 128 KiB, using the
+service's existing filesystem access. The report includes a source hash and
+scrubbed candidate text, or a fixed read-error code. It does not establish which
+runtime was loaded. These diagnostic fields are visible to an unpaired status
+reader; no file path can be supplied by that reader, and no filesystem writes
+or new reply sends are performed by the observation.
+
 ## Read service runtime source
 
 `inspect-messageport-runtime.py` collects system `service_runner.js` candidates

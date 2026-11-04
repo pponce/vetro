@@ -25,8 +25,17 @@ function portInfo(port) {
     });
     return result;
 }
-function functionSource(fn) {
-    try {return typeof fn==='function'?scrub(Function.prototype.toString.call(fn),[],32768):null;}catch(_){return null;}
+function functionSource(fn,secrets) {
+    try {return typeof fn==='function'?scrub(Function.prototype.toString.call(fn),secrets,32768):null;}catch(_){return null;}
+}
+function observePort(port,expected,secrets) {
+    var result={port:portInfo(port),matches:{},constructorSource:null,sendSource:null};
+    if(expected)['appId','messagePortName','isTrusted'].forEach(function(key){
+        try {result.matches[key]=!!port&&port[key]===expected[key];}catch(_){result.matches[key]=null;}
+    });
+    try {result.constructorSource=functionSource(port&&port.constructor,secrets);}catch(_){}
+    try {result.sendSource=functionSource(port&&port.sendMessage,secrets);}catch(_){}
+    return result;
 }
 function Report(tizen,remote,source,request,encoded,error) {
     var self=this,started=Date.now(),secrets=[remote&&remote.messagePortName],original;
@@ -52,12 +61,15 @@ function Report(tizen,remote,source,request,encoded,error) {
         ['VETRO_WIDGET_V1','VETRO_WIDGET_REPLY_V1'].indexOf(source.messagePortName)<0) {
         this.state.stopped='invalid-native-metadata';return;
     }
+    this.state.sourceObservation=observePort(source,null,secrets);
+    this.state.runtimeSource=require('./runtime-source-diagnostics.js').capture(function(text){return scrub(text,secrets,131072);});
     this.state.api.requestRemote=functionSource(mp.requestRemoteMessagePort);
     this.state.api.requestLocal=functionSource(mp.requestLocalMessagePort);
     this.state.api.sourceListener=functionSource(source.addMessagePortListener);
     var fresh=null,freshSource=null;
     try {
         fresh=mp[remote.isTrusted?'requestTrustedRemoteMessagePort':'requestRemoteMessagePort']('vetrotvapp.app',remote.messagePortName);
+        this.state.lookupObservation=observePort(fresh,remote,secrets);
         if(!fresh||fresh.appId!==remote.appId||fresh.messagePortName!==remote.messagePortName||fresh.isTrusted!==remote.isTrusted||typeof fresh.sendMessage!=='function')throw Error('Unexpected reply target');
         this.state.lookup={ok:true,error:null,sameHandle:fresh===remote,samePrototype:Object.getPrototypeOf(fresh)===Object.getPrototypeOf(remote),port:portInfo(fresh)};
         this.state.api.lookupSend=functionSource(fresh.sendMessage);
