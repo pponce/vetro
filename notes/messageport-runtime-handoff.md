@@ -1,3 +1,94 @@
+# Private-storage screen bootstrap checkpoint
+
+## Current decision and implementation
+
+The user requested a different approach after the public MessagePort factory
+correction still failed to authenticate the TV screen. Implemented a screen
+bootstrap through the documented package-private filesystem, without depending
+on a MessagePort response. The public-factory correction remains in app-access
+replies; external-app hardware delivery remains a separate unresolved item.
+
+Ready candidate: `95098ef5a6f472f49a542d8737d291fd65d6168b` on
+`combined/runtime-wrapper-observation-20261103`. All four jobs passed in
+[Source checks 41782387008](https://github.com/pponce/vetro/actions/runs/41782387008):
+application/integration checks, permissions UI, native launcher/updater, and the
+full combined diagnostic package. This candidate has not been installed yet.
+
+Latest installed source: `3c6af03d0da3c1e68bd50e925f9ddf118e06d99d`.
+Latest report: `connection-report-20261103-213130-637793.json`.
+Both clean service and screen revisions match. There are 47 accepted connections,
+47 issued sessions, 47 send calls returned, zero send errors, and zero screen
+sessions. This proves removal of the native type exception, not delivered or
+authenticated replies. The report has no ordinary receive/reject telemetry.
+The launch callback still times out after eight seconds. Settings, root, browser
+pairing, startup/return and complete inventory acceptance remain unverified.
+
+## Private bootstrap design
+
+The service resolves wgt-private using Tizen's Filesystem API and atomically
+publishes `vetro-widget-session.json`, mode 0600. Each publication contains a
+random five-minute widget credential; renewal every two minutes retains valid
+prior credentials until expiry. Credentials are independent of the MessagePort
+session limit and are invalidated when the service stops or restarts. Failed
+publication revokes private credentials and reports a fixed error category.
+There is no shared-directory or temporary-directory fallback.
+
+The screen uses documented resolve/readAsText calls for that fixed private file.
+Reads are bounded by size and timeout, and validate schema, token format and
+expiry. The existing local HTTP gate and limited widget routes remain enforced;
+this credential cannot authorize owner operations or requests from LAN clients.
+No token, pairing code or file content is included in diagnostics. The existing
+MessagePort sender checks for third-party app permissions remain unchanged.
+
+Samsung documents wgt-private isolation. TV-Store v0.3.17 provides a concrete
+service-to-screen private-file precedent: its service writes an upload key into
+package data, and its screen reads that key through wgt-private. This supports
+the design choice but does not prove Vetro's hardware success.
+
+- https://developer.samsung.com/smarttv/develop/api-references/tizen-web-device-api-references/filesystem-api.html
+- https://github.com/Apps2Samsung/TV-Store/blob/v0.3.17/tizen-app/service/index.js
+- https://github.com/Apps2Samsung/TV-Store/blob/v0.3.17/tizen-app/js/app.js
+
+## Completed validation and next step
+
+New integration tests authenticate real HTTP requests and complete browser pairing
+while every MessagePort creation is unavailable. Tests cover file mode, expiry,
+renewal overlap, restart, corruption, failed atomic writes, symlinks, inaccessible
+storage, scoped routes, rejection of remote clients, and credential-free telemetry.
+The existing UI, authentication, lifecycle, transport and diagnostics suites pass
+locally. The package manifest includes both bootstrap modules.
+
+The collector now distinguishes reading a credential from authenticating a service
+request (`screenServiceAuthenticated`). For this transport, collection ends when
+matching screen checks finish, including failure, without waiting for a reply
+matrix that cannot run. `complete` describes collection, not authentication.
+
+Next: use the existing single-attempt update helper with target
+`95098ef5a6f472f49a542d8737d291fd65d6168b`, CI run `41782387008`, and
+expected-before `3c6af03d0da3c1e68bd50e925f9ddf118e06d99d`.
+The complete SSH update block was checked for Bash/Python syntax; the pinned
+helper SHA256 is
+`f0f8d63aff380764b53c54437cc09d16b3794a1f36d0602db82259954ece3555`.
+Require widgetBootstrap.ready, screenServiceAuthenticated=true, actual code display
+and browser pairing. Native repliesSent may remain zero because the screen no
+longer uses that reply path. Then verify root/settings and resume combined
+permissions/startup/return acceptance. No additional update has been installed yet.
+
+Repositories: Vetro `pponce/vetro`; authoritative branch
+`combined/permissions-startup-return` remains at historical baseline `35ebe185`.
+Candidate branch: `combined/runtime-wrapper-observation-20261103`.
+Host helper: `combined/runtime-wrapper-inspection-20261103`, pinned helper
+`6dbf1971d0694edfd9e58973c54c58f751219d90`.
+Glass Home: `pponce/glass-home-samsung-tv`, branch `combined/vetro-permissions`,
+revision `195e499e76ad4e9297c9962ce4347ad16bdb20be`.
+
+The user authorized broader changes and updates. Preserve all attempt records,
+certificates and settings. Do not repeat uncertain installs. Undocumented
+compatibility patches still require explicit approval; this change uses public
+filesystem APIs and does not unwrap or alter platform objects.
+
+## Historical checkpoint before the latest hardware result
+
 # MessagePort reply correction checkpoint
 
 ## Objective and current state
