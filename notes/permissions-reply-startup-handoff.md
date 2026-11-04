@@ -1,5 +1,7 @@
 # Permissions reply and startup handoff — 2026-11-04
 
+Current checkpoint: Glass Home revision `30c490194f1748d523262a1ac8985fe45f735729` is now verified installed and running. The returned reports identified command-marker corruption; continue with [the marker/input handoff](permissions-marker-input-handoff.md). The blocks below are retained records, not the next installation step.
+
 ## Objective and hardware state
 
 Restore Glass Home's approved app-list and launch access, then verify power-on and return behavior. Installed Vetro is now `fc0b236878a2249906edf774888f5a39f46842c0`: report `connection-report-20261104-001344-292474.json` verifies its clean service, matching screen and authenticated screen summary. Browser pairing, root and TV APIs have worked. Glass Home revision `30c490194f1748d523262a1ac8985fe45f735729` has passed CI but is not yet verified installed.
