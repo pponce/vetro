@@ -97,7 +97,8 @@ the older failure to use an existing approval.
 - Authoritative combined branch: `combined/permissions-startup-return`; unchanged.
 - Host capture tools: `pponce/vetro`,
   `combined/runtime-wrapper-inspection-20261103`, based on `8c96c3ef86fa7a2336d65316b41c76e0942ec7e7`.
-  The current helper revision and hashes are pinned in `tools/run-glass-access-capture.sh`.
+  Current helper revision: `6e367907fb337f2e636b2032a31f9e920f64f2e6`.
+  The helper revision and hashes are pinned in `tools/run-glass-access-capture.sh`.
   The readiness/retry correction supersedes `f3ba2c7d68698540e7b9d30d15f0fee0327f03de`.
 - Glass Home: `pponce/glass-home-samsung-tv`, `combined/vetro-permissions`,
   `30c490194f1748d523262a1ac8985fe45f735729`; no new application build prepared.
@@ -153,6 +154,8 @@ source/session preflight gates and normal reopen after a failed debug launch.
    Connect to Vetro once. Keep Glass Home visible through the capture.
    `tools/run-glass-access-capture.sh` is the complete checksum-verified SSH
    block for this test, with the helper revision and checksums pinned inside it.
+   Its repository copy accepts three arguments: the existing project root,
+   the TV's IPv4 address, and the report retrieval destination as `user@host`.
 3. Retrieve the new `vetro-install/access-diagnostics/glass-request-*.json`
    using the complete rsync command printed by the helper. Return partial
    reports too; do not reinstall to work around a capture failure.
