@@ -5,9 +5,9 @@ from pathlib import Path
 import hashlib, ipaddress, re, subprocess, sys, urllib.request
 
 helper_revision = 'fc7b8663a7708e85a1f3427bfb62b001a2442345'
-runtime_revision = '89eff781563e96ef36d9ce04b078c20329fedccf'
+runtime_revision = 'e4033b41f29fc418228494db38364199026902a6'
 expected_before = 'ce92708f55211738f3866756e287b5fb634c0b23'
-ci_run = '41909711698'
+ci_run = '41912982747'
 expected = {
     'input_update_handoff.py': '477ec7780063390869299b8cda1890db4c1bd246e271313a57e17f078a2db167',
     'update-connection-diagnostics.py': '405b1446c477600a0a042d986d3effb447f2b41a83abb492535dfc0deebbc7a8',
