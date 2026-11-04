@@ -135,14 +135,39 @@ application sources, packaged, installed, or submitted as an upstream fix.
 
 ## Decisions and next steps
 
-1. Keep the installed revision and all prior installation records.
-2. Obtain approval to replace the pinned build with one diagnostic-only build
-   containing the saved observation proposal. This changes the prior instruction
-   to keep the installed revision; do not install it before approval.
-3. If approved, apply the proposal on an isolated diagnostic branch, run full
-   application/integration CI, and use the existing installation ledger and
-   certificate workflow. Collect and verify the new report/revision. The purpose
-   is observation; it is not an authenticated-reply correction candidate.
+Ready diagnostic source: `d2b031cc8f44bff8e23ac03741fb6ceb5fa21935`, branch
+`combined/runtime-wrapper-observation-20261103`. All four jobs passed in
+[Source checks 41775045036](https://github.com/pponce/vetro/actions/runs/41775045036):
+application/integration/source checks, permissions UI, launcher, and the full
+combined diagnostic package. The first run caught the package-manifest test's
+missing entry for the new module; the expected manifest was corrected before
+this successful run. No TV update has been performed from this workspace.
+
+`tools/update-connection-diagnostics.py` reuses the saved Apps2Samsung beta CLI
+locator, its existing certificate store, the established checkout, and the
+`vetro-install/beta-recovery` attempt-record directory. It verifies the clean
+baseline and all four CI jobs, creates a detached pinned worktree, validates the
+complete package and diagnostic flags, submits at most one install for the
+target revision, and collects both screen and service evidence. Six local host
+tests pass, including an unresolved CLI result followed by a rerun with no second
+installation. It never requests uninstall, a new app ID or certificate creation.
+Existing target attempt files trigger collection only and are not cleared.
+
+1. The user authorized changes and the diagnostic update. The installed revision
+   is now a baseline, not a hold on updates. Preserve all installation records.
+2. The observation proposal has been applied on diagnostic branch
+   `combined/runtime-wrapper-observation-20261103`. Its added suite and four
+   existing transport/diagnostic suites pass locally. The historical proposal
+   and its pre-application validator remain in `notes/proposals` as records.
+   The user also authorized broader necessary changes. The build now attempts
+   one bounded read of the known runtime file from inside the service, using
+   ordinary Node filesystem access. A separate suite covers missing/denied files,
+   growth beyond the size cap, non-files, redaction and descriptor cleanup.
+   This may recover source that SDB cannot download; success is not assumed.
+3. Run full CI and build the complete diagnostic package, then use the existing
+   TV-Store relay and cached Partner certificate installation route. Collect and
+   verify the new report/revision. Pairing remains blocked pending a verified
+   authenticated reply correction; no compatibility workaround was applied.
 4. Use captured implementation and metadata to determine the documented outbound
    path, and inspect the producer/integrity of `org_remote` fields. Native-looking
    reconstructed metadata does not by itself establish authenticated identity.
