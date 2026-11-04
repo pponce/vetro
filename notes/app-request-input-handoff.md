@@ -63,7 +63,8 @@ do not persist an Off setting, kill remembered PIDs, or treat a delay as proof
 that the grab was released. The host updater must save its input-handoff outcome
 and return failure if the new input connection is unverified.
 
-Host tools on `combined/runtime-wrapper-inspection-20261103` now implement that
+Host helper revision `fc7b8663a7708e85a1f3427bfb62b001a2442345` on
+`combined/runtime-wrapper-inspection-20261103` implements that
 sequence in `input_update_handoff.py` and `update-connection-diagnostics.py`.
 The current helper must be uniquely associated with the active service by its
 native callback connection. After temporary observation is confirmed, the host
@@ -81,6 +82,12 @@ and permission summaries around a user-initiated Connect. It does not relaunch
 apps, use Web Inspector or mutate settings. The host suites cover the no-reinstall
 guard, helper release proof, no interference with an automatically restored
 filter, restoration failure, baseline cleanup and normal-mode capture.
+All 70 available local host tests pass. The repository runner
+`tools/run-app-request-update.sh` pins that helper revision and all five helper
+hashes. It accepts project root, TV address, local computer address and report
+destination as arguments. It runs the normal-mode collector only after the
+update verifies service, screen authentication and input. Do not run it while
+the required runtime CI jobs are failing.
 
 ## Next steps
 
