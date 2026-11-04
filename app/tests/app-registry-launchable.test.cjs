@@ -26,10 +26,39 @@ function sql(file,script){
 const calls=[];
 async function execute(command,timeoutMs){
  calls.push({command,timeoutMs});
- const result=cp.spawnSync('sh',['-c',command.split('/opt/dbspace').join(path.join(directory,'db'))],{
+ const result=cp.spawnSync('sh',['-c',installedAgentCommand(command.split('/opt/dbspace').join(path.join(directory,'db')))],{
   encoding:'utf8',timeout:timeoutMs,env:{...process.env,PATH:path.join(directory,'bin')+path.delimiter+process.env.PATH}
  });
  return {exit_code:result.status,timed_out:!!result.error,stdout:result.stdout,stderr:result.stderr};
+}
+// Model the installed native agent's QuoteArgument and .NET 6 Unix
+// ProcessStartInfo.Arguments parsing before executing the real shell/SQLite.
+// Only backslashes immediately preceding a quote are reduced by the parser.
+function installedAgentCommand(command){
+ const text='"'+command.replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"';
+ let result='',position=0,inQuotes=false;
+ while(position<text.length){
+  let count=0;
+  while(position<text.length&&text[position]==='\\'){count++;position++;}
+  if(count){
+   if(position===text.length||text[position]!=='"')result+='\\'.repeat(count);
+   else{
+    result+='\\'.repeat(Math.floor(count/2));
+    if(count%2){result+='"';position++;}
+   }
+   continue;
+  }
+  const character=text[position];
+  if(character==='"'){
+   if(inQuotes&&position+1<text.length&&text[position+1]==='"'){result+='"';position++;}
+   else inQuotes=!inQuotes;
+  }else result+=character;
+  position++;
+ }
+ return result;
+}
+function brokenMarkerExecute(command,timeoutMs){
+ return execute(command.replace("{ echo; echo '646f6e65|||'; }", "printf '\\n646f6e65|||\\n'"),timeoutMs);
 }
 (async()=>{
  sql(path.join(directory,'db/.pkgmgr_parser.db'),`
@@ -47,6 +76,12 @@ async function execute(command,timeoutMs){
  assert.equal(calls.length,1,'one root command reads both databases');assert.equal(calls[0].timeoutMs,4000);
  assert.ok(!/package_dependency_info|app_label|app_icon/.test(calls[0].command),'no full inventory fields');
  assert.match(calls[0].command,/app_id IN \('video.one','video.two'\)/);
+ const broken=await brokenMarkerExecute(calls[0].command,4000);
+ assert.equal(broken.exit_code,0);assert.equal(broken.timed_out,false);
+ assert.ok(broken.stdout.endsWith('\\n646f6e65|||\\n'),'old marker is literal backslash-n after native argument parsing');
+ await assert.rejects(registry.launchable(brokenMarkerExecute,['video.one','video.two']),/invalid registry field/);
+ assert.deepEqual((await registry.launchable(execute,['video.one','video.two'])).apps,data.apps,
+  'fixed marker preserves selected app eligibility through the installed transport');
  data=await registry.launchable(execute,['hidden.app','service.app'],1000);
  assert.deepEqual(data.apps,[{appId:'hidden.app',show:false,disabled:false}]);
  data=await registry.launchable(execute,['disabled.app','global.owner']);

@@ -34,7 +34,8 @@ function launchable(execute,appIds,timeoutMs){
         var override="SELECT hex('owner'),hex(app_id),'',hex(is_disabled) FROM package_app_info_for_uid WHERE uid="+ownerUid+" AND app_id IN ("+list+");";
         // A missing owner database has no override. An existing unreadable or
         // malformed database is an error; do not silently use global flags.
-        var cmd=command(base)+' && { if [ -e "'+ownerFile+'" ] || [ -L "'+ownerFile+'" ]; then sqlite3 -readonly "'+ownerFile+'" "'+override+'"; fi; } && printf \'\\n646f6e65|||\\n\'';
+        // Fixed marker words need no format escapes across process arguments.
+        var cmd=command(base)+' && { if [ -e "'+ownerFile+'" ] || [ -L "'+ownerFile+'" ]; then sqlite3 -readonly "'+ownerFile+'" "'+override+'"; fi; } && { echo; echo \'646f6e65|||\'; }';
         var limit=typeof timeoutMs==='number'&&isFinite(timeoutMs)?Math.floor(timeoutMs):4000;
         if(limit<1)throw Error('Foreground app validation expired');
         return execute(cmd,Math.min(limit,4000)).then(function(r){
