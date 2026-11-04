@@ -1,6 +1,7 @@
 'use strict';
 const assert=require('assert').strict,fs=require('fs'),os=require('os'),path=require('path'),cp=require('child_process');
 const registry=require('../service/app-permission-registry.js'),Access=require('../service/app-access.js');
+const accessFixture=require('./app-access-fixture.cjs');
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'vetro-permission-registry-'));
 const dbroot=path.join(root,'dbspace'),globalDb=path.join(dbroot,'.pkgmgr_parser.db');
 const uid=process.getuid?process.getuid():5001,ownerDb=path.join(dbroot,'user',String(uid),'.pkgmgr_parser.db');
@@ -29,9 +30,39 @@ function sql(file,statements){
 }
 function execute(command,timeout){
     calls.push({command,timeout});
-    const r=cp.spawnSync('sh',['-c',command.replace(/\/opt\/dbspace/g,dbroot)],
+    const r=cp.spawnSync('sh',['-c',installedAgentCommand(command.replace(/\/opt\/dbspace/g,dbroot))],
         {encoding:'utf8',timeout,env:{...process.env,PATH:root+path.delimiter+process.env.PATH},maxBuffer:3*1024*1024});
     return Promise.resolve({exit_code:r.status,timed_out:!!r.error,stdout:r.stdout,stderr:r.stderr});
+}
+// Model SamsungTvRootAgent's QuoteArgument followed by .NET 6 Unix
+// ProcessStartInfo.Arguments parsing (Process.Unix.cs GetNextArgument).
+// Backslashes not followed by a quote remain literal in the received argv.
+// The resulting command is then executed by the real shell and SQLite fixture.
+function installedAgentCommand(command){
+    const text='"'+command.replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"';
+    let result='',position=0,inQuotes=false;
+    while(position<text.length){
+        let count=0;
+        while(position<text.length&&text[position]==='\\'){count++;position++;}
+        if(count){
+            if(position===text.length||text[position]!=='"')result+='\\'.repeat(count);
+            else{
+                result+='\\'.repeat(Math.floor(count/2));
+                if(count%2){result+='"';position++;}
+            }
+            continue;
+        }
+        const character=text[position];
+        if(character==='"'){
+            if(inQuotes&&position+1<text.length&&text[position+1]==='"'){result+='"';position++;}
+            else inQuotes=!inQuotes;
+        }else result+=character;
+        position++;
+    }
+    return result;
+}
+function brokenMarkerExecute(command,timeout){
+    return execute(command.replace(/echo 636f6d706c657465$/, "printf '%s\\n' 636f6d706c657465"),timeout);
 }
 function pkg(id,system='false',preload='false',version='1.0'){
     sql(globalDb,[['INSERT INTO package_info VALUES(?,?,?,?)',[id,version,system,preload]]]);
@@ -76,6 +107,32 @@ const encoded=values=>values.map(value=>Buffer.from(value).toString('hex')).join
     assert.equal(row(d,'unknown.app').system,null);assert.equal(row(d,'unknown.app').preload,null);
     assert.equal(Access.userApp(row(d,'unknown.app'),d.apps),false);
     assert.equal(Access.launchableApp(row(d,'unknown.app'),d.apps),false);
+
+    // A successful query with the old marker becomes literal backslash-n in
+    // the installed agent, so the reader rejects before approval is queued.
+    const broken=await brokenMarkerExecute(calls[0].command,4000);
+    assert.equal(broken.exit_code,0);assert.equal(broken.timed_out,false);
+    assert.ok(broken.stdout.endsWith('636f6d706c657465\\n'));
+    await assert.rejects(registry.load(brokenMarkerExecute),/invalid registry field/);
+    const f=accessFixture();
+    try{
+        f.installed['garage.app'].packageId='garage.pkg';
+        f.options.inventory=()=>registry.load(brokenMarkerExecute);
+        await f.enable();
+        await assert.rejects(f.access.call('garage.app','access.request',{scopes:['apps.read']}),e=>e.code==='unavailable');
+        assert.equal(f.access.snapshot().pending.length,0);
+        f.options.inventory=()=>registry.load(execute);
+        const request=await f.access.call('garage.app','access.request',{scopes:['apps.read']});
+        assert.equal(request.state,'pending');
+        assert.equal(f.access.snapshot().pending.length,1);
+        assert.equal(f.access.snapshot().pending[0].id,request.requestId);
+        assert.equal(f.access.snapshot().grants.length,0,'framing never grants access without owner approval');
+        await assert.rejects(f.access.call('garage.app','apps.list',{}),e=>e.code==='permission_denied');
+        await f.access.admin({action:'approve',requestId:request.requestId,scopes:['apps.read'],expectedRevision:f.access.state.revision});
+        assert.equal(f.access.snapshot().pending.length,0);
+        assert.equal(f.access.snapshot().grants.length,1);
+        await f.access.call('garage.app','apps.list',{});
+    }finally{f.close();}
 
     // Every call is live; no cached flags or versions authorize the next call.
     sql(globalDb,[['UPDATE package_app_info SET app_disable=? WHERE app_id=?',['true','garage.app']],

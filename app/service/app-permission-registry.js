@@ -23,9 +23,10 @@ function load(execute, probe) {
         // overrides; an existing but unreadable/unsupported DB fails closed.
         // The trailing marker also detects truncated output that might omit a
         // protected sibling. It is emitted only after both reads succeed.
+        // Its fixed hex word needs no format escapes across process arguments.
         var command = query('/opt/dbspace/.pkgmgr_parser.db', base) + ' && { if [ -e "' + ownerFile +
             '" ] || [ -L "' + ownerFile + '" ]; then ' + query(ownerFile, override) +
-            '; fi; } && printf \'%s\\n\' 636f6d706c657465';
+            '; fi; } && echo 636f6d706c657465';
         return execute(command, 4000).then(function (result) {
             if (!result || result.exit_code !== 0 || result.timed_out || typeof result.stdout !== 'string' ||
                 Buffer.byteLength(result.stdout, 'utf8') > MAX_OUTPUT) throw Error('App permission registry unavailable');
