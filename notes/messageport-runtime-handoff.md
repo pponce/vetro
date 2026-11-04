@@ -1,3 +1,45 @@
+# Hardware milestone: screen authentication and browser pairing verified
+
+## Current state
+
+Installed revision: `95098ef5a6f472f49a542d8737d291fd65d6168b`.
+Report: `connection-report-20261103-220425-655360.json`.
+Both service and screen report this revision; service sourceDirty is false.
+The private bootstrap is ready with no error. The screen reports
+sessionReceived=true, serviceAuthenticated=true, serviceReach.ok=true,
+summaryReady=true, screenError="" and pairingError="". Collection completed in
+9.1 seconds. The user subsequently confirmed successful browser pairing.
+The screen/service authentication and browser-pairing blocker is resolved on
+the TV using the package-private file transport.
+
+MessagePort repliesSent=0 is expected for this screen path and is not a failure.
+External-app MessagePort replies remain unverified. The report's unauthenticated
+collector response still says to pair the requesting device; it does not negate
+the screen's authenticated requests or the user's successful browser pairing.
+The install command returned zero without a recognized installation response;
+matching live revisions prove the update. Author certificate unchanged=true.
+
+## Remaining work
+
+The serviceLaunch callback still times out after eight seconds. Source review
+confirms the bounded check continues to authenticated reach/readScreen calls,
+and the root/launcher rows depend on the returned service summary, not that
+callback. This is a separate lifecycle item, not a current authentication block.
+
+The user reports other errors and will provide a screenshot. The connection
+report deliberately omits the full /screen summary, so it cannot establish root,
+input or launcher state. Do not infer these errors from the callback timeout.
+Next: review the screenshot, then use the now-paired dashboard's diagnostics to
+inspect the actual remaining failure. Verify root, saved settings, external-app
+permissions, startup/return and full inventory before combined acceptance.
+No additional installation is required to establish this milestone.
+
+Repository/branch details, design, all four passing CI jobs (41782387008) and
+previous decisions are retained below. Preserve report/attempt records, existing
+certificates/settings and strict app identity checks. Use documented APIs first.
+
+## Historical checkpoint before hardware validation
+
 # Private-storage screen bootstrap checkpoint
 
 ## Current decision and implementation
