@@ -4,13 +4,26 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+sys.path.insert(0, str(Path(__file__).parents[1]))
 SPEC = importlib.util.spec_from_file_location('updater', Path(__file__).parents[1] / 'update-connection-diagnostics.py')
 M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
+
+
+class FixtureHandoff:
+    def __init__(self, owner, record, save):
+        self.record, self.save = record, save
+    def begin(self, revision):
+        self.record.update(required=True, observationRequested=True, oldFilterExited=True, verified=False)
+        self.save(self.record)
+    def restore(self, revision):
+        self.record.update(observationRequested=False, verified=True)
+        self.save(self.record)
 
 
 class UpdateDiagnosticTests(unittest.TestCase):
@@ -77,6 +90,7 @@ class UpdateDiagnosticTests(unittest.TestCase):
                          '--revision', revision, '--expected-before', baseline, '--report-host', 'fixture@192.0.2.2', '--ci-run', '1']
             result = subprocess.CompletedProcess([], 1, json.dumps({'ok': False, 'error': 'Fixture disconnect'}), '')
             with patch('sys.argv', arguments), patch.object(M, 'verify_ci'), patch.object(M, 'read_json', return_value=status), \
+                 patch.object(M, 'OwnerClient', return_value=Mock(token='fixture')), patch.object(M, 'InputHandoff', FixtureHandoff), \
                  patch.object(M, 'checkout', return_value=project), patch.object(M, 'idle_relay'), \
                  patch.object(M, 'checked', side_effect=[M.CLI_VERSION, json.dumps(cert), '']), \
                  patch.object(M, 'run', return_value=result) as install, patch.object(M, 'collect', side_effect=lambda *a: json.loads(json.dumps(captured))), \
@@ -115,16 +129,75 @@ class UpdateDiagnosticTests(unittest.TestCase):
         for service, screen, authenticated in [(True, True, True), (True, True, False), (True, False, True), (False, True, True), (True, True, 1)]:
             with self.subTest(service=service, screen=screen, authenticated=authenticated), tempfile.TemporaryDirectory() as temporary:
                 project = Path(temporary)
+                input_record = project / ('vetro-install/beta-recovery/input-handoff-' + 'b' * 12 + '.json')
+                input_record.parent.mkdir(parents=True)
+                input_record.write_text(json.dumps({'schema': 1, 'targetRevision': 'b' * 40,
+                    'required': True, 'observationRequested': True, 'verified': False}))
                 arguments = ['updater', '--project-root', str(project), '--tv', '192.0.2.1', '--local-ip', '192.0.2.2',
                              '--revision', 'b' * 40, '--expected-before', 'a' * 40, '--report-host', 'fixture@192.0.2.2', '--ci-run', '1']
                 report = {'capture': {'runningServiceVerified': service, 'screenBuildVerified': screen,
                                      'screenServiceAuthenticated': authenticated}, 'status': {}}
                 with patch('sys.argv', arguments), patch.object(M, 'verify_ci'), \
+                     patch.object(M, 'OwnerClient', return_value=Mock(token='fixture')), patch.object(M, 'InputHandoff', FixtureHandoff), \
                      patch.object(M, 'read_json', return_value={'connectionDiagnostics': {'sourceRevision': 'b' * 40, 'sourceDirty': False}}), \
                      patch.object(M, 'checkout', return_value=project), patch.object(M, 'collect', return_value=report), \
                      patch.object(M, 'run') as install, contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(M.main(), 0 if service is True and screen is True and authenticated is True else 1)
                 install.assert_not_called()
+
+    def test_verified_application_still_fails_when_remote_cannot_resume(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            record = project / ('vetro-install/beta-recovery/input-handoff-' + 'b' * 12 + '.json')
+            record.parent.mkdir(parents=True)
+            record.write_text(json.dumps({'schema': 1, 'targetRevision': 'b' * 40,
+                'required': True, 'observationRequested': True, 'verified': False}))
+            arguments = ['updater', '--project-root', str(project), '--tv', '192.0.2.1', '--local-ip', '192.0.2.2',
+                         '--revision', 'b' * 40, '--expected-before', 'a' * 40, '--report-host', 'fixture@192.0.2.2', '--ci-run', '1']
+            captured = {'capture': {'runningServiceVerified': True, 'screenBuildVerified': True,
+                                   'screenServiceAuthenticated': True}, 'status': {}}
+            output = io.StringIO()
+            with patch('sys.argv', arguments), patch.object(M, 'verify_ci'), \
+                 patch.object(M, 'OwnerClient', return_value=Mock(token='fixture')), patch.object(M, 'InputHandoff', FixtureHandoff), \
+                 patch.object(FixtureHandoff, 'restore', side_effect=RuntimeError('Remote remains disconnected')), \
+                 patch.object(M, 'read_json', return_value={'connectionDiagnostics': {'sourceRevision': 'b' * 40, 'sourceDirty': False}}), \
+                 patch.object(M, 'checkout', return_value=project), patch.object(M, 'collect', return_value=captured), \
+                 patch.object(M, 'run') as install, contextlib.redirect_stdout(output):
+                self.assertEqual(M.main(), 1)
+            install.assert_not_called()
+            self.assertNotIn('VERIFIED:', output.getvalue())
+            self.assertIn('temporarily paused', output.getvalue())
+
+    def test_failed_handoff_never_submits_install_and_restores_baseline(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            cli = project / 'fixture-cli'
+            cli.write_text('fixture');cli.chmod(0o700)
+            locator = project / 'vetro-install/bin/apps2samsung-beta.path'
+            locator.parent.mkdir(parents=True);locator.write_text(str(cli))
+            profile = project / 'fixture-profile';profile.mkdir()
+            (profile / 'author.p12').write_bytes(b'fixture-author')
+            arguments = ['updater', '--project-root', str(project), '--tv', '192.0.2.1', '--local-ip', '192.0.2.2',
+                         '--revision', 'b' * 40, '--expected-before', 'a' * 40, '--report-host', 'fixture@192.0.2.2', '--ci-run', '1']
+            cert = {'ok': True, 'tvDuid': 'EXAMPLE1234567', 'profiles': [{'level': 'Partner', 'exists': True,
+                    'usable': True, 'duids': ['EXAMPLE1234567'], 'path': str(profile)}]}
+            class FailedHandoff(FixtureHandoff):
+                def begin(self, revision):
+                    super().begin(revision)
+                    self.record['oldFilterExited'] = False
+                    raise RuntimeError('Old helper still alive')
+            with patch('sys.argv', arguments), patch.object(M, 'verify_ci'), \
+                 patch.object(M, 'OwnerClient', return_value=Mock(token='fixture')), patch.object(M, 'InputHandoff', FailedHandoff), \
+                 patch.object(M, 'read_json', return_value={'connectionDiagnostics': {'sourceRevision': 'a' * 40, 'sourceDirty': False}}), \
+                 patch.object(M, 'checkout', return_value=project), patch.object(M, 'idle_relay'), \
+                 patch.object(M, 'checked', side_effect=[M.CLI_VERSION, json.dumps(cert), '']), \
+                 patch.object(M, 'run') as install, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(M.main(), 1)
+            install.assert_not_called()
+            saved = json.loads(next((project / 'vetro-install/beta-recovery').glob('input-handoff-*.json')).read_text())
+            self.assertTrue(saved['verified'])
+            self.assertFalse(saved['observationRequested'])
+            self.assertEqual(list((project / 'vetro-install/beta-recovery').glob('attempt-*.json')), [])
 
 
 if __name__ == '__main__':

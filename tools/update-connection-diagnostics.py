@@ -16,6 +16,9 @@ import time
 import urllib.error
 import urllib.request
 
+from vetro_owner import OwnerClient
+from input_update_handoff import InputHandoff
+
 CLI_VERSION = '3.2.0-beta+48a04324a1981b0712690729b2f3d58755db8395'
 
 
@@ -167,10 +170,12 @@ def main():
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     report_path = directory / ('connection-report-' + stamp + '.json')
     attempt = directory / ('attempt-' + args.revision[:12] + '.json')
+    input_record = directory / ('input-handoff-' + args.revision[:12] + '.json')
     info = {'targetRevision': args.revision, 'expectedBefore': args.expected_before,
             'installSubmittedByThisRun': False, 'errors': []}
     report = {'capture': {'complete': False, 'expectedRevision': args.revision}, 'status': None}
     lock = None
+    handoff = None
     verified = False
     try:
         lock = (directory / 'diagnostic-update.lock').open('a')
@@ -182,6 +187,23 @@ def main():
         info['action'] = action
         print('Preparing the pinned source with all four CI jobs passed...', flush=True)
         worktree = checkout(project, args.revision)
+        owner = OwnerClient('http://' + args.tv + ':8099', project / 'vetro-install/combined-updates')
+        if not owner.token:
+            raise RuntimeError('Existing owner pairing is required for the input handoff; no pairing was started')
+        def save_input(record):
+            temporary = input_record.with_suffix('.tmp')
+            with temporary.open('w', encoding='utf-8') as output:
+                json.dump(record, output, indent=2)
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(input_record)
+        if input_record.exists():
+            record = json.loads(input_record.read_text())
+            if record.get('schema') != 1 or record.get('targetRevision') != args.revision:
+                raise RuntimeError('Input handoff record does not match this update')
+            handoff = InputHandoff(owner, record, save_input)
+        elif action == 'install':
+            handoff = InputHandoff(owner, {'schema': 1, 'targetRevision': args.revision}, save_input)
         if action == 'install':
             cli = Path((project / 'vetro-install/bin/apps2samsung-beta.path').read_text().strip()).resolve()
             if not cli.is_file() or not os.access(cli, os.X_OK):
@@ -200,6 +222,9 @@ def main():
             env.pop('VETRO_SOURCE_REVISION', None)
             checked(['node', '-e', BUILD, package, args.revision], cwd=worktree, env=env)
             idle_relay(args.tv)
+            if handoff.record.get('observationRequested'):
+                handoff.restore(args.expected_before)
+            handoff.begin(args.expected_before)
             ledger = {'schema': 1, 'revision': args.revision, 'stage': 'install-command-starting',
                       'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'report': str(report_path)}
             with attempt.open('x') as output:
@@ -225,19 +250,36 @@ def main():
             info['authorCertificateUnchanged'] = hashlib.sha256(author.read_bytes()).hexdigest() == author_before
         else:
             print('Collecting only; no installation will be repeated.', flush=True)
-        print('If Vetro is not visible, open it once with the TV remote. Leave its checks running.', flush=True)
+        print('If Vetro is not visible, open it once with the TV remote. Let the quick startup checks finish; full diagnostics are not needed.', flush=True)
         report = collect(worktree, args.tv, args.revision)
         capture = report.get('capture') or {}
         verified = all(capture.get(key) is True for key in (
             'runningServiceVerified', 'screenBuildVerified', 'screenServiceAuthenticated'))
         if verified:
-            print('VERIFIED: service and authenticated screen report the new revision.', flush=True)
+            if handoff is None:
+                raise RuntimeError('Application revision verified, but this earlier attempt has no input handoff record')
+            handoff.restore(args.revision)
+            verified = handoff.record.get('verified') is True
+            if not verified:
+                raise RuntimeError('Input restoration has not been verified')
+            print('VERIFIED: new service, authenticated screen and restored remote input.', flush=True)
         else:
             print('PARTIAL: running service, screen revision and screen authentication were not all verified.', flush=True)
     except Exception as error:
+        verified = False
         info['errors'].append(str(error) if isinstance(error, (RuntimeError, ValueError)) else type(error).__name__)
         print('STOPPED:', info['errors'][-1], flush=True)
+        if handoff is not None and handoff.record.get('observationRequested') and not info['installSubmittedByThisRun'] and info.get('action') == 'install':
+            try:
+                handoff.restore(args.expected_before)
+            except Exception as restore_error:
+                info['errors'].append('Input cleanup: ' + type(restore_error).__name__)
+                print('Saved remote input restoration is unverified; see the report.', flush=True)
     finally:
+        if handoff is not None:
+            report['inputHandoff'] = handoff.record
+            if handoff.record.get('observationRequested'):
+                print('Remote interception is temporarily paused; saved mappings are retained. Rerun verification after the service is available.', flush=True)
         report['installation'] = info
         with report_path.open('x', encoding='utf-8') as output:
             json.dump(report, output, indent=2)

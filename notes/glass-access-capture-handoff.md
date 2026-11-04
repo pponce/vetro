@@ -1,5 +1,11 @@
 # Glass Home request capture — 2026-11-04
 
+> Current continuation: [App request receiver and update input handoff](app-request-input-handoff.md).
+> The third inspector capture succeeded: 36 polls all returned inner 404, with
+> one observed Connect busy interval and no Glass Home permission-handler event.
+> A receiver diagnostic candidate and an updater input handoff are prepared;
+> the candidate is blocked by a failed launcher CI step.
+
 ## Latest capture: early inspector connection drop and startup waiting
 
 `glass-request-20261104-202022-238012.json` again verified the clean Vetro
