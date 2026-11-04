@@ -49,11 +49,14 @@ Cache.prototype.invalid=function(entry){
     if(current.revision!==entry.identity.revision||current.grant!==entry.identity.grant)return 'permission_denied';
     return null;
 };
-Cache.prototype.reserve=function(appId,message){
-    if(!validId(appId)||!message||!message.reply||!hex(message.reply.id)||!hex(message.reply.key))return null;
+Cache.prototype.reserve=function(appId,message,observe){
+    function refused(reason){try{if(typeof observe==='function')observe(reason);}catch(_){}return null;}
+    if(!validId(appId)||!message||!message.reply||!hex(message.reply.id)||!hex(message.reply.key))return refused('invalid');
     this.prune();
     var self=this,id=message.reply.id,seen=Object.keys(this.seen),entries=Object.keys(this.entries);
-    if(this.seen[id]||seen.length>=MAX_SEEN||seen.filter(function(k){return self.seen[k].appId===appId;}).length>=MAX_SEEN_PER_APP)return null;
+    if(this.seen[id])return refused('replay');
+    if(seen.length>=MAX_SEEN)return refused('replay-limit');
+    if(seen.filter(function(k){return self.seen[k].appId===appId;}).length>=MAX_SEEN_PER_APP)return refused('app-replay-limit');
     function makeRoom(owned,limit){
         while(owned.length>=limit){
             var completed=owned.filter(function(k){return self.entries[k].body!==null;}).sort(function(a,b){return self.entries[a].created-self.entries[b].created;});
@@ -62,8 +65,8 @@ Cache.prototype.reserve=function(appId,message){
         }
         return true;
     }
-    if(!makeRoom(entries.filter(function(k){return self.entries[k].appId===appId;}),MAX_PER_APP))return null;
-    if(!makeRoom(Object.keys(this.entries),MAX_ENTRIES))return null;
+    if(!makeRoom(entries.filter(function(k){return self.entries[k].appId===appId;}),MAX_PER_APP))return refused('app-busy');
+    if(!makeRoom(Object.keys(this.entries),MAX_ENTRIES))return refused('global-busy');
     var now=this.now(),identity=null;
     try{identity=this.capture(appId);}catch(_){}
     var entry={id:id,requestId:message.id,appId:appId,identity:identity,
@@ -131,3 +134,4 @@ Cache.prototype.handle=function(req,res,url){
     return send(200,{body:entry.body,mac:entry.mac});
 };
 module.exports={Cache:Cache,TTL:TTL,MAX_BODY:MAX_BODY,PREFIX:PREFIX};
+

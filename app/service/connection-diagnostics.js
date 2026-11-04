@@ -7,6 +7,12 @@ var ERROR_NAMES = ['Error','TypeError','SyntaxError','SecurityError','NotFoundEr
 var STAGES = ['not-started','port-create','reply-port-create','listener-add','listening','received',
     'sender-rejected','frame-rejected','method-rejected','accepted','session-issued',
     'session-error','reply-sent','reply-error','stopped'];
+var APP_STAGES = ['received','sender-rejected','frame-rejected','params-rejected',
+    'reply-unavailable','reply-rejected','reply-error','reply-reserved','dispatch',
+    'handler-resolved','handler-rejected'];
+var APP_METHODS = ['access.request','access.status','apps.list','apps.launch','tasks.list','tasks.stop',
+    'brightness.read','brightness.set','audio.key','playback.key','power.off'];
+var REPLY_REASONS = ['invalid','replay','replay-limit','app-replay-limit','app-busy','global-busy'];
 function errorName(error) {
     try { return error && ERROR_NAMES.indexOf(error.name) >= 0 ? error.name : 'Error'; }
     catch (_) { return 'Error'; }
@@ -36,6 +42,7 @@ function Diagnostics(info) {
         storage:{phase:'not-started',authReady:false,appsReady:false,error:null},
         widgetBootstrap:{transport:'private-storage',ready:false,publications:0,error:null},
         appPort:{available:false,error:null},
+        appRequests:{enabled:this.reportEnabled,counts:{},events:[]},
         widget:{portCreated:false,listenerRegistered:false,received:0,rejected:0,
             accepted:0,sessionsIssued:0,repliesSent:0,replyErrors:0,
             stage:'not-started',error:null,sender:null,frame:null,replyDiagnostics:null},screen:null
@@ -50,6 +57,30 @@ Diagnostics.prototype.storage=function(phase,authReady,appsReady,error) {
 };
 Diagnostics.prototype.appPort=function(available,error) {
     this.state.appPort={available:available===true,error:error?errorName(error):null};
+};
+Diagnostics.prototype.appRequest=function(stage,data,remote,request,error,reason) {
+    if(!this.reportEnabled||APP_STAGES.indexOf(stage)<0)return;
+    var state=this.state.appRequests,event={stage:stage,error:error?errorName(error):null,
+        method:request&&APP_METHODS.indexOf(request.method)>=0?request.method:null,
+        version:request&&(request.version===1||request.version===2)?request.version:null,
+        replyReason:REPLY_REASONS.indexOf(reason)>=0?reason:null,sender:null,frame:null};
+    try {
+        var appId=remote&&remote.appId,item=Array.isArray(data)&&data.length===1?data[0]:null;
+        event.sender={present:!!remote,
+            app:appId==='GlassHome1.GlassHome'?'glass-ui':appId==='GlassHome1.Photos'?'glass-service':
+                typeof appId==='string'&&appId.length>0?'other':'missing',
+            appIdPresent:typeof appId==='string'&&appId.length>0,
+            portNamePresent:!!remote&&typeof remote.messagePortName==='string'&&remote.messagePortName.length>0,
+            trustedIsBoolean:!!remote&&typeof remote.isTrusted==='boolean',
+            trusted:!!remote&&remote.isTrusted===true,canReply:!!remote&&typeof remote.sendMessage==='function'};
+        event.frame={isArray:Array.isArray(data),singleItem:Array.isArray(data)&&data.length===1,
+            jsonKey:!!item&&item.key==='json',stringValue:!!item&&typeof item.value==='string',
+            arrayValue:!!item&&Array.isArray(item.value),
+            bytes:!!item&&typeof item.value==='string'?Math.min(4097,Buffer.byteLength(item.value)):null};
+    } catch (_) { event.sender=null;event.frame=null; }
+    if(state.counts[stage]===undefined)state.counts[stage]=0;
+    increment(state.counts,stage);
+    state.events.push(event);if(state.events.length>32)state.events.shift();
 };
 Diagnostics.prototype.bootstrap=function(state) {
     this.state.widgetBootstrap={transport:'private-storage',ready:state.ready===true,
@@ -106,3 +137,4 @@ Diagnostics.prototype.snapshot=function() {
     return JSON.parse(JSON.stringify(this.state));
 };
 module.exports={Diagnostics:Diagnostics};
+

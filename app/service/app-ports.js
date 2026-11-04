@@ -5,6 +5,10 @@ var MAX_REQUEST=4096,MAX_RESPONSE=16384;
 function start(tizen,access,auth,diagnostics,replies) {
     var local,internal,widgetReply,listener,widgetListener,widgetReplyListener,watching=false,widgetStage='port-create';
     function trace(stage,error) { if(diagnostics)diagnostics.widget(stage,error); }
+    function appTrace(stage,data,remote,p,error,reason) {
+        // Diagnostic failures must never affect request validation or dispatch.
+        try {if(diagnostics&&typeof diagnostics.appRequest==='function')diagnostics.appRequest(stage,data,remote,p,error,reason);}catch(_){}
+    }
     function hasReplyTarget(remote) {
         return remote && typeof remote.appId==='string' && remote.appId.length>0 &&
             typeof remote.messagePortName==='string' && remote.messagePortName.length>0 &&
@@ -52,19 +56,34 @@ function start(tizen,access,auth,diagnostics,replies) {
         watching=true;
         local=tizen.messageport.requestLocalMessagePort(APP_PORT);
         listener=local.addMessagePortListener(function(data,remote){
-            var p,ticket;
+            var p,ticket,rejection='sender-rejected',replyReason;
+            appTrace('received',data,remote);
             try {
-                if (!hasReplyTarget(remote)) return;
+                if (!hasReplyTarget(remote)) {appTrace('sender-rejected',data,remote);return;}
+                rejection='frame-rejected';
                 p=decode(data);
+                rejection='params-rejected';
                 if(p.method==='access.request' && Object.keys(p.params).some(function(k){return k!=='scopes';}) ||
                    p.method==='access.status' && Object.keys(p.params).length) throw Error('Invalid app request');
-            } catch (_) { return; }
+            } catch (error) {appTrace(rejection,data,remote,p,error);return;}
             if(p.version===2){
                 // Only a native-identified MessagePort request can create a reply
                 // capability. HTTP cannot reserve one or dispatch an operation.
-                if(!replies||(ticket=replies.reserve(remote.appId,p))===null)return;
-                access.call(remote.appId,p.method,p.params).then(function(r){replies.complete(ticket,r,null);},function(e){replies.complete(ticket,null,e);});
-            }else access.call(remote.appId,p.method,p.params).then(function(r){reply(remote,p,r,null,local);},function(e){reply(remote,p,null,e,local);});
+                if(!replies){appTrace('reply-unavailable',data,remote,p);return;}
+                try {ticket=replies.reserve(remote.appId,p,function(reason){replyReason=reason;});}
+                catch(error){appTrace('reply-error',data,remote,p,error);throw error;}
+                if(ticket===null){appTrace('reply-rejected',data,remote,p,null,replyReason);return;}
+                appTrace('reply-reserved',data,remote,p);
+                appTrace('dispatch',data,remote,p);
+                access.call(remote.appId,p.method,p.params).then(function(r){
+                    appTrace('handler-resolved',data,remote,p);replies.complete(ticket,r,null);
+                },function(e){appTrace('handler-rejected',data,remote,p,e);replies.complete(ticket,null,e);});
+            }else {
+                appTrace('dispatch',data,remote,p);
+                access.call(remote.appId,p.method,p.params).then(function(r){
+                    appTrace('handler-resolved',data,remote,p);reply(remote,p,r,null,local);
+                },function(e){appTrace('handler-rejected',data,remote,p,e);reply(remote,p,null,e,local);});
+            }
         });
         access.transport={available:true,error:null};
         if(diagnostics)diagnostics.appPort(true);
@@ -121,3 +140,4 @@ function start(tizen,access,auth,diagnostics,replies) {
     return handle;
 }
 module.exports={start:start,APP_PORT:APP_PORT,WIDGET_PORT:WIDGET_PORT,WIDGET_REPLY_PORT:WIDGET_REPLY_PORT};
+
