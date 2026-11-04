@@ -1,5 +1,7 @@
 # Input lifecycle correction — 2026-11-04
 
+> Current continuation: [Glass Home request capture](glass-access-capture-handoff.md). The cold boot restored input; the Glass Home request still times out. The state and next steps below describe the preceding pre-boot checkpoint.
+
 ## Objective and current state
 
 Restore Glass Home app permissions, reliable remote/Home routing, power-on selection and return behavior.
