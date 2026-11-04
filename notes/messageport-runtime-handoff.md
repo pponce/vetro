@@ -96,19 +96,59 @@ error and a subsequent transport failure. These validate host behavior only.
 The revised collector has not yet been run on the TV. The application remains at
 the installed revision, with no runtime workaround or installation included.
 
+## Confirmed source path and SDB download restriction
+
+`runtime-wrapper-20261103-202551-412850.json` verifies the same running revision.
+The directory reply for `/usr/share/wrt/app/service` lists `service_runner.js`
+as a regular file, 21,406 bytes, mode 0644. The direct RECV request returned
+`You cannot pull files from this path.` This identifies an SDB path restriction;
+it does not establish whether the application process itself may read the file.
+No runtime source was retrieved, and the loaded implementation remains unknown.
+
+The collector completed 484 directory replies (467 nonempty, 17 empty) out of
+485 attempts before a TimeoutError at 90.001 transport seconds. This matches its
+90-second budget; the directory-count cap was not reached. The retained frames
+show successful exchanges on new channels and delayed zero-sender CLSE frames
+for retired channels. The earlier stream-identity error did not recur in this
+capture. An increased timeout would not resolve the explicit RECV restriction.
+
+The earlier Apps2Samsung service-debug attempt also failed: the TV closed the
+debug-start connection for `vetrotvapp.svc` on three fresh connections. The screen
+debugger was available, but that does not establish service-debugger access.
+Do not ask for another identical service-attach or broad SDB source scan.
+Repository and web searches found no matching published wrapper implementation.
+
+An unapplied proposal is saved at
+`notes/proposals/observe-messageport-wrappers.patch`. It captures the local wrapper
+constructor and the fresh remote wrapper's constructor/send method, plus bounded
+metadata and equality checks before the existing guard can reject the object.
+It reads no new filesystem paths and introduces no new send path or probe.
+Known credentials and dynamic reply-port names are scrubbed from the new fields.
+It does not read or pass through `messagePortObj`.
+
+Validation: `python3 notes/proposals/validate-wrapper-observation.py` applies the
+proposal only inside a temporary local fixture. The added observation suite and
+four existing suites (wrapper boundary, comprehensive diagnostics, app ports,
+widget transport) pass against that fixture. These tests do not establish a
+working correction or hardware delivery. The proposal has not been applied to
+application sources, packaged, installed, or submitted as an upstream fix.
+
 ## Decisions and next steps
 
 1. Keep the installed revision and all prior installation records.
-2. Run the inspection collector from the established project directory with the
-   TV-Store relay idle. Keep its JSON report locally and return it for analysis.
-3. Compare any retrieved runtime source with the captured function bodies. Inspect
-   RemoteMessagePortRouter's constructor, metadata, and outbound send path, plus
-   the producer and integrity checks of the org_remote routing fields.
-4. If source cannot be read, report the actual access limitation. Do not infer an
-   API conversion or run a new installation, key registration, or shell exploit.
+2. Obtain approval to replace the pinned build with one diagnostic-only build
+   containing the saved observation proposal. This changes the prior instruction
+   to keep the installed revision; do not install it before approval.
+3. If approved, apply the proposal on an isolated diagnostic branch, run full
+   application/integration CI, and use the existing installation ledger and
+   certificate workflow. Collect and verify the new report/revision. The purpose
+   is observation; it is not an authenticated-reply correction candidate.
+4. Use captured implementation and metadata to determine the documented outbound
+   path, and inspect the producer/integrity of `org_remote` fields. Native-looking
+   reconstructed metadata does not by itself establish authenticated identity.
 5. Prefer the documented outbound API. Present an exact proposed change and obtain
    approval before applying an undocumented wrapper compatibility patch.
-6. Before an install candidate, require model tests for authenticated delivery,
+6. Before a correction install candidate, require model tests for authenticated delivery,
    strict sender checks and app-access replies, plus application/integration CI.
 7. Hardware acceptance still requires repliesSent > 0, sessionReceived=true,
    code display, browser pairing, root, saved settings, startup/return, and inventory.
