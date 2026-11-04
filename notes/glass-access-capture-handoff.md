@@ -34,6 +34,7 @@ the older failure to use an existing approval.
 - Authoritative combined branch: `combined/permissions-startup-return`; unchanged.
 - Host capture tools: `pponce/vetro`,
   `combined/runtime-wrapper-inspection-20261103`, based on `8c96c3ef86fa7a2336d65316b41c76e0942ec7e7`.
+  Capture helper revision: `151bdf94e2074ccc47827fa3141243710baef135`.
 - Glass Home: `pponce/glass-home-samsung-tv`, `combined/vetro-permissions`,
   `30c490194f1748d523262a1ac8985fe45f735729`; no new application build prepared.
 
@@ -88,6 +89,8 @@ in the capture, reused SDB transport and owner-client suites pass together.
 2. Run the pinned capture helper with the existing project root. At CAPTURING,
    open Glass Home's + panel, wait for Checking apps to finish, then choose
    Connect to Vetro once. Keep Glass Home visible through the capture.
+   `tools/run-glass-access-capture.sh` is the complete checksum-verified SSH
+   block for this test, pinned to the helper revision above.
 3. Retrieve the new `vetro-install/access-diagnostics/glass-request-*.json`
    using the complete rsync command printed by the helper. Return partial
    reports too; do not reinstall to work around a capture failure.
