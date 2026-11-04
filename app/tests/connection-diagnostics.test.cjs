@@ -1,5 +1,5 @@
 'use strict';
-const assert=require('assert').strict,fs=require('fs'),path=require('path');
+const assert=require('assert').strict,fs=require('fs'),path=require('path'),vm=require('vm');
 const fixture=require('./app-access-fixture.cjs'),ports=require('../service/app-ports');
 const {Auth}=require('../service/auth'),{Diagnostics}=require('../service/connection-diagnostics');
 const revision='72aa727ab8a20ee8dcb5a4135a8fc4cfe2019c4c';
@@ -93,5 +93,45 @@ for(const enabled of [false,true]) {
         }else service.lifecycle.onExit();
     }finally{f.close();}
 }
-console.log('PASS connection diagnostics: opt-in router, lifecycle, receive/reject/reply stages, capped counters, zero listener IDs, no secrets, auth/origin/route boundaries');
+// Live input evidence is allowlisted before transport and again at ingestion.
+{
+    const frames=[],readAt=Date.now()-5000,remote={appId:'vetrotvapp.app',isTrusted:true};
+    const context=vm.createContext({document:{hidden:false},Date,
+        screenInputReadAt:readAt,screenSummaryData:{input:{enabled:true,connected:true,recovering:false,available:true,
+            device:'PRIVATE_REMOTE',node:'/dev/input/event999',error:'PRIVATE_ERROR',events:['PRIVATE_EVENT'],token:'PRIVATE_CREDENTIAL'}}});
+    vm.runInContext(fs.readFileSync(require.resolve('../service/connection-debug-client.js'),'utf8'),context);
+    const client={trusted:true,closed:false,local:{isTrusted:true},sequence:1,pending:{},tizen:{messageport:{
+        requestTrustedRemoteMessagePort(){return {appId:'vetrotvapp.svc',messagePortName:'VETRO_WIDGET_V1',isTrusted:true,
+            sendMessage(data){frames.push(JSON.parse(data[0].value));}};}}}};
+    const publisher=context.VetroConnectionDiagnostics(client),d=new Diagnostics({connectionDiagnostics:true});
+    publisher.publish(true);
+    assert.deepEqual(frames[0].params.input,{enabled:true,connected:true,recovering:false,available:true});
+    assert.equal(frames[0].params.inputReadAt,readAt);
+    assert.ok(!JSON.stringify(frames).includes('PRIVATE_'));assert.ok(!JSON.stringify(frames).includes('/dev/input/'));
+    assert.equal(d.consume(frames[0],remote),true);
+    assert.deepEqual(d.snapshot().screen.input,frames[0].params.input);assert.equal(d.snapshot().screen.inputReadAt,readAt);
+
+    context.screenSummaryData.input={enabled:true,connected:false,recovering:false,available:false};
+    publisher.publish(true);d.consume(frames[1],remote);
+    assert.equal(d.snapshot().screen.input.available,false);
+    assert.equal(d.snapshot().screen.inputReadAt,readAt,'a failed read retains the last successful read time');
+    const valid=JSON.stringify(d.snapshot().screen);
+    assert.equal(d.consume(frames[0],{appId:'other.app',isTrusted:true}),false);
+    assert.equal(JSON.stringify(d.snapshot().screen),valid,'untrusted caller cannot overwrite input evidence');
+
+    const injected={enabled:'PRIVATE_VALUE',connected:1,recovering:null,available:[],node:'PRIVATE_NODE',events:['PRIVATE_EVENT']};
+    d.consume({method:'diagnostic.screen',params:{input:injected,inputReadAt:'PRIVATE_TIMESTAMP'}},remote);
+    assert.deepEqual(d.snapshot().screen.input,{enabled:null,connected:null,recovering:null,available:null});
+    assert.equal(d.snapshot().screen.inputReadAt,null);assert.ok(!JSON.stringify(d.snapshot()).includes('PRIVATE_'));
+    for(const at of [-1,0,1.5,Infinity,NaN,8640000000000001]) {
+        context.screenInputReadAt=at;context.screenSummaryData.input=injected;publisher.publish(true);
+        const frame=frames[frames.length-1];assert.equal(frame.params.inputReadAt,null);
+        assert.deepEqual(frame.params.input,{enabled:null,connected:null,recovering:null,available:null});
+        d.consume({method:'diagnostic.screen',params:{inputReadAt:at}},remote);assert.equal(d.snapshot().screen.inputReadAt,null);
+    }
+    context.screenSummaryData=null;context.screenInputReadAt=null;publisher.publish(true);
+    const missing=frames[frames.length-1];d.consume(missing,remote);
+    assert.equal(missing.params.input,null);assert.equal(d.snapshot().screen.input,null);assert.equal(d.snapshot().screen.inputReadAt,null);
+}
+console.log('PASS connection diagnostics: opt-in router, lifecycle, receive/reject/reply stages, capped counters, zero listener IDs, safe live input facts and freshness, no secrets, auth/origin/route boundaries');
 

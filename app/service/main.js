@@ -212,12 +212,14 @@ function readTelemetry() {
     return out;
 }
 
-// What the TV screen shows. The launcher's pid check is the only root command, and it runs only while the launcher is on.
-function screenSummary() {
+// Live refreshes read current memory/proc facts without joining the root command
+// queue. The full summary also checks the launcher's process once.
+function screenSummary(live) {
     var launcherState = dock.readState(), p = platform.status();
-    var checkLauncher = launcherState.enabled && p.agent.connected ? dock.probe().then(function (r) { return r.running; }, function () { return null; }) : Promise.resolve(null);
+    var checkLauncher = !live && launcherState.enabled && p.agent.connected ? dock.probe().then(function (r) { return r.running; }, function () { return null; }) : Promise.resolve(null);
     return checkLauncher.then(function (running) {
         return require('./screen-status.js').build({version: buildInfo.version, port: PORT, platform: p, input: inputSnapshot(),
+            inputExpected: inputTokens().length > 0, inputRecovering: inputRestoring || !!(homeRouting && homeRouting.busy),
             launcher: {installed: dock.installed(), enabled: launcherState.enabled, running: running, failures: dock.failures, error: !!dock.lastError},
             meminfo: tryReadRaw('/proc/meminfo'), interfaces: os.networkInterfaces()});
     });
@@ -887,7 +889,10 @@ http.createServer(function (req, res) {
     if (url === '/telemetry') return serveJson(res, readTelemetry());
     if (url === '/leftovers') return handleLeftovers(req,res);
     if (url === '/status') return serveJson(res, Object.assign({}, platform.status(), {app: buildInfo}));
-    if (url === '/screen') return screenSummary().then(function(d){serveJson(res,d)}).catch(function(e){serveJson(res,{error:e.message},503)});
+    if (url === '/screen') {
+        res.setHeader('Cache-Control','no-store');
+        return screenSummary(require('url').parse(req.url,true).query.live === '1').then(function(d){serveJson(res,d)}).catch(function(e){serveJson(res,{error:e.message},503)});
+    }
     if (url === '/exec') return handleExecStatus(res);
     if (url === '/debloat') return handleDebloatList(req, res);
     if (url === '/mqtt') return handleMqttConfig(req, res);

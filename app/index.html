@@ -75,6 +75,7 @@ var IDLE_MS = 300000;
 var report = {probe: {}, apps: [], packages: [], settings: {}};
 var delivered = false, running = false, idleTimer = null, canIdle = false, fullCheck = false;
 var screenError = '', pairingError = '', pairingVisible = false, summaryReady = false;
+var screenSummaryData = null, screenInputReadAt = null, liveScreenBusy = false, screenEpoch = 0, liveScreenError = false;
 var widgetClient=null,widgetCredential=null,widgetConnecting=null,pairingBusy=false;
 var widgetServiceAuthenticated=false;
 function widgetSession() {
@@ -186,6 +187,27 @@ function readScreen() {
     return d;
   });
 }
+// Refresh only live connection facts. Full inventory and launcher probes remain
+// part of the explicit checks, and an old read cannot overwrite a newer run.
+function pollScreen() {
+  if(document.hidden||running||!summaryReady||!screenSummaryData||liveScreenBusy)return Promise.resolve();
+  liveScreenBusy=true;
+  var epoch=screenEpoch;
+  function current(){return epoch===screenEpoch&&!document.hidden&&!running&&summaryReady&&screenSummaryData;}
+  function update(){var wasIdle=canIdle;render(screenSummaryData,false);if(wasIdle!==canIdle)resetIdle();}
+  return widgetRequest('GET','/screen?live=1',undefined,4000).then(function(d){
+    if(!current())return;
+    if(!d||d.error||!d.root||typeof d.root.connected!=='boolean'||!d.input||typeof d.input.enabled!=='boolean'||typeof d.input.connected!=='boolean')throw Error('Live status unavailable');
+    screenSummaryData.root={mode:d.root.mode,connected:d.root.connected,available:true};
+    screenSummaryData.input={enabled:d.input.enabled,connected:d.input.connected,recovering:d.input.recovering===true,available:true};
+    screenInputReadAt=Date.now();liveScreenError=false;update();
+  }).catch(function(){
+    if(!current())return;
+    screenSummaryData.root={mode:screenSummaryData.root.mode,connected:false,available:false};
+    screenSummaryData.input={enabled:screenSummaryData.input.enabled,connected:false,recovering:false,available:false};
+    liveScreenError=true;update();
+  }).then(function(){liveScreenBusy=false;},function(){liveScreenBusy=false;});
+}
 function tryConnect(port) {
   return new Promise(function (resolve, reject) {
     var ws = new WebSocket('ws://127.0.0.1:' + port + '/api/v2/channels/samsung.remote.control?name=' + btoa('Vetro'));
@@ -239,18 +261,20 @@ function checks(d) {
       (report.probe.serviceLaunch && !report.probe.serviceLaunch.ok ? ' ' + esc(report.probe.serviceLaunch.error) : ''), 'SVC UNVERIFIED', 'bad']);
   } else {
     var av = appVersion(), mismatch = av && d.version && av !== d.version;
-    out.push(screenError ? ['warn','Service','Report not saved',esc(screenError),'REPORT FAILED','warn'] : mismatch ? ['warn', 'Service', 'Version differs', 'The app is ' + esc(av) + ' and the service is ' + esc(d.version) + '. Reinstall Vetro so both match.', 'SVC ' + d.version + '/APP ' + av, 'warn']
+    out.push(liveScreenError ? ['warn','Service','Status update unavailable','Vetro will retry while this screen is open.','SVC UPDATE FAILED','warn'] : screenError ? ['warn','Service','Report not saved',esc(screenError),'REPORT FAILED','warn'] : mismatch ? ['warn', 'Service', 'Version differs', 'The app is ' + esc(av) + ' and the service is ' + esc(d.version) + '. Reinstall Vetro so both match.', 'SVC ' + d.version + '/APP ' + av, 'warn']
       : ['ok', 'Service', 'Running', 'Port ' + esc(d.port), 'svc ok']);
   }
-  if (!d) out.push(['na', 'Root access', 'Unknown', null, 'root ?']);
+  if (!d || d.root.available===false) out.push(['na', 'Root access', 'Unknown', null, 'root ?']);
   else if (d.root.connected) out.push(['ok', 'Root access', 'Connected', null, 'root ok']);
   else if (d.root.mode === 'app-only') out.push(['warn', 'Root access', 'Not available', 'This is the app-only package. Features that need root are off.', 'ROOT NO', 'warn']);
   else out.push(['bad', 'Root access', 'Not connected', 'Features that need root are off. Restart the TV; if it stays like this, reinstall the root package.', 'ROOT DOWN', 'bad']);
   root = !!(d && d.root.connected);
-  if (!d || !root) out.push(['na', 'Remote input', d ? 'Needs root' : 'Unknown', null, 'input ?']);
+  if(d && d.input.available===false)out.push(['warn','Remote input','Input status unavailable','Vetro will retry while this screen is open.','INPUT ?','warn']);
+  else if (!d || !root) out.push(['na', 'Remote input', d ? 'Needs root' : 'Unknown', null, 'input ?']);
   else if (!d.input.enabled) out.push(['off', 'Remote input', 'Off', null, 'input off']);
   else if (d.input.connected) out.push(['ok', 'Remote input', 'Filtering', null, 'input ok']);
-  else out.push(['bad', 'Remote input', 'Remote not found', 'The saved remote is not connected. Open Remote in the dashboard.', 'INPUT LOST', 'bad']);
+  else if(d.input.recovering===true)out.push(['warn','Remote input','Reconnecting','Vetro is reconnecting the saved remote input.','INPUT WAIT','warn']);
+  else out.push(['bad', 'Remote input', 'Remote input disconnected', 'Open Remote in the dashboard to check the saved input connection.', 'INPUT LOST', 'bad']);
   l = d && d.launcher;
   if (!d) out.push(['na', 'Launcher', 'Unknown', null, 'launcher ?']);
   else if (!l.installed) out.push(['na', 'Launcher', 'Not included', null, 'launcher n/a']);
@@ -327,6 +351,7 @@ function progress(n, total) {
 }
 function run(full) {
   if (running) return Promise.resolve();
+  screenEpoch++;screenSummaryData=null;screenInputReadAt=null;summaryReady=false;liveScreenError=false;
   running = true; delivered = false; canIdle = false; screenError = ''; fullCheck = full === true;
   resetIdle();
   report = {probe: {}, apps: [], packages: [], settings: {}};
@@ -343,10 +368,10 @@ function run(full) {
     // Do not replace the service's last full inventory with a quick-check report.
     .then(function () { if(fullCheck)return sendReport().then(function () { delivered = true; }, function (e) {screenError=String(e&&e.message||e);}); })
     .then(function () { return readScreen().catch(function (e) {screenError=String(e&&e.message||e);return null;}); })
-    .then(function (d) { render(d, false); }, function () { render(null, false); })
+    .then(function (d) { screenSummaryData=d;screenInputReadAt=d?Date.now():null;render(d, false); }, function () { screenSummaryData=null;screenInputReadAt=null;render(null, false); })
     .then(function () { running = false;resetIdle();if(widgetClient&&widgetClient.diagnostics)widgetClient.diagnostics.publish(true); });
 }
-document.addEventListener('visibilitychange', function () { if (document.hidden && canIdle && !running && !pairingVisible && !pairingError) leave(); });
+document.addEventListener('visibilitychange', function () { screenEpoch++;if(document.hidden){if(canIdle&&!running&&!pairingVisible&&!pairingError)leave();}else pollScreen(); });
 document.addEventListener('keydown', function (e) {
   var k = e && e.keyCode;
   resetIdle();
@@ -355,6 +380,7 @@ document.addEventListener('keydown', function (e) {
 });
 window.addEventListener('resize', fit);
 setInterval(pollPairing,2000);
+setInterval(pollScreen,5000);
 fit();
 resetIdle();
 // Module scripts run after this classic script and before DOMContentLoaded.

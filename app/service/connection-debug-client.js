@@ -3,6 +3,13 @@
 'use strict';
 var revision=null; // BUILD_DIAGNOSTIC_REVISION
 function clean(value){return String(value||'').replace(/\b[a-f0-9]{24,}\b/gi,'[redacted-token]').replace(/\b\d{6}\b/g,'[redacted-code]').slice(0,400);}
+function inputSummary(value){
+    if(!value||typeof value!=='object')return null;
+    var result={};
+    ['enabled','connected','recovering','available'].forEach(function(k){result[k]=typeof value[k]==='boolean'?value[k]:null;});
+    return result;
+}
+function readTime(value){return typeof value==='number'&&isFinite(value)&&value>0&&Math.floor(value)===value&&value<=8640000000000000?value:null;}
 root.VetroConnectionDiagnostics=function(client){
     var last=0,sent=0,seen=Object.create(null),acks=0;
     function send(method,params){
@@ -22,6 +29,7 @@ root.VetroConnectionDiagnostics=function(client){
                 var state={sourceRevision:revision,visible:root.document.hidden===false,runningChecks:root.running===true,
                     fullCheck:root.fullCheck===true,pairingVisible:root.pairingVisible===true,summaryReady:root.summaryReady===true,
                     sessionReceived:!!root.widgetCredential,serviceAuthenticated:root.widgetServiceAuthenticated===true,
+                    input:inputSummary(root.screenSummaryData&&root.screenSummaryData.input),inputReadAt:readTime(root.screenInputReadAt),
                     screenError:clean(root.screenError),pairingError:clean(root.pairingError),
                     client:{trusted:client.trusted===true,closed:client.closed===true,replyTrusted:client.local.isTrusted===true,
                         sequence:client.sequence,pending:Object.keys(client.pending).length},checks:{}};

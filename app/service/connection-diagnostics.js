@@ -12,6 +12,17 @@ function errorName(error) {
     catch (_) { return 'Error'; }
 }
 function increment(object,key) { object[key] = Math.min(1000000,object[key]+1); }
+function screenInput(params,screen) {
+    var input=params.input,at=params.inputReadAt;
+    screen.input=null;
+    if(input&&typeof input==='object') {
+        screen.input={};
+        ['enabled','connected','recovering','available'].forEach(function(k){screen.input[k]=typeof input[k]==='boolean'?input[k]:null;});
+    }
+    // The screen's last successful status read, distinct from telemetry receipt.
+    screen.inputReadAt=typeof at==='number'&&isFinite(at)&&at>0&&Math.floor(at)===at&&at<=8640000000000000?at:null;
+    return screen;
+}
 function Diagnostics(info) {
     info=info||{};
     this.reportEnabled=info.connectionDiagnostics===true;
@@ -75,7 +86,7 @@ Diagnostics.prototype.received=function(data,remote) {
 Diagnostics.prototype.consume=function(p,remote) {
     if(!this.reportEnabled||!remote||remote.appId!=='vetrotvapp.app'||typeof remote.isTrusted!=='boolean')return false;
     if(p.method==='diagnostic.screen') {
-        this.state.screen=require('./message-reply-diagnostics.js').screen(p.params);return true;
+        this.state.screen=screenInput(p.params,require('./message-reply-diagnostics.js').screen(p.params));return true;
     }
     if(p.method==='diagnostic.ack') {
         if(this.replyReport)this.replyReport.ack(p.params,remote);

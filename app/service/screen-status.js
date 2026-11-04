@@ -21,12 +21,14 @@ function availableMb(meminfo) {
 function build(deps) {
     var agent = (deps.platform || {}).agent || {}, policy = (deps.input || {}).policy || {}, preference = (deps.input || {}).preference || {};
     var launcher = deps.launcher || {};
+    var inputEnabled = preference.enabled === true || deps.inputExpected === true || policy.mode === 'filter';
     return {
         version: deps.version,
         port: deps.port,
         address: address(deps.interfaces),
         root: {mode: (deps.platform || {}).mode || null, connected: agent.connected === true},
-        input: {enabled: preference.enabled === true, connected: policy.connected === true},
+        input: {enabled: inputEnabled, connected: policy.connected === true,
+            recovering: inputEnabled && policy.connected !== true && deps.inputRecovering === true},
         launcher: {installed: launcher.installed === true, enabled: launcher.enabled === true,
             running: typeof launcher.running === 'boolean' ? launcher.running : null,
             failures: launcher.failures || 0, hasError: launcher.error === true},
@@ -35,3 +37,4 @@ function build(deps) {
 }
 
 module.exports = {address: address, availableMb: availableMb, build: build};
+
