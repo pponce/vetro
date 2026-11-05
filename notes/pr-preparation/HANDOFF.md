@@ -46,6 +46,14 @@ Preserve that successful screen mechanism. Do not restore the failed MessagePort
 
 The user confirmed fresh Glass Home app-list and launch activity on 2026-11-05: five completed apps.list entries between 12:18:17 PM and 12:18:22 PM, and apps.launch completed at 12:18:47 PM (reported local time). The launched app appeared on the TV. Mark both positive permission paths passed. The subsequent paused refresh failed visibly in Glass Home and produced no new Recent activity. After resuming, the user confirmed that Glass Home regained access and activity appeared again. Mark pause/resume passed. The user subsequently revoked access; Glass Home recognized the loss, offered Connect to Vetro, generated a new request in Vetro and regained access after owner approval. Mark the observed revoke/reapproval flow passed. The user then closed/reopened Glass Home and confirmed that refreshing worked; mark client reopen access passed. TV/service restart persistence remains open. Full evidence summary and remaining controls are in [TV acceptance](TV-ACCEPTANCE.md).
 
+## Prepared integrated update
+
+The requested update uses [run-integrated-update.sh](run-integrated-update.sh) with the existing updater and all four checksum-pinned helpers from f1eeaa30165a98a27502fc3f7b51a77db5238117. It expects the clean installed baseline 488cdccf3f08916addf4d5f2af567eecd5c105c7 and verifies diagnostic CI run 42096796688. All four jobs passed. The existing 22 updater, input-handoff and owner-client tests passed locally; wrapper syntax, pins and checksums were verified. No TV operation was issued from this preparation environment.
+
+The user must run the supplied command on the established host. Keep the TV on and TV-Store open for the relay; keep the developer host setting at 127.0.0.1 and close competing Apps2Samsung/debug clients. The updater reuses the saved Partner certificate and owner pairing, temporarily releases input interception, installs at most once per target ledger, and verifies service/screen revision, screen authentication and restored remote input. It prints the report retrieval command.
+
+After verification, refresh Glass Home without reconnecting or reapproving and require fresh successful app-list activity. This checks access across the Vetro replacement/service restart. Standby and automatic-return tests follow separately; a full TV restart remains a separate persistence check. Do not record the candidate as installed until the report confirms it.
+
 ## Outstanding work and exact next steps
 
 1. Fresh Glass Home apps.list, apps.launch, pause/resume, revoke/reapproval and client reopen acceptance passed. Next use the full integrated candidate f1eeaa30165a98a27502fc3f7b51a77db5238117, which limits foreground power-on opening to standby wake, for power-on/return testing and check approval across a TV/service restart. The TV still runs 488cdcc until an update is actually performed. See [TV acceptance](TV-ACCEPTANCE.md).
@@ -53,7 +61,7 @@ The user confirmed fresh Glass Home app-list and launch activity on 2026-11-05: 
 3. Extract the screen-authentication prerequisite, preserving private credentials, automatic bounded 401 recovery, listener ownership and explicit compatibility for upstream owner sessions. Add tests for existing cookie/bearer sessions, pending pairing reload, hostnames, sign-out, storage failure, credential scope/rotation and bind/stop races.
 4. Stack app permissions on that prerequisite. Preserve identity/signer verification, grants, bounded requests, protected-app rules and authenticated replies. Do not enable scoped app permissions while the local-app owner bypass remains.
 5. Update existing Home branches only with their relevant final changes after reviewing overlap. Then prepare separate standby and return branches on the shared navigation foundation.
-6. A separately requested candidate installation is needed for standby-only hardware acceptance. Test ordinary wake and cold-boot exclusion independently of native Start at boot/Autorun. Test automatic return and deliberate-navigation cancellation separately.
+6. Complete the requested candidate update with the prepared wrapper and inspect its report before standby-only hardware acceptance. Test ordinary wake and cold-boot exclusion independently of native Start at boot/Autorun. Test automatic return and deliberate-navigation cancellation separately.
 7. Review exact CI, hardware limitations and final diffs before submitting any upstream PR.
 
 Original scope/dependency plan: `notes/upstream-pr-plan.md`. Public client guide: `app/docs/APP-PERMISSIONS-TEST.md`.
