@@ -218,9 +218,10 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   assert.equal(restarting.sessions(),2);
   assert.equal(restarting.context.pairingBusy,false);
   assert.equal(restarting.context.pairingError,'');
-  const rejected=await run({full:false,session(){throw Error('Trusted port unavailable');}});
-  assert.ok(rejected.elements.pairingStatus.textContent.includes('Trusted port unavailable'));
-  assert.ok(rejected.screen.innerHTML.includes('Trusted port unavailable'));
+  const rejected=await run({full:false,session(){throw Error('Private widget credential is not available');}});
+  assert.ok(rejected.elements.pairingStatus.textContent.includes('Private widget credential is not available'));
+  assert.ok(rejected.screen.innerHTML.includes('Waiting for screen authentication'));
+  assert.ok(!rejected.screen.innerHTML.includes('Service reachable'));
   assert.ok(!rejected.screen.innerHTML.includes('service is down'));
   const invalid=await run({full:false,session(n){return n===1?{token:'invalid',expires:Date.now()+300000}:{token:'b'.repeat(64),expires:Date.now()+300000};}});
   assert.ok(invalid.sessions()>1,'a validation failure must not poison the cached connection promise');
@@ -244,4 +245,5 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   for(const request of good.sent.filter(s=>s.method==='POST'))assert.ok(!JSON.stringify(request.body).includes('"token"'));
   console.log('PASS TV screen: probe report kept, quick pairing, manual inventory, visible connection failures, stale sessions, bounded polls, safe idle');
 })().catch(e => {console.error(e); process.exitCode = 1;});
+
 

@@ -76,8 +76,12 @@ var report = {probe: {}, apps: [], packages: [], settings: {}};
 var delivered = false, running = false, idleTimer = null, canIdle = false, fullCheck = false;
 var screenError = '', pairingError = '', pairingVisible = false, summaryReady = false;
 var screenSummaryData = null, screenInputReadAt = null, liveScreenBusy = false, screenEpoch = 0, liveScreenError = false;
+var screenConnectionError = null, screenReportError = '';
 var widgetClient=null,widgetCredential=null,widgetConnecting=null,pairingBusy=false;
 var widgetServiceAuthenticated=false;
+function widgetError(message, status, authentication) {
+  var error=Error(message);error.status=status||null;error.authentication=authentication===true;return error;
+}
 function widgetSession() {
   if(widgetCredential && widgetCredential.expires>Date.now()+30000)return Promise.resolve(widgetCredential.token);
   if(widgetConnecting)return widgetConnecting;
@@ -90,7 +94,9 @@ function widgetSession() {
   }).then(function(d){
     if(!d||typeof d.token!=='string'||!/^[a-f0-9]{64}$/.test(d.token)||typeof d.expires!=='number'||!isFinite(d.expires)||d.expires<=Date.now())throw Error('Widget identity was not verified');
     widgetCredential=d;return d.token;
-  }).then(function(token){widgetConnecting=null;return token;},function(e){widgetConnecting=null;throw e;});
+  }).then(function(token){widgetConnecting=null;return token;},function(e){
+    widgetConnecting=null;throw widgetError(String(e&&e.message||e),null,true);
+  });
   return widgetConnecting;
 }
 // Bound every HTTP read as well as the private credential read. A restarted service
@@ -103,11 +109,14 @@ function widgetRequest(method, route, body, timeout, renewed) {
     if(body!==undefined)xhr.setRequestHeader('Content-Type','application/json');
     xhr.onload=function(){
       if(xhr.status===401){
-        widgetServiceAuthenticated=false;
-        if(widgetCredential&&widgetCredential.token===token)widgetCredential=null;
-        if(!renewed)return resolve(widgetRequest(method,route,body,timeout,true));
+        // A delayed refusal for an older token must not invalidate a new session.
+        if(!widgetCredential||widgetCredential.token===token){widgetServiceAuthenticated=false;widgetCredential=null;}
+        if(!renewed)return resolve(widgetRequest(method,route,body,timeout,true).catch(function(e){
+          if(e.authentication&&!e.status)e.status=401;
+          throw e;
+        }));
       }
-      if(xhr.status!==200)return reject(Error('Service replied HTTP '+xhr.status));
+      if(xhr.status!==200)return reject(widgetError('Service replied HTTP '+xhr.status,xhr.status,xhr.status===401));
       try{var response=JSON.parse(xhr.responseText);widgetServiceAuthenticated=true;resolve(response);}catch(e){reject(Error('Service response is not JSON'));}
     };
     xhr.onerror=function(){reject(Error('The authenticated request did not answer on port 8099.'));};
@@ -187,24 +196,29 @@ function readScreen() {
     return d;
   });
 }
-// Refresh only live connection facts. Full inventory and launcher probes remain
-// part of the explicit checks, and an old read cannot overwrite a newer run.
+// Retry the first summary too: authentication may become ready after startup.
+// Once a summary exists, refresh only live connection facts. Neither path starts
+// the service, enumerates TV apps/packages, or posts diagnostic reports.
 function pollScreen() {
-  if(document.hidden||running||!summaryReady||!screenSummaryData||liveScreenBusy)return Promise.resolve();
+  if(document.hidden||running||liveScreenBusy)return Promise.resolve();
   liveScreenBusy=true;
-  var epoch=screenEpoch;
-  function current(){return epoch===screenEpoch&&!document.hidden&&!running&&summaryReady&&screenSummaryData;}
+  var epoch=screenEpoch,needsSummary=!screenSummaryData;
+  function current(){return epoch===screenEpoch&&!document.hidden&&!running;}
   function update(){var wasIdle=canIdle;render(screenSummaryData,false);if(wasIdle!==canIdle)resetIdle();}
-  return widgetRequest('GET','/screen?live=1',undefined,4000).then(function(d){
+  return (needsSummary?readScreen():widgetRequest('GET','/screen?live=1',undefined,4000)).then(function(d){
     if(!current())return;
     if(!d||d.error||!d.root||typeof d.root.connected!=='boolean'||!d.input||typeof d.input.enabled!=='boolean'||typeof d.input.connected!=='boolean')throw Error('Live status unavailable');
+    if(needsSummary)screenSummaryData=d;
     screenSummaryData.root={mode:d.root.mode,connected:d.root.connected,available:true};
     screenSummaryData.input={enabled:d.input.enabled,connected:d.input.connected,recovering:d.input.recovering===true,available:true};
-    screenInputReadAt=Date.now();liveScreenError=false;update();
-  }).catch(function(){
+    screenInputReadAt=Date.now();liveScreenError=false;screenConnectionError=null;screenError=screenReportError;update();
+  }).catch(function(e){
     if(!current())return;
-    screenSummaryData.root={mode:screenSummaryData.root.mode,connected:false,available:false};
-    screenSummaryData.input={enabled:screenSummaryData.input.enabled,connected:false,recovering:false,available:false};
+    screenConnectionError=e;
+    if(screenSummaryData){
+      screenSummaryData.root={mode:screenSummaryData.root.mode,connected:false,available:false};
+      screenSummaryData.input={enabled:screenSummaryData.input.enabled,connected:false,recovering:false,available:false};
+    }else screenError=String(e&&e.message||e);
     liveScreenError=true;update();
   }).then(function(){liveScreenBusy=false;},function(){liveScreenBusy=false;});
 }
@@ -256,8 +270,12 @@ function appVersion() { try { return tizen.application.getCurrentApplication().a
 // short form for the support line; it is upper case (and coloured) when something is wrong.
 function checks(d) {
   var out = [], root, api, apiMissing = [], mem, l, i;
-  if (!d) {
-    out.push(['bad', 'Service', 'Not verified', 'The TV screen could not read the service. ' + esc(screenError || 'Connection unavailable') +
+  if (screenConnectionError&&screenConnectionError.authentication) {
+    out.push(['warn','Service','Reconnecting authentication',screenConnectionError.status===401?
+      'Service reachable. Vetro is refreshing screen authentication and will retry automatically.':
+      'Waiting for screen authentication. Vetro will retry automatically.','AUTH WAIT','warn']);
+  } else if (!d) {
+    out.push(['bad', 'Service', 'Not verified', 'Vetro will retry automatically. The TV screen could not read the service. ' + esc(screenError || 'Connection unavailable') +
       (report.probe.serviceLaunch && !report.probe.serviceLaunch.ok ? ' ' + esc(report.probe.serviceLaunch.error) : ''), 'SVC UNVERIFIED', 'bad']);
   } else {
     var av = appVersion(), mismatch = av && d.version && av !== d.version;
@@ -306,6 +324,7 @@ function render(d, waiting) {
   var list = waiting ? WAITING.map(function (w) { return ['wait', w[0], w[1], null, '']; }) : checks(d), bad = 0, warn = 0, state, label, sum, device = report.settings, model, firmware, line, version, pin = d && typeof d.pin === 'string' ? d.pin : '';
   list.forEach(function (c) { if (waiting) return; if (c[0] === 'bad') bad++; else if (c[0] === 'warn') warn++; });
   if (waiting) { state = 'wait'; label = 'Checking'; sum = 'Checking'; }
+  else if (screenConnectionError&&screenConnectionError.authentication) { state = 'warn'; label = 'Reconnecting authentication'; sum = screenConnectionError.status===401?'Service reachable; reconnecting authentication':'Waiting for screen authentication'; }
   else if (!d) { state = 'bad'; label = 'Connection needs attention'; sum = 'Service state is unverified'; }
   else if (bad) { state = 'bad'; label = 'Needs attention'; sum = bad + (bad === 1 ? ' problem' : ' problems'); }
   else if (warn) { state = 'warn'; label = 'Running, with limits'; sum = warn + (warn === 1 ? ' thing to check' : ' things to check'); }
@@ -351,7 +370,7 @@ function progress(n, total) {
 }
 function run(full) {
   if (running) return Promise.resolve();
-  screenEpoch++;screenSummaryData=null;screenInputReadAt=null;summaryReady=false;liveScreenError=false;
+  screenEpoch++;screenSummaryData=null;screenInputReadAt=null;summaryReady=false;liveScreenError=false;screenConnectionError=null;screenReportError='';
   running = true; delivered = false; canIdle = false; screenError = ''; fullCheck = full === true;
   resetIdle();
   report = {probe: {}, apps: [], packages: [], settings: {}};
@@ -366,8 +385,8 @@ function run(full) {
     return attempt(j[0], j[1], j[2]).then(function(){if(i===0)return pollPairing();});
   }); }, Promise.resolve())
     // Do not replace the service's last full inventory with a quick-check report.
-    .then(function () { if(fullCheck)return sendReport().then(function () { delivered = true; }, function (e) {screenError=String(e&&e.message||e);}); })
-    .then(function () { return readScreen().catch(function (e) {screenError=String(e&&e.message||e);return null;}); })
+    .then(function () { if(fullCheck)return sendReport().then(function () { delivered = true; }, function (e) {screenError=screenReportError=String(e&&e.message||e);}); })
+    .then(function () { return readScreen().catch(function (e) {screenConnectionError=e;screenError=String(e&&e.message||e);return null;}); })
     .then(function (d) { screenSummaryData=d;screenInputReadAt=d?Date.now():null;render(d, false); }, function () { screenSummaryData=null;screenInputReadAt=null;render(null, false); })
     .then(function () { running = false;resetIdle();if(widgetClient&&widgetClient.diagnostics)widgetClient.diagnostics.publish(true); });
 }
@@ -389,3 +408,4 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
 <script type="module">import { Service } from 'wrt:service'; window.a2sService = Service;</script>
 </body>
 </html>
+

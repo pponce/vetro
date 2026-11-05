@@ -34,7 +34,7 @@ function fixture(){
 (async()=>{
  let f=fixture(),c=f.context;
  assert.equal(f.intervals.filter(timer=>timer.ms===5000).length,1);
- await c.pollScreen();assert.equal(f.requests.length,0,'no polling before a summary exists');
+ c.running=true;await c.pollScreen();assert.equal(f.requests.length,0,'startup checks pause background polling');c.running=false;
  f.seed({...GOOD,input:{enabled:true,connected:false,recovering:false}});
  assert.match(f.html(),/Remote input disconnected/);assert.ok(!f.html().includes('Remote not found'));
  const launcher=c.screenSummaryData.launcher,memory=c.screenSummaryData.memory,report=c.report;
@@ -75,3 +75,4 @@ function fixture(){
  assert.equal(c.liveScreenBusy,false);
  console.log('PASS screen live status: recovery refresh, accurate unknown/off/reconnecting states, no repeated probes, single bounded read, visibility/run epochs, preserved full results and idle timeout');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
