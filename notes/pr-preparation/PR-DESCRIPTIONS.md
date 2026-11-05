@@ -15,7 +15,7 @@ Validation:
 - The 82 application suites, 12 integration suites, diagnostic parser checks and release hygiene pass in the source-check workflow.
 - Focused cases cover explicit full diagnostics, pairing display, service reuse, HTTP refusal, initial failure recovery, stale responses, cancellation during inventory, repeated Back/idle events and refused exit.
 - CI: https://github.com/pponce/vetro/actions/runs/42101157088
-- The integrated S95C build has reported fast checks and three successful immediate reopen cycles. This extracted release-branch variant is not hardware-tested, and no stock-upstream A/B reproduction of a native exit delay was captured.
+- On the S95C, the combined f1eeaa30165a98a27502fc3f7b51a77db5238117 build has matching live service/screen revisions, completed quick checks and authenticated private-storage screen access in the captured update report. The preceding combined build had three user-confirmed immediate reopen cycles. This extracted release-branch variant is not hardware-tested, and no stock-upstream A/B reproduction of a native exit delay was captured.
 
 ## Remote input lifecycle
 
@@ -32,6 +32,6 @@ Validation:
 - The 83 application suites, 12 integration suites, diagnostic parser checks and release hygiene pass in the source-check workflow.
 - Regression coverage includes stop before bind, late socket authentication/data, queued helper launch, synchronous stop during a data chunk, stale restoration, queued physical actions and restart with unchanged saved preferences.
 - CI: https://github.com/pponce/vetro/actions/runs/42100112380
-- The isolated release-branch port has not been installed on a TV. Do not claim a proven exclusive-grab leak in stock upstream based only on the combined-build investigation.
+- The combined f1eeaa30165a98a27502fc3f7b51a77db5238117 update report verifies that the prior filtering helper exited and the saved filtering/Home setup was restored without a manual resume request. A later standby/wake report shows root and filtering still connected with Home ready. The isolated release-branch port has not been installed on a TV; these integrated observations do not establish a proven exclusive-grab leak in stock upstream.
 
 These branches are independent siblings. Before submitting either, confirm the maintainer's integration target. Do not include this notes directory in an upstream feature diff.
