@@ -5,19 +5,19 @@
 Restore Glass Home's explicitly approved app-list and launch access while
 preserving remote input across a single in-place Vetro diagnostic update.
 
-The next diagnostic update is ready for the owner to run. No TV installation
-was submitted in this continuation, and no new hardware report has been received.
+The diagnostic update has been installed once and verified on the TV. The
+remote-input handoff passed; Glass Home still cannot submit a visible approval
+request. Do not reinstall Vetro for the next check.
 
-Last verified installed Vetro: `ce92708f55211738f3866756e287b5fb634c0b23`.
+Verified installed Vetro: `e4033b41f29fc418228494db38364199026902a6`.
 Last verified Glass Home: `30c490194f1748d523262a1ac8985fe45f735729`, which
 is still the head of `pponce/glass-home-samsung-tv`,
-`combined/vetro-permissions`. No new Glass Home installation is needed for
-this capture.
+`combined/vetro-permissions`. No new Glass Home build has been prepared.
 
 ## Repositories and branches
 
 - Runtime: `pponce/vetro`, `combined/runtime-wrapper-observation-20261103`.
-  Ready candidate: `e4033b41f29fc418228494db38364199026902a6`.
+  Installed candidate: `e4033b41f29fc418228494db38364199026902a6`.
 - Host updater: `pponce/vetro`, `combined/runtime-wrapper-inspection-20261103`.
   Entry point: `tools/run-app-request-update.sh`.
   The runner pins runtime `e4033b41f29fc418228494db38364199026902a6`,
@@ -58,6 +58,35 @@ their pinned SHA-256 hashes. The runner update changes only its runtime revision
 and CI run literals. The initial CI failure's cause remains unknown; a passing
 rerun is not evidence of a source fix or successful TV behavior.
 
+## TV verification
+
+Evidence: `connection-report-20261104-154817-598783.json` and
+`native-requests-20261104-234848-963153.json`.
+
+- The first attempt stopped at the busy-relay preflight without submitting an
+  install or starting input handoff. A later check showed zero relay sessions.
+- The successful attempt submitted installation exactly once. The CLI did not
+  provide a verified install/launch result, but the running clean service and
+  authenticated screen both independently verified the exact target revision.
+  The author certificate is unchanged.
+- Temporary input observation was confirmed and the exact old filtering helper
+  exited. The new service automatically restored filter mode, connected input,
+  saved-enabled state and Home readiness. `resumeRequested:false`,
+  `verified:true`. The owner also reports working remote input.
+- The screen's earlier startup snapshot briefly showed input recovering; the
+  later handoff verification confirmed connected input. Do not confuse these
+  observation times or describe this as proof against all future recurrence.
+- Normal-mode request capture completed for 90 seconds with no errors. Before,
+  after and every observed interval had an available app port but no app-request
+  counts or events; permissions were enabled/available with zero pending
+  requests, grants or Glass handler events.
+- The owner reports selecting Connect and seeing the same failure. A subsequent
+  direct status read still showed the expected revision and empty request counts.
+  This collector does not directly observe the widget's send call.
+- Vetro's own widget delivered two native messages during startup. The external
+  app listener recorded none. The app-port available flag records registration
+  calls returning without error; it is not proof of successful delivery.
+
 ## Remote input safeguards
 
 The host updater requires a healthy saved filter and a unique helper associated
@@ -87,24 +116,36 @@ been deliberately revoked. This narrows the problem to native request delivery
 or rejection before dispatch without identifying which stage failed.
 
 The cached app list reappearing does not prove fresh permission or a successful
-live refresh. The next update supplies receiver evidence; it is not a verified
-fix for the Glass Home connection failure.
+live refresh. Current telemetry points to failure before the app-access callback;
+it does not identify whether the sender, registration/broker, or native delivery
+is responsible. The new build is diagnostic, not a verified connection fix.
+
+Sender and receiver source use matching port names, version-2 envelopes and
+reply-ID/key formats. A prior TV export of Samsung's service runner confirms a
+MessagePort routing layer exists; its file capture alone does not prove which
+runtime is currently loaded. No firmware wrapper was modified, no permission
+check was removed, and no new runtime/application patch was prepared.
+
+A fresh Glass Home UI session after Vetro's update remains unverified. A stale
+sender handle is a hypothesis to rule out, not an established cause.
 
 ## Exact next steps
 
-1. Keep the existing TV apps installed. Run the pinned updater in the established
-   project with the existing signing identity, with TV-Store's relay ready and
-   other Apps2Samsung/debug clients closed.
-2. Require the updater to verify the new service, authenticated screen, and
-   restored remote input. If it stops, inspect its report before another action.
-3. At `CAPTURING`, open Glass Home normally, open `+`, let `Checking apps`
-   finish, then choose `Connect to Vetro` once. Keep Glass Home visible through
-   the 90-second capture. This does not use Web Inspector or relaunch Glass Home.
-4. Retrieve both the connection report and native-request report using the
-   complete Mac rsync commands printed by the runner.
-5. Use the receiver's first failed stage to choose the functional fix. Then
-   verify explicit approval, live refresh, one intentional app launch,
-   revocation/denial, and power-on/return/saved-settings acceptance.
+1. Keep the verified Vetro service and current Glass Home package installed.
+   Stop only the Glass Home UI (`GlassHome1.GlassHome`) in Vetro's task manager,
+   then reopen Glass Home normally. Do not stop its Photos service or Vetro.
+2. Let Checking apps finish and choose Connect to Vetro once. Read the existing
+   request diagnostics and compare counts with the current empty baseline.
+   This checks a fresh sender session without another package installation.
+3. If still empty, verify the installed app-port module hash and collect
+   correlated sender/receiver evidence on this exact build, including service
+   lifetime, registration/lookup errors and the native send outcome. Inspect the
+   documented runtime registration route before choosing a code change.
+4. Preserve native caller identity, signer checks, explicit grants and protected
+   system-app restrictions. Do not replace native authentication with an
+   HTTP-supplied app ID or share the owner's credential with Glass Home.
+5. After a functional fix, verify approval, live refresh, one intentional app
+   launch, revocation/denial, and power-on/return/saved-settings acceptance.
 
 Prior detail: `glass-access-capture-handoff.md` and
 `input-lifecycle-handoff.md`. No raw reports, credentials, or personal network
