@@ -54,6 +54,8 @@ The user reports a successful Glass Home → Apple TV → exit → Glass Home se
 
 A second reported route through Samsung Home and then the app did not return to Glass Home. "Apple Home" is interpreted as Apple TV pending clarification. Its failed transition is not captured: the uploaded report's return confirmation is 99.198 seconds old and foreground is Glass Home. The user subsequently repeated this route and confirmed that Glass Home returned. They explicitly did not run the last capture script, so the repeat is a user-observed pass without a new report. Retain the first missed return as unexplained; the successful repeat does not prove a timing cause or a code fix. Explicit Home cancels the current pending return, but another observed ordinary app can establish a later return. No runtime change has been made.
 
+The user suggested possible Left/Right presses before the missed return. Source review distinguishes startup from return: any observed non-Power button can cancel startup, while ordinary arrows alone do not generate a return-navigation intent. Dock visibility or a resulting overlay/app/input change can still suppress return. This is a possible interaction, not a demonstrated cause.
+
 ## Verified integrated update
 
 The requested update used [run-integrated-update.sh](run-integrated-update.sh), with checksum-pinned helpers from f1eeaa30165a98a27502fc3f7b51a77db5238117 and expected baseline 488cdccf3f08916addf4d5f2af567eecd5c105c7. Diagnostic CI run 42096796688 passed all four jobs. The existing 22 updater, input-handoff and owner-client tests passed locally; wrapper syntax, pins and checksums were verified.
