@@ -5,33 +5,43 @@
 Restore Glass Home's explicitly approved app-list and launch access while
 preserving remote input across a single in-place Vetro diagnostic update.
 
-The diagnostic update has been installed once and verified on the TV. The
-remote-input handoff passed; Glass Home still cannot submit a visible approval
-request. Do not reinstall Vetro for the next check.
+Glass Home request delivery and owner approval are now verified. The owner
+subsequently reports `Apps from Vetro · 11 selected`, the live app-list success
+label. The remote-input handoff also passed on the installed Vetro build.
+App launching, return/power-on behavior and approval persistence across a new
+Vetro update remain to be checked.
 
 Verified installed Vetro: `e4033b41f29fc418228494db38364199026902a6`.
-Prepared next runtime: `e41f7f4a2021c63505261645b1e39c8e2c06a4f6`,
-which fixes TV-screen authentication recovery. All four jobs passed in
-run `41939908358`; it has not been installed or verified on the TV. Keep the
-installed build for the correlated capture below.
+Prepared next runtime: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`,
+which combines TV-screen authentication recovery with compact approved-app rows.
+All four jobs passed in run `41944347516`. It has not been installed or verified
+on the TV.
+`tools/run-permissions-screen-update.sh` prepares this update from the installed build,
+using the same verified input handoff and existing certificate/owner pairing.
 Last verified Glass Home: `30c490194f1748d523262a1ac8985fe45f735729`, which
 is still the head of `pponce/glass-home-samsung-tv`,
-`combined/vetro-permissions`. No new Glass Home build has been prepared.
+`combined/vetro-permissions`. At the owner's explicit request, `main` was also
+fast-forwarded to that exact tested revision. No new Glass Home package is needed.
 
 ## Repositories and branches
 
 - Runtime: `pponce/vetro`, `combined/runtime-wrapper-observation-20261103`.
   Installed candidate: `e4033b41f29fc418228494db38364199026902a6`.
-  New branch head: `e41f7f4a2021c63505261645b1e39c8e2c06a4f6`.
+  New branch head: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`.
 - Host updater: `pponce/vetro`, `combined/runtime-wrapper-inspection-20261103`.
-  Entry point: `tools/run-app-request-update.sh`.
-  The runner pins runtime `e4033b41f29fc418228494db38364199026902a6`,
-  CI run `41912982747`, and helper revision
-  `fc7b8663a7708e85a1f3427bfb62b001a2442345` with all five SHA-256 hashes.
+  Current entry point: `tools/run-permissions-screen-update.sh`, targeting `542fd3da`
+  from `e4033b41` and pinning CI run `41944347516`. Its four unchanged helpers
+  remain pinned to `fc7b8663a7708e85a1f3427bfb62b001a2442345` with SHA-256
+  verification. It does not ask the owner to submit another permission request.
+  The older `run-app-request-update.sh` targets the already installed build;
+  do not use it for this screen-recovery update.
 - Authoritative combined branch: `combined/permissions-startup-return`,
   unchanged at `35ebe18507f9ea289c76d8920ad0bdd4e2bde191`.
 - Glass Home: `pponce/glass-home-samsung-tv`, `combined/vetro-permissions`,
-  unchanged at `30c490194f1748d523262a1ac8985fe45f735729`.
+  and `main`, both at `30c490194f1748d523262a1ac8985fe45f735729`.
+  Main was a clean fast-forward from `30ebf4b06c5fd2f799afa22631a0f55347e94309`;
+  no code was changed for this promotion. Candidate CI run `41796862889` passed.
+  The subsequent main-branch CI run `41943530563` also passed.
 
 ## Changes and validation
 
@@ -106,13 +116,14 @@ left alone. An in-progress filter gets a bounded wait; resume is requested only
 when a filter is not already active. An uncertain installation is collected
 without submitting another installation.
 
-The updater returns failure if input restoration is unverified, and the runner
-starts the normal-mode request collector only after successful verification.
+The updater returns failure if input restoration is unverified. The earlier
+request-diagnostics runner started a normal-mode request collector afterward;
+the current screen-recovery runner finishes after update verification.
 A small transition journal retains process/status facts, not a configuration
 backup. Full TV-screen diagnostics are unnecessary; allow only quick startup
 checks during this verification.
 
-## Unresolved functional issue
+## Earlier delivery failure; cause still unknown
 
 The latest pre-update inspector capture observed 36 successful outer HTTP
 responses containing 36 inner 404 responses, with no reply record, pending
@@ -120,10 +131,10 @@ permission request, grant, or Glass Home handler event. Earlier approval had
 been deliberately revoked. This narrows the problem to native request delivery
 or rejection before dispatch without identifying which stage failed.
 
-The cached app list reappearing does not prove fresh permission or a successful
-live refresh. Current telemetry points to failure before the app-access callback;
-it does not identify whether the sender, registration/broker, or native delivery
-is responsible. The new build is diagnostic, not a verified connection fix.
+The cached app list reappearing did not prove fresh permission or a successful
+live refresh. Earlier telemetry showed failure before the app-access callback;
+it did not identify whether the sender, registration/broker, or native delivery
+was responsible. The installed build added diagnostics, not a delivery fix.
 
 Sender and receiver source use matching port names, version-2 envelopes and
 reply-ID/key formats. A prior TV export of Samsung's service runner confirms a
@@ -131,11 +142,46 @@ MessagePort routing layer exists; its file capture alone does not prove which
 runtime is currently loaded. No firmware wrapper was modified, no permission
 check was removed, and no new runtime/application patch was prepared.
 
-After reopening, the owner reports the same saved-app-list timeout and no
+An earlier reopening attempt produced the same saved-app-list timeout and no
 approval request; receiver counts remain empty. Both the Glass Home UI and
 Photos service were stopped in that attempt. The source normally checks and
 starts Photos when opening the UI, but its actual health must be verified.
 Do not repeat the same restart or call a stale sender handle the established cause.
+
+## Successful delivery and saved approval
+
+Evidence: `glass-request-20261105-003925-934119.json`, followed by the owner's
+confirmation of approval, saved permission and `Apps from Vetro · 11 selected`.
+
+- The 60.5-second capture completed with no errors. Photos was healthy and
+  reported permission transport version 2. All seven Glass file hashes and
+  all three Vetro receiver/reply hashes matched the pinned installed source.
+- The native remote-port lookup returned the expected app, port and regular
+  trust flag. Vetro verified Glass UI sender metadata on its received frames.
+- Before the inspector relaunch, one `access.status` request was already
+  received and completed. At capture start there were two; at its end five.
+  All five reserved a reply, dispatched and resolved successfully: four status
+  calls and one permission request. There were no receiver rejection events.
+- The widget showed Connect busy and then pending. Four reply polls produced
+  one processing response and three successful replies (two unapproved, one
+  pending), without network, body-read or JavaScript exception failures.
+- Final owner state contained one saved grant and zero pending requests.
+  The audit included `access.request: pending` and `access.approve: saved` for
+  Glass Home. The recorded `permission_denied` widget label preceded a fresh
+  read of the saved approval; it does not override the final grant evidence.
+- The helper completed its normal Glass UI relaunch. The owner then reported
+  the live-list label with 11 selected apps. Source inspection confirms this
+  label requires a successful available, nonempty Vetro list; cached-only
+  failure takes the separate saved-list label.
+- Vetro's diagnostic start time was `2026-11-05T00:29:57.936Z`, newer than the
+  previous update report's `2026-11-04T23:48:39.341Z`. No restart occurred during
+  this capture. The trigger for the earlier restart and restored delivery is
+  unknown; do not claim the inspector or a specific code change fixed it.
+
+The combined updater's Bash/Python syntax, exact runtime/baseline/CI pins,
+four helper hashes and single updater invocation were verified locally using
+mocked network/hardware. Authentication-only parent `e41f7f4a` passed all four
+jobs; the combined candidate also passed its own exact four-job CI run.
 
 ## Prepared screen recovery fix
 
@@ -153,6 +199,27 @@ epochs, old-token responses, live HTTP authorization and private bootstrap.
 The exact candidate passed `check`, `permissions_ui`, `launcher`, and
 `combined_package`: https://github.com/pponce/vetro/actions/runs/41939908358 .
 This fixes a demonstrated code gap but is not yet an observed hardware fix.
+
+## Compact approved-app rows
+
+The owner requested a single app-name/status row, with permissions and
+Save/Pause/Resume/Revoke controls revealed only after opening the app.
+Runtime `542fd3da` implements native details/summary disclosure, Approved/Paused
+status styling, visible global-off or changed-installation exceptions, and
+confirmed revocation inside the expanded details. It preserves unsaved checkbox
+selections when collapsed and keeps expansion by app identity across saves or
+refreshes. Keyboard focus returns to the app row after a change and to Refresh
+after a grant is removed.
+
+The change extends `e41f7f4a`; it does not modify app-access authorization,
+native transport or remote-input lifecycle. Local permission UI, screen recovery
+and live status tests pass. GitHub's source and desktop/mobile browser checks
+passed, including keyboard interaction, preserved edits/expansion/focus,
+confirmation, stale-revision refusal and collapsed/expanded 390-pixel layout.
+See `notes/approved-apps-ui-handoff.md` on the runtime branch.
+All four jobs (`check`, `permissions_ui`, `launcher`, `combined_package`) passed
+on exact candidate `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`:
+https://github.com/pponce/vetro/actions/runs/41944347516 .
 
 ## Correlated capture
 
@@ -176,19 +243,22 @@ owner-client tests passed before publication.
 
 ## Exact next steps
 
-1. Keep both packages installed. Open Glass Home normally once so Photos can
-   start; close other relay clients. Do not manually stop either service.
-2. Run the pinned correlated capture. Wait for CAPTURING, open +, wait for the
-   app check, and choose Connect to Vetro once. Return its JSON report.
-3. Check file/health preflight, native lookup, Connect busy observation and
-   post-start reply polling against receiver events and service lifetime.
-   If the sender returned with no receiver event and no restart, investigate
-   native registration/broker routing without loosening authentication.
+1. Keep the installed Glass Home package. Its exact tested source is now main;
+   no Glass Home installation is required for the branch promotion.
+2. Verify one intentional app launch from Glass Home and reopening it with the
+   saved permission. App-list success alone does not establish launch behavior.
+3. Apply the requested screen recovery and permission-row changes together with
+   `run-permissions-screen-update.sh` for runtime `542fd3da` from `e4033b41`. Keep the
+   relay available with no other clients. Verify authenticated screen, restored
+   remote input and retained Glass app-list/launch access after the update.
+   Open an approved app row to verify permission details and Pause/Resume;
+   revocation remains a deliberate separate test.
 4. Preserve native caller identity, signer checks, explicit grants and protected
    system-app restrictions. Do not replace native authentication with an
    HTTP-supplied app ID or share the owner's credential with Glass Home.
-5. After a functional fix, verify approval, live refresh, one intentional app
-   launch, revocation/denial, and power-on/return/saved-settings acceptance.
+5. Complete remaining revocation/denial and power-on/return/saved-settings
+   acceptance separately. If delivery fails again, correlate both sides and
+   lifecycle evidence; do not reinstall merely to repeat empty counters.
 
 Prior detail: `glass-access-capture-handoff.md` and
 `input-lifecycle-handoff.md`. No raw reports, credentials, or personal network
