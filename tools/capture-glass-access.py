@@ -21,6 +21,7 @@ import socket
 import struct
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 
 from vetro_owner import OwnerClient, NoRedirect
@@ -30,8 +31,13 @@ spec = importlib.util.spec_from_file_location('glass_sdb_transport',
 transport = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(transport)
 APP = 'GlassHome1.GlassHome'
-REVISION = 'ce92708f55211738f3866756e287b5fb634c0b23'
+REVISION = 'e4033b41f29fc418228494db38364199026902a6'
 GLASS_REVISION = '30c490194f1748d523262a1ac8985fe45f735729'
+VETRO_FILES = {
+    'service/app-ports.js': 'cfe5428898734d78ff46c6d4ee9c5a156577f6ae40868907c457b96265aca3cd',
+    'service/connection-diagnostics.js': 'cfccc482bbb3e7de9282eb2a986b27fc26be2506c1cb415bbd699e7563f11642',
+    'service/app-replies.js': '6ecfa6d0283893fa3f53efb28782baa84b95ba25d2f64156600ad7f65429a596',
+}
 GLASS_FILES = {
     'js/vetro-access-client.js': '53a2eb9043415cd86571b443d6744fcbc0970d004ea2602eea9d2bbf7eb8f80b',
     'js/vetro-permissions.js': '9e868bd4dabcef72ab5221e1222a7bd64f994805746405f0677db77527f83061',
@@ -371,6 +377,26 @@ return {present:!!g,adapter:!!p,state:p&&p.state,busy:!!(p&&p.busy),
  pendingShown:!!(d&&/waiting for approval/i.test(d.textContent||''))};
 }())'''
 
+PORT_LOOKUP = r'''(function(){
+try {
+ var port=tizen.messageport.requestRemoteMessagePort('vetrotvapp.svc','VETRO_APP_ACCESS_V1');
+ return {returned:!!port,expectedApp:!!port&&port.appId==='vetrotvapp.svc',
+  expectedPort:!!port&&port.messagePortName==='VETRO_APP_ACCESS_V1',
+  trustedIsBoolean:!!port&&typeof port.isTrusted==='boolean',
+  regular:!!port&&port.isTrusted===false,canSend:!!port&&typeof port.sendMessage==='function'};
+}catch(e){return {returned:false,error:e&&e.name};}
+}())'''
+
+
+def port_lookup(inspector):
+    result = inspector.call('Runtime.evaluate', {'expression': PORT_LOOKUP, 'returnByValue': True})
+    value = (result.get('result') or {}).get('value') or {}
+    if not isinstance(value, dict):
+        raise CaptureError('Native port lookup observation unavailable')
+    return {**{key: value.get(key) is True for key in ('returned', 'expectedApp', 'expectedPort',
+        'trustedIsBoolean', 'regular', 'canSend')},
+        'error': value.get('error') if value.get('error') in ERRORS else 'other' if value.get('error') else None}
+
 
 def sanitize_snapshot(value):
     if not isinstance(value, dict):
@@ -524,19 +550,81 @@ def read_json(url):
     return json.loads(data)
 
 
-def verify_glass(owner):
-    commands = ['for glass_capture_root in /opt/usr/apps/GlassHome1/res/wgt /usr/apps/GlassHome1/res/wgt; do',
-                'if [ -f "$glass_capture_root/js/vetro-permissions.js" ]; then',
+def verify_files(owner, package, expected):
+    if package not in ('GlassHome1', 'vetrotvapp'):
+        raise CaptureError('Unexpected package for file verification')
+    sentinel = 'js/vetro-permissions.js' if package == 'GlassHome1' else 'service/app-ports.js'
+    commands = ['for glass_capture_root in /opt/usr/apps/' + package + '/res/wgt /usr/apps/' + package + '/res/wgt; do',
+                'if [ -f "$glass_capture_root/' + sentinel + '" ]; then',
                 'cd "$glass_capture_root" || break']
-    commands.extend('sha256sum ' + shlex.quote(path) for path in GLASS_FILES)
+    commands.extend('sha256sum ' + shlex.quote(path) for path in expected)
     commands.extend(['break', 'fi', 'done'])
     output = remote(owner, '\n'.join(commands))
     found = {}
     for line in output.splitlines():
         match = re.fullmatch(r'([a-f0-9]{64})  (.+)', line)
-        if match and match[2] in GLASS_FILES:
+        if match and match[2] in expected:
             found[match[2]] = match[1]
-    return {path: found.get(path) == digest for path, digest in GLASS_FILES.items()}
+    return {path: found.get(path) == digest for path, digest in expected.items()}
+
+
+def verify_glass(owner):
+    return verify_files(owner, 'GlassHome1', GLASS_FILES)
+
+
+def verify_vetro(owner):
+    return verify_files(owner, 'vetrotvapp', VETRO_FILES)
+
+
+def receiver_state(status):
+    value = status.get('connectionDiagnostics') or {}
+    requests = value.get('appRequests') or {}
+    if (value.get('sourceRevision') != REVISION or value.get('sourceDirty') is not False or
+            requests.get('enabled') is not True or not isinstance(requests.get('events'), list) or
+            len(requests['events']) > 32 or not isinstance(requests.get('counts'), dict)):
+        raise CaptureError('Expected native request diagnostics are unavailable')
+    stamp = value.get('startedAt')
+    if not isinstance(stamp, str) or not re.fullmatch(r'[0-9TZ:.+\-]{20,40}', stamp):
+        raise CaptureError('Vetro service lifetime is unavailable')
+    lifecycle = value.get('lifecycle') or {}
+    port = value.get('appPort') or {}
+    # These request fields are bounded and redacted by the pinned service. Never
+    # copy the surrounding status, which also holds unrelated owner data.
+    return {'startedAt': stamp,
+            'lifecycle': {key: lifecycle.get(key) if type(lifecycle.get(key)) is int else None
+                          for key in ('starts', 'requests', 'stops')},
+            'appPort': {'available': port.get('available') is True, 'hasError': bool(port.get('error'))},
+            'requests': requests}
+
+
+def read_receiver(owner):
+    # This diagnostic envelope is attached to the unauthenticated 401/503
+    # response. The authenticated /status route has a different shape.
+    request = urllib.request.Request(owner.base + '/status', headers={'Accept': 'application/json'})
+    try:
+        response = owner.opener.open(request, timeout=8)
+    except urllib.error.HTTPError as error:
+        if error.code not in (401, 503):
+            raise
+        response = error
+    with response:
+        payload = response.read(100001)
+    if len(payload) > 100000:
+        raise CaptureError('Receiver diagnostic response exceeded its limit')
+    return receiver_state(json.loads(payload))
+
+
+def observe_receiver(owner, report, elapsed):
+    current = read_receiver(owner)
+    samples = report.setdefault('receiverSamples', [])
+    if not samples or current != samples[-1]['receiver']:
+        if len(samples) < 100:
+            samples.append({'seconds': elapsed, 'receiver': current})
+    first = report.get('receiverBefore') or current
+    if current['startedAt'] != first['startedAt']:
+        report['receiverRestartObserved'] = True
+    report['receiverAfter'] = current
+    return current
 
 
 def collect(owner, tv, duration, report):
@@ -572,6 +660,13 @@ def collect(owner, tv, duration, report):
         report['glassFilesMatch'] = verify_glass(owner)
         if not all(report['glassFilesMatch'].values()):
             raise CaptureError('Installed Glass Home files differ from the expected candidate; no debug launch was attempted')
+        phase = 'vetro-file-verification'
+        report['vetroFilesMatch'] = verify_vetro(owner)
+        if not all(report['vetroFilesMatch'].values()):
+            raise CaptureError('Installed Vetro receiver files differ from the expected candidate; no debug launch was attempted')
+        phase = 'receiver-preflight'
+        report['receiverBefore'] = read_receiver(owner)
+        report['receiverRestartObserved'] = False
         report['before'] = summarize_access(owner.raw('/app-access', timeout=8))
         phase = 'sdb-preflight'
         print('Checking the SDB connection before closing Glass Home...', flush=True)
@@ -627,11 +722,14 @@ def collect(owner, tv, duration, report):
         report['connectBusyObserved'] = value['busy']
         report['captureWindowSeconds'] = duration
         report['pollsAtCaptureStart'] = evidence.started
+        report['nativePortLookup'] = port_lookup(inspector)
+        report['receiverAtCaptureStart'] = observe_receiver(owner, report, 0)
         print('CAPTURING: in Glass Home open +, wait for Checking apps to finish, then choose Connect to Vetro ONCE.', flush=True)
         print('Leave Glass Home visible for ' + str(duration) + ' seconds. No access is granted by this script.', flush=True)
         started = time.monotonic()
         last = value
         notice = 0
+        receiver_notice = 0
         phase = 'request-observation'
         while time.monotonic() - started < duration:
             value = widget_snapshot(inspector)
@@ -641,11 +739,17 @@ def collect(owner, tv, duration, report):
                 report['samples'].append({'seconds': elapsed, 'widget': value})
                 last = value
             evidence.drain(inspector)
+            if elapsed >= receiver_notice:
+                current = observe_receiver(owner, report, elapsed)
+                receiver_notice = elapsed + 2
             if elapsed >= notice:
-                print(str(round(elapsed)) + 's: permission state ' + value['state'] + '; reply polls ' + str(evidence.started), flush=True)
+                counts = (current['requests'].get('counts') or {})
+                print(str(round(elapsed)) + 's: permission state ' + value['state'] + '; reply polls ' + str(evidence.started) +
+                      '; received ' + str(counts.get('received', 0)) + '; dispatched ' + str(counts.get('dispatch', 0)), flush=True)
                 notice = elapsed + 10
             time.sleep(1)
         evidence.drain(inspector)
+        observe_receiver(owner, report, round(time.monotonic() - started, 1))
         report['captureSeconds'] = round(time.monotonic() - started, 1)
         report['captureComplete'] = True
     except Exception as error:
@@ -654,6 +758,11 @@ def collect(owner, tv, duration, report):
         print('CAPTURE LIMIT [' + phase + ']: ' + error_detail(error), flush=True)
     finally:
         report['network'] = evidence.snapshot()
+        # In the hash-verified client, reply polling starts only after the native
+        # send call returns. This is an inference, not an OS delivery receipt.
+        report['nativeSendReturnInferred'] = (all(report.get('glassFilesMatch', {}).values()) and
+            bool(report.get('glassFilesMatch')) and 'pollsAtCaptureStart' in report and
+            evidence.started > report['pollsAtCaptureStart'])
         if debug:
             report['debugFrames'] = stream_evidence(debug)
             try:
@@ -698,11 +807,11 @@ def main():
     os.umask(0o077)
     directory = args.project_root.resolve() / 'vetro-install'
     output = directory / 'access-diagnostics' / ('glass-request-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S-%f') + '.json')
-    report = {'schema': 1, 'capturedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    report = {'schema': 2, 'capturedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
         'expectedVetroRevision': REVISION, 'expectedGlassRevision': GLASS_REVISION,
         'inspectorAttached': False, 'captureComplete': False, 'errors': [],
         'changes': 'Glass Home UI debug relaunch and normal relaunch only; no install, permission change or input change.',
-        'limitation': 'Debug mode can change timing. Native receiver rejection before Access.call is not instrumented in this Vetro revision.'}
+        'limitation': 'Debug mode can change timing. Native send return is inferred from verified client control flow and observed reply polling; it does not prove native delivery. The collector does not replace native functions or export request/reply credentials.'}
     print('=== Glass Home request capture START ===', flush=True)
     try:
         owner = OwnerClient('http://' + tv + ':8099', directory / 'combined-updates')

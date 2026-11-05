@@ -1,4 +1,4 @@
-# App request receiver and update input handoff — 2026-11-04
+# App request receiver and update input handoff — 2026-11-05
 
 ## Objective and current state
 
@@ -10,6 +10,10 @@ remote-input handoff passed; Glass Home still cannot submit a visible approval
 request. Do not reinstall Vetro for the next check.
 
 Verified installed Vetro: `e4033b41f29fc418228494db38364199026902a6`.
+Prepared next runtime: `e41f7f4a2021c63505261645b1e39c8e2c06a4f6`,
+which fixes TV-screen authentication recovery. All four jobs passed in
+run `41939908358`; it has not been installed or verified on the TV. Keep the
+installed build for the correlated capture below.
 Last verified Glass Home: `30c490194f1748d523262a1ac8985fe45f735729`, which
 is still the head of `pponce/glass-home-samsung-tv`,
 `combined/vetro-permissions`. No new Glass Home build has been prepared.
@@ -18,6 +22,7 @@ is still the head of `pponce/glass-home-samsung-tv`,
 
 - Runtime: `pponce/vetro`, `combined/runtime-wrapper-observation-20261103`.
   Installed candidate: `e4033b41f29fc418228494db38364199026902a6`.
+  New branch head: `e41f7f4a2021c63505261645b1e39c8e2c06a4f6`.
 - Host updater: `pponce/vetro`, `combined/runtime-wrapper-inspection-20261103`.
   Entry point: `tools/run-app-request-update.sh`.
   The runner pins runtime `e4033b41f29fc418228494db38364199026902a6`,
@@ -126,21 +131,59 @@ MessagePort routing layer exists; its file capture alone does not prove which
 runtime is currently loaded. No firmware wrapper was modified, no permission
 check was removed, and no new runtime/application patch was prepared.
 
-A fresh Glass Home UI session after Vetro's update remains unverified. A stale
-sender handle is a hypothesis to rule out, not an established cause.
+After reopening, the owner reports the same saved-app-list timeout and no
+approval request; receiver counts remain empty. Both the Glass Home UI and
+Photos service were stopped in that attempt. The source normally checks and
+starts Photos when opening the UI, but its actual health must be verified.
+Do not repeat the same restart or call a stale sender handle the established cause.
+
+## Prepared screen recovery fix
+
+The first failed authenticated summary previously prevented further status
+polling because no previous summary existed. The candidate retries that initial
+read, then uses lightweight live reads after success. HTTP 401 is displayed as
+service reachable with authentication reconnecting; credential storage that is
+not yet ready is distinguished from proof that the service responded. A delayed
+old-token refusal cannot invalidate a newer session. Full inventory remains
+manual, and no service/input lifecycle behavior is changed.
+
+Seven targeted local suites passed, including startup failure/recovery, 401 and
+private-storage timing, network failures, concurrent reads, visibility/run
+epochs, old-token responses, live HTTP authorization and private bootstrap.
+The exact candidate passed `check`, `permissions_ui`, `launcher`, and
+`combined_package`: https://github.com/pponce/vetro/actions/runs/41939908358 .
+This fixes a demonstrated code gap but is not yet an observed hardware fix.
+
+## Correlated capture
+
+`tools/capture-glass-access.py` now pins installed Vetro `e4033b41` and Glass
+Home `30c49019`, verifies seven Glass files and three Vetro receiver/reply files,
+and checks that the Photos service answers with permission transport version 2.
+It relaunches only the Glass UI in Web Inspector mode, then reopens it normally.
+
+During the capture, it records a native remote-port lookup, visible Connect
+busy state, reply-poll results, and the current Vetro receiver events/counters.
+The diagnostic start time and lifecycle counters expose a service restart that
+could reset evidence. It uses the unauthenticated diagnostic envelope; the
+authenticated `/status` response intentionally has a different shape.
+
+Reply polling in the verified client follows a returning native send call.
+That supports an explicit inference of send return, never proof of OS delivery.
+The helper sends no diagnostic app request, replaces no native function, exports
+no request/reply credentials, and changes no package, grants or input settings.
+Debug mode can change timing. All 57 locally available capture, transport and
+owner-client tests passed before publication.
 
 ## Exact next steps
 
-1. Keep the verified Vetro service and current Glass Home package installed.
-   Stop only the Glass Home UI (`GlassHome1.GlassHome`) in Vetro's task manager,
-   then reopen Glass Home normally. Do not stop its Photos service or Vetro.
-2. Let Checking apps finish and choose Connect to Vetro once. Read the existing
-   request diagnostics and compare counts with the current empty baseline.
-   This checks a fresh sender session without another package installation.
-3. If still empty, verify the installed app-port module hash and collect
-   correlated sender/receiver evidence on this exact build, including service
-   lifetime, registration/lookup errors and the native send outcome. Inspect the
-   documented runtime registration route before choosing a code change.
+1. Keep both packages installed. Open Glass Home normally once so Photos can
+   start; close other relay clients. Do not manually stop either service.
+2. Run the pinned correlated capture. Wait for CAPTURING, open +, wait for the
+   app check, and choose Connect to Vetro once. Return its JSON report.
+3. Check file/health preflight, native lookup, Connect busy observation and
+   post-start reply polling against receiver events and service lifetime.
+   If the sender returned with no receiver event and no restart, investigate
+   native registration/broker routing without loosening authentication.
 4. Preserve native caller identity, signer checks, explicit grants and protected
    system-app restrictions. Do not replace native authentication with an
    HTTP-supplied app ID or share the owner's credential with Glass Home.
@@ -150,3 +193,4 @@ sender handle is a hypothesis to rule out, not an established cause.
 Prior detail: `glass-access-capture-handoff.md` and
 `input-lifecycle-handoff.md`. No raw reports, credentials, or personal network
 details are included here.
+

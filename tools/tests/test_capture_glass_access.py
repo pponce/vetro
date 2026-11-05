@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import struct
@@ -353,6 +354,21 @@ class Owner:
     def __init__(self, revision=capture.REVISION):
         self.revision = revision
         self.calls = []
+        self.base = 'http://192.0.2.10:8099'
+        self.started_at = '2026-11-05T01:02:03.456Z'
+        self.opener = Mock()
+        self.opener.open.side_effect = self.diagnostic_response
+
+    def receiver_status(self):
+        return {'connectionDiagnostics': {'sourceRevision': self.revision, 'sourceDirty': False,
+                    'startedAt': self.started_at, 'lifecycle': {'starts': 1, 'requests': 1, 'stops': 0},
+                    'appPort': {'available': True, 'error': None},
+                    'appRequests': {'enabled': True, 'counts': {}, 'events': []}}}
+
+    def diagnostic_response(self, request, timeout):
+        assert not request.has_header('Authorization')
+        raise capture.urllib.error.HTTPError(request.full_url, 401, 'Unauthorized', {},
+            io.BytesIO(json.dumps(self.receiver_status()).encode()))
 
     def raw(self, path, body=None, timeout=8):
         self.calls.append((path, body))
@@ -376,6 +392,11 @@ def json_read(url):
 
 
 class LifecycleTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(capture, 'verify_vetro', return_value={'file': True})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_successful_capture_records_user_busy_and_restores_normal_ui(self):
         owner, result = Owner(), report()
         class Debug:
@@ -413,6 +434,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(result['connectBusyObserved'])
         self.assertEqual(result['samples'][-1]['widget']['state'], 'timeout')
         self.assertTrue(result['normalRelaunchCommandCompleted'])
+        self.assertFalse(result['receiverRestartObserved'])
+        self.assertEqual(result['receiverBefore']['requests']['counts'], {})
+        self.assertEqual(result['receiverAfter']['requests']['counts'], {})
+        self.assertFalse(result['nativeSendReturnInferred'], 'no network event was observed by this fixture')
         self.assertEqual(connect.call_count, 2)
 
     def test_revision_mismatch_does_not_launch_or_repair(self):
@@ -428,6 +453,24 @@ class LifecycleTests(unittest.TestCase):
             capture.collect(owner, '192.168.84.19', 1, result)
         self.assertFalse(result['captureComplete'])
         self.assertFalse(any(path == '/exec' for path, body in owner.calls))
+
+    def test_receiver_file_mismatch_does_not_launch(self):
+        owner, result = Owner(), report()
+        with patch.object(capture, 'read_json', side_effect=json_read), patch.object(capture, 'verify_glass', return_value={'file': True}), \
+             patch.object(capture, 'verify_vetro', return_value={'file': False}), patch.object(capture, 'connect') as connect:
+            capture.collect(owner, '192.168.84.19', 1, result)
+        connect.assert_not_called()
+        self.assertEqual(result['failedPhase'], 'vetro-file-verification')
+        self.assertFalse(result['captureComplete'])
+
+    def test_missing_receiver_telemetry_does_not_launch(self):
+        owner, result = Owner(), report()
+        with patch.object(capture, 'read_json', side_effect=json_read), patch.object(capture, 'verify_glass', return_value={'file': True}), \
+             patch.object(capture, 'receiver_state', side_effect=capture.CaptureError('Expected native request diagnostics are unavailable')), \
+             patch.object(capture, 'connect') as connect:
+            capture.collect(owner, '192.168.84.19', 1, result)
+        connect.assert_not_called()
+        self.assertEqual(result['failedPhase'], 'receiver-preflight')
 
     def test_debug_failure_restores_ui_once_without_service_or_permission_writes(self):
         owner, result = Owner(), report()
@@ -481,6 +524,63 @@ class LifecycleTests(unittest.TestCase):
             capture.collect(owner, '192.168.84.19', 1, result)
         connect.assert_not_called()
         self.assertFalse(any(path == '/exec' for path, body in owner.calls))
+
+
+class ReceiverTests(unittest.TestCase):
+    def test_native_lookup_reports_shape_without_sending_or_exporting_identity(self):
+        inspector = Mock()
+        inspector.call.return_value = {'result': {'value': {'returned': True, 'expectedApp': True,
+            'expectedPort': True, 'trustedIsBoolean': True, 'regular': True, 'canSend': True,
+            'extra': 'private-identity'}}}
+        result = capture.port_lookup(inspector)
+        self.assertTrue(result['expectedApp'])
+        self.assertNotIn('private', json.dumps(result))
+        expression = inspector.call.call_args.args[1]['expression']
+        self.assertNotIn('.sendMessage(', expression)
+        self.assertNotIn('requestLocalMessagePort(', expression)
+        inspector.call.return_value = {'result': {'value': {'returned': False, 'error': 'NotFoundError'}}}
+        self.assertEqual(capture.port_lookup(inspector)['error'], 'NotFoundError')
+
+    def test_service_restart_is_recorded_even_if_counts_reset(self):
+        owner, result = Owner(), report()
+        first = owner.receiver_status()
+        result['receiverBefore'] = capture.receiver_state(first)
+        capture.observe_receiver(owner, result, 0)
+        owner.started_at = '2026-11-05T01:03:00.000Z'
+        capture.observe_receiver(owner, result, 3)
+        self.assertTrue(result['receiverRestartObserved'])
+        self.assertEqual(len(result['receiverSamples']), 2)
+
+    def test_receiver_observation_excludes_other_status_and_validates_revision(self):
+        status = Owner().receiver_status()
+        status['unrelated'] = 'private-user-data'
+        status['connectionDiagnostics']['screen'] = {'token': 'private-screen-data'}
+        result = capture.receiver_state(status)
+        self.assertNotIn('private', json.dumps(result))
+        status['connectionDiagnostics']['sourceRevision'] = 'b' * 40
+        with self.assertRaises(capture.CaptureError):
+            capture.receiver_state(status)
+
+    def test_receiver_envelope_is_read_without_owner_credentials(self):
+        owner = Owner()
+        self.assertEqual(capture.read_receiver(owner)['requests']['counts'], {})
+        self.assertEqual(owner.calls, [], 'authenticated status is not a diagnostic envelope')
+        owner.opener.open.side_effect = capture.urllib.error.HTTPError(owner.base + '/status', 404, 'Missing', {}, io.BytesIO(b'{}'))
+        with self.assertRaises(capture.urllib.error.HTTPError):
+            capture.read_receiver(owner)
+
+    def test_file_verification_only_reads_expected_package_files(self):
+        owner = Owner()
+        for package, expected in [('vetrotvapp', capture.VETRO_FILES), ('GlassHome1', capture.GLASS_FILES)]:
+            hashes = '\n'.join(digest + '  ' + path for path, digest in expected.items())
+            with patch.object(capture, 'remote', return_value=hashes) as remote:
+                self.assertTrue(all(capture.verify_files(owner, package, expected).values()))
+            command = remote.call_args.args[1]
+            self.assertIn('/opt/usr/apps/' + package + '/res/wgt', command)
+            self.assertNotIn('app_launcher', command)
+            self.assertNotIn('kill', command)
+        with self.assertRaises(capture.CaptureError):
+            capture.verify_files(owner, 'unexpected', {})
 
 
 if __name__ == '__main__':
