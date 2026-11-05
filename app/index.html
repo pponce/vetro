@@ -70,19 +70,62 @@ var BASE = 'http://127.0.0.1:8099';
 var ICON = 'icon.png';
 var IDLE_MS = 300000;
 var report = {probe: {}, apps: [], packages: [], settings: {}};
-var delivered = false, running = false, idleTimer = null;
+var delivered = false, running = false, idleTimer = null, fullCheck = false;
+var leaving = false, screenEpoch = 0, screenTasks = [], pairingTimer = null, pairingTick = null, screenTimer = null;
+var liveBusy = false, pairingBusy = false, liveError = false;
+function trackScreenTask(cancel) {
+  screenTasks.push(cancel);
+  return function () { var i = screenTasks.indexOf(cancel); if (i !== -1) screenTasks.splice(i, 1); };
+}
+function screenRequest(method, route, body, timeout) {
+  return new Promise(function (resolve, reject) {
+    if (leaving) return reject(new Error('Screen is closing'));
+    var xhr = new XMLHttpRequest(), done = false;
+    var forget = trackScreenTask(function () { finish(new Error('Screen is closing')); try { xhr.abort(); } catch (e) {} });
+    function finish(error, value) { if (done) return; done = true; forget(); if (error) reject(error); else resolve(value); }
+    try {
+      xhr.open(method, BASE + route, true); xhr.timeout = timeout;
+      if (body !== undefined) xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.onload = function () {
+        if (done) return;
+        if (xhr.status !== 200) { var error = new Error('Service replied HTTP ' + xhr.status); error.status = xhr.status; return finish(error); }
+        try { finish(null, JSON.parse(xhr.responseText)); } catch (e) { var invalid = new Error('Response is not JSON'); invalid.status = xhr.status; finish(invalid); }
+      };
+      xhr.onerror = function () { finish(new Error('Service unreachable')); };
+      xhr.ontimeout = function () { finish(new Error('Service timeout')); };
+      xhr.onabort = function () { finish(new Error('Screen request cancelled')); };
+      xhr.send(body === undefined ? null : body);
+    } catch (e) { finish(e); }
+  });
+}
 // The whole check stops after TOTAL_MS even if a step is stuck (every step also has its own limit).
 var TOTAL_MS = 100000;
 var step = null, tick = null, posts = Promise.resolve(), lastScreen = null, packagesBusy = false, packagesAgain = false;
 // Dashboard sign-in: the service asks for a 6-digit code that only this screen shows (see service/auth.js).
 var pairing = null;
 // The service keeps running without this page; a resident page only holds memory.
-function leave() { try { tizen.application.getCurrentApplication().exit(); } catch (e) {} }
+function startPolling() {
+  pairingTimer = setInterval(checkPairing, 2000);
+  pairingTick = setInterval(function () { if (!leaving && pairing) paintPairing(); }, 1000);
+  screenTimer = setInterval(pollScreen, 5000);
+}
+function leave() {
+  if (leaving) return;
+  leaving = true; screenEpoch++;
+  clearTimeout(idleTimer); clearInterval(tick);
+  clearInterval(pairingTimer); clearInterval(pairingTick); clearInterval(screenTimer);
+  screenTasks.slice().forEach(function (cancel) { cancel(); });
+  try { tizen.application.getCurrentApplication().exit(); }
+  catch (e) { leaving = false; startPolling(); resetIdle(); }
+}
 // Every probe gets a time limit: a Tizen call whose callback never fires must not leave the screen on "Checking".
 function attempt(name, fn, limit) {
   return new Promise(function (resolve) {
-    var done = false, timer = setTimeout(function () { finish({ok: false, error: 'no answer in ' + Math.round(limit / 1000) + ' s'}); }, limit || 8000);
-    function finish(r) { if (done) return; done = true; clearTimeout(timer); report.probe[name] = r; resolve(); }
+    if (leaving) return resolve();
+    var epoch = screenEpoch, mine = report;
+    var done = false, timer = setTimeout(function () { finish({ok: false, error: 'no answer in ' + Math.round((limit || 8000) / 1000) + ' s'}); }, limit || 8000);
+    var forget = trackScreenTask(function () { finish(null); });
+    function finish(r) { if (done) return; done = true; clearTimeout(timer); forget(); if (!leaving && epoch === screenEpoch && mine === report && r) report.probe[name] = r; resolve(); }
     try {
       Promise.resolve(fn()).then(function (v) { finish({ok: true, value: v}); },
         function (e) { finish({ok: false, error: String(e && e.message || e)}); });
@@ -91,7 +134,9 @@ function attempt(name, fn, limit) {
 }
 // A public-level certificate may not get the on-boot start honored, so the page starts the service itself.
 function launchService() {
-  return cb(function (ok, ko) {
+  return screenRequest('GET', '/status', undefined, 1000).then(function () { return 'already running'; }, function (error) {
+    if (leaving || error.status) throw error;
+    return cb(function (ok, ko) {
     function failed(e) { ko(new Error('launch failed (wrt:service: ' + (e && e.message || e) + ')')); }
     if (typeof window.a2sService === 'function') {
       try { Promise.resolve(new window.a2sService('vetrotvapp.svc').start()).then(ok, failed); }
@@ -99,55 +144,52 @@ function launchService() {
       return;
     }
     tizen.application.launch('vetrotvapp.svc', ok, ko);
+    });
   });
 }
 function reach(tries) {
-  return fetch(BASE + '/status').then(function (r) { return r.status; }, function (e) {
-    if (tries <= 1) throw e;
-    return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return reach(tries - 1); });
+  return screenRequest('GET', '/status', undefined, 4000).then(function () { return 200; }, function (error) {
+    if (leaving || error.status || tries <= 1) throw error;
+    return new Promise(function (resolve) {
+      var timer = setTimeout(done, 1500), forget = trackScreenTask(done), settled = false;
+      function done() { if (settled) return; settled = true; clearTimeout(timer); forget(); resolve(); }
+    }).then(function () { if (!leaving) return reach(tries - 1); });
   });
 }
 function cb(call) { return new Promise(function (ok, ko) { call(ok, ko); }); }
 function sendReport(body, ms) {
-  return new Promise(function (resolve, reject) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', BASE + '/probe', true);
-    xhr.timeout = ms || 10000;
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.onload = function () {
-      var result;
-      try { result = JSON.parse(xhr.responseText); } catch (e) { return reject(new Error('Response is not JSON')); }
-      if (xhr.status !== 200 || result.ok !== true) return reject(new Error('Report rejected: HTTP ' + xhr.status));
-      resolve({status: xhr.status, persisted: result.persisted});
-    };
-    xhr.onerror = function () { reject(new Error('Report send failed')); };
-    xhr.ontimeout = function () { reject(new Error('Report send timeout')); };
-    xhr.send(body);
+  return screenRequest('POST', '/probe', body, ms || 10000).then(function (result) {
+    if (!result || result.ok !== true) throw new Error('Report rejected');
+    return {status: 200, persisted: result.persisted};
   });
 }
-// What the TV screen shows: one small JSON read. The launcher check inside it can take a few seconds.
-function readScreen() {
-  return new Promise(function (resolve, reject) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', BASE + '/screen', true);
-    xhr.timeout = 12000;
-    xhr.onload = function () {
-      var d;
-      try { d = JSON.parse(xhr.responseText); } catch (e) { return reject(new Error('Response is not JSON')); }
-      if (xhr.status !== 200 || !d || d.error) return reject(new Error('HTTP ' + xhr.status));
-      resolve(d);
-    };
-    xhr.onerror = function () { reject(new Error('Service unreachable')); };
-    xhr.ontimeout = function () { reject(new Error('Service timeout')); };
-    xhr.send();
+function readScreen(live) {
+  return screenRequest('GET', live ? '/screen?live=1' : '/screen', undefined, live ? 4000 : 12000).then(function (data) {
+    if (!data || data.error || !data.root || typeof data.root.connected !== 'boolean' || !data.input ||
+        typeof data.input.enabled !== 'boolean' || typeof data.input.connected !== 'boolean' || !data.launcher) throw new Error('Invalid screen status');
+    return data;
   });
+}
+function pollScreen() {
+  if (leaving || document.hidden || running || liveBusy) return Promise.resolve();
+  liveBusy = true;
+  var epoch = screenEpoch;
+  function current() { return !leaving && !document.hidden && !running && epoch === screenEpoch; }
+  return readScreen(!!lastScreen).then(function (data) {
+    if (!current()) return;
+    if (lastScreen && lastScreen.launcher && lastScreen.launcher.enabled === data.launcher.enabled &&
+        lastScreen.launcher.failures === data.launcher.failures && lastScreen.root.connected === data.root.connected) data.launcher = lastScreen.launcher;
+    lastScreen = data; liveError = false; render(data, false);
+  }, function () { if (current()) { liveError = true; render(null, false); } }).then(function () { liveBusy = false; });
 }
 function tryConnect(port) {
   return new Promise(function (resolve, reject) {
     var ws = new WebSocket('ws://127.0.0.1:' + port + '/api/v2/channels/samsung.remote.control?name=' + btoa('Vetro'));
-    var t = setTimeout(function () { try { ws.close(); } catch (e) {} reject(new Error('timeout')); }, 4000);
-    ws.onopen = function () { clearTimeout(t); ws.close(); resolve('open'); };
-    ws.onerror = function () { clearTimeout(t); reject(new Error('refused')); };
+    var done = false, t = setTimeout(function () { finish(new Error('timeout')); }, 4000);
+    var forget = trackScreenTask(function () { finish(new Error('Screen is closing')); });
+    function finish(error) { if (done) return; done = true; clearTimeout(t); forget(); try { ws.close(); } catch (e) {} if (error) reject(error); else resolve('open'); }
+    ws.onopen = function () { finish(); };
+    ws.onerror = function () { finish(new Error('refused')); };
   });
 }
 // The order matters. The model and the service answer come first and a first report goes out right after, so a screen
@@ -174,12 +216,16 @@ var jobs = [
   ['serviceReach', function () { return reach(8); }, 25000, 'Service answer'],
   ['remoteApi8001', function () { return tryConnect(8001); }, 8000, 'TV remote API'],
   ['systeminfoBattery', function () { return cb(function (ok, ko) { tizen.systeminfo.getPropertyValue('BUILD', ok, ko); }); }, 8000, 'System info'],
-  ['apps', function () { return cb(function (ok, ko) { tizen.application.getAppsInfo(ok, ko); }).then(function (a) {
+  ['apps', function () { var mine = report, epoch = screenEpoch; return cb(function (ok, ko) { tizen.application.getAppsInfo(ok, ko); }).then(function (a) {
+      if (leaving || report !== mine || epoch !== screenEpoch) return;
       report.apps = a.map(function (x) { return {id: x.id, name: x.name, packageId: x.packageId, show: x.show}; });
       return a.length; }); }, 8000, 'Installed apps']
 ];
-var EARLY = 6;   // the service answer: the first report goes out after this step
-var later = ['packages', function () { return cb(function (ok, ko) { tizen.package.getPackagesInfo(ok, ko); }).then(function (p) {
+var EARLY = 6;   // Full diagnostics publish as soon as the service answers.
+var QUICK_NAMES = ['serviceLaunch', 'tizenObject', 'webapisObject', 'productinfo', 'serviceReach'];
+var activeJobs = jobs;
+var later = ['packages', function () { var mine = report, epoch = screenEpoch; return cb(function (ok, ko) { tizen.package.getPackagesInfo(ok, ko); }).then(function (p) {
+    if (leaving || report !== mine || epoch !== screenEpoch) return;
     report.packages = p.map(function (x) { return {id: x.id, version: x.version, totalSize: x.totalSize, author: x.author}; });
     return p.length; }); }, 30000, 'Package list'];
 var LABELS = {};
@@ -248,7 +294,7 @@ function checks(d) {
   if (!d || !root) out.push(['na', 'Remote input', d ? 'Needs root' : 'Unknown', null, 'input ?']);
   else if (!d.input.enabled) out.push(['off', 'Remote input', 'Off', null, 'input off']);
   else if (d.input.connected) out.push(['ok', 'Remote input', 'Filtering', null, 'input ok']);
-  else out.push(['bad', 'Remote input', 'Remote not found', 'The saved remote is not connected. Open Remote in the dashboard.', 'INPUT LOST', 'bad']);
+  else out.push(['bad', 'Remote input', 'Remote input disconnected', 'The saved remote is not connected. Open Remote in the dashboard.', 'INPUT LOST', 'bad']);
   l = d && d.launcher;
   if (!d) out.push(['na', 'Launcher', 'Unknown', null, 'launcher ?']);
   else if (!l.installed) out.push(['na', 'Launcher', 'Not included', null, 'launcher n/a']);
@@ -261,7 +307,8 @@ function checks(d) {
   ['tizenObject', 'webapisObject', 'apps', 'packages'].forEach(function (k) { if (!probeOk(k) && (k !== 'packages' || report.probe.packages)) apiMissing.push(k.replace('Object', '')); });
   slow = slowSteps();
   slowHint = slow.length ? 'No answer in time: ' + esc(slow.map(function (k) { return LABELS[k] || k; }).join(', ')) + '.' : '';
-  if (apiMissing.length) api = ['warn', 'TV APIs', 'Limited', 'Not available: ' + esc(apiMissing.join(', ')) + '.' + (slowHint ? ' ' + slowHint : ''), 'API ' + apiMissing.join('/') + (slow.length ? ' SLOW ' + slow.join('/') : ''), 'warn'];
+  if (!fullCheck && !apiMissing.some(function (name) { return name === 'tizen' || name === 'webapis'; })) api = ['na', 'TV APIs', 'Full check available', 'Press OK to check installed apps, packages and TV APIs.', 'api unchecked'];
+  else if (apiMissing.length) api = ['warn', 'TV APIs', 'Limited', 'Not available: ' + esc(apiMissing.join(', ')) + '.' + (slowHint ? ' ' + slowHint : ''), 'API ' + apiMissing.join('/') + (slow.length ? ' SLOW ' + slow.join('/') : ''), 'warn'];
   // A slow step whose answer Vetro does not need is named, without turning a healthy TV into a warning.
   else if (slow.length) api = ['ok', 'TV APIs', 'Available', 'slow: ' + esc(slow.map(function (k) { return LABELS[k] || k; }).join(', ')), 'api ok, slow ' + slow.join('/')];
   else api = ['ok', 'TV APIs', 'Available', report.probe.packages ? null : 'package list: reading', 'api ok'];
@@ -282,10 +329,11 @@ function cell(c) {
 
 var WAITING = [['Service', 'Starting'], ['Root access', 'Checking'], ['Remote input', 'Checking'], ['Launcher', 'Checking'], ['TV APIs', 'Checking'], ['Memory', 'Checking']];
 function render(d, waiting) {
+  if (leaving) return;
   var list = waiting ? WAITING.map(function (w) { return ['wait', w[0], w[1], null, '']; }) : checks(d), bad = 0, warn = 0, state, label, sum, device = report.settings, model, firmware, line, version, pin = pairing ? pairing.code.slice(0, 3) + ' ' + pairing.code.slice(3) : '';
   list.forEach(function (c) { if (waiting) return; if (c[0] === 'bad') bad++; else if (c[0] === 'warn') warn++; });
   if (waiting) { state = 'wait'; label = 'Checking'; sum = 'Checking'; }
-  else if (!d) { state = 'bad'; label = 'Not responding'; sum = 'The service is down'; }
+  else if (!d) { state = 'bad'; label = 'Not responding'; sum = liveError ? 'Status update unavailable' : 'The service is down'; }
   else if (bad) { state = 'bad'; label = 'Needs attention'; sum = bad + (bad === 1 ? ' problem' : ' problems'); }
   else if (warn) { state = 'warn'; label = 'Running, with limits'; sum = warn + (warn === 1 ? ' thing to check' : ' things to check'); }
   else { state = 'ok'; label = 'Running in the background'; sum = 'All good. You can close this screen, Vetro keeps running without it.'; }
@@ -303,11 +351,11 @@ function render(d, waiting) {
     '</div><div class="state ' + (state === 'ok' ? '' : state) + '">' + ICONS[state] + esc(label) + '</div></div>' +
     '<div class="dash"><div class="dh"><small>DASHBOARD</small><div class="pin" id="pin"' + (pin ? '' : ' hidden') + '>PIN<b>' + esc(pin) + '</b><i>' + esc(pairing ? pinLine() : '') + '</i></div></div>' +
     '<div class="url' + (addr ? '' : ' off') + '">' + (addr ? esc(addr) : 'Address unavailable') + '</div>' +
-    '<p>' + (addr ? 'Open it on a phone or computer on the same network.' : waiting ? 'Vetro is checking the TV. This can take 1&ndash;2 minutes: please do not close this screen.' : 'Dashboard at <code>http://&lt;TV&gt;:8099/</code> once the service answers (use the TV address from your router).') + '</p></div></div>' +
+    '<p>' + (addr ? 'Open it on a phone or computer on the same network.' : waiting ? 'Vetro is checking the TV. Pairing is available as soon as the service answers.' : 'Dashboard at <code>http://&lt;TV&gt;:8099/</code> once the service answers (use the TV address from your router).') + '</p></div></div>' +
     '<div class="panel ' + (bad ? 'bad' : warn ? 'warn' : '') + '"><div class="ph"><h2>Diagnostics</h2><div class="sum ' + (state === 'ok' ? '' : state) + '" id="sum">' + esc(sum) + '</div></div>' +
     '<div class="grid">' + cells + '</div>' +
     '<div class="share"><div class="t">Asking for help? Read out or photograph this line.</div><code>' + (waiting ? 'Collecting the details&hellip;' : line.join(' &middot; ')) + '</code></div>' +
-    '<div class="keys">' + (waiting ? '' : '<span><i>OK</i>Check again</span>') + '<span><i>Back</i>Close</span></div></div>';
+    '<div class="keys">' + (waiting ? '' : '<span><i>OK</i>Full diagnostics</span>') + '<span><i>Back</i>Close</span></div></div>';
 }
 function fit() {
   var k = Math.min(window.innerWidth / 1920, window.innerHeight / 1080), s = document.getElementById('stage');
@@ -335,14 +383,15 @@ function showPairing(p) {
   paintPairing();
 }
 function checkPairing() {
-  if (document.hidden) return;
-  var xhr = new XMLHttpRequest();
-  xhr.open('GET', BASE + '/auth/pending', true);
-  xhr.timeout = 3000;
-  xhr.onload = function () { var d; try { d = JSON.parse(xhr.responseText); } catch (e) { return; } showPairing(d); };
-  xhr.send();
+  if (leaving || document.hidden || pairingBusy) return Promise.resolve();
+  pairingBusy = true;
+  var epoch = screenEpoch;
+  return screenRequest('GET', '/auth/pending', undefined, 3000).then(function (data) {
+    if (!leaving && !document.hidden && epoch === screenEpoch) showPairing(data);
+  }, function () {}).then(function () { pairingBusy = false; });
 }
 function resetIdle() {
+  if (leaving) return;
   clearTimeout(idleTimer);
   idleTimer = setTimeout(leave, IDLE_MS);
 }
@@ -354,78 +403,86 @@ function progress(n, label) {
 }
 function paintProgress() {
   var el = document.getElementById('sum');
-  if (el && step) el.textContent = 'Checking ' + step.n + ' of ' + jobs.length + ' \u00b7 ' + step.label + ' \u00b7 ' + Math.floor((Date.now() - step.since) / 1000) + ' s';
+  if (el && step) el.textContent = 'Checking ' + step.n + ' of ' + activeJobs.length + ' \u00b7 ' + step.label + ' \u00b7 ' + Math.floor((Date.now() - step.since) / 1000) + ' s';
 }
 // Reports go out one after the other, each as it was when queued, so a late answer cannot overwrite a newer one.
 function post(ms) {
-  var body = JSON.stringify(report), sent = posts.then(function () { return sendReport(body, ms); });
+  var body = JSON.stringify(report), sent = posts.then(function () { if (!leaving) return sendReport(body, ms); });
   posts = sent.then(null, function () {});
   return sent;
 }
-function run() {
-  if (running) return Promise.resolve();
-  running = true; delivered = false;
+function run(full) {
+  if (leaving || running) return Promise.resolve();
+  fullCheck = full === true; activeJobs = fullCheck ? jobs : jobs.filter(function (job) { return QUICK_NAMES.indexOf(job[0]) !== -1; });
+  running = true; delivered = false; liveError = false; screenEpoch++;
+  var epoch = screenEpoch, selected = activeJobs;
   var started = Date.now(), closed = false, cap;
-  report = {probe: {}, apps: [], packages: [], settings: {}, progress: {partial: true, done: 0, of: jobs.length, next: jobs[0][0], elapsedMs: 0}};
+  report = {probe: {}, apps: [], packages: [], settings: {}, progress: {partial: true, done: 0, of: selected.length, next: selected[0][0], elapsedMs: 0}};
   render(null, true);
+  checkPairing();
   clearInterval(tick);
   tick = setInterval(paintProgress, 1000);
-  var steps = jobs.reduce(function (p, j, i) {
+  var steps = selected.reduce(function (p, j, i) {
     return p.then(function () {
-      if (closed) return;
+      if (closed || leaving) return;
       progress(i + 1, j[3]);
       return attempt(j[0], j[1], j[2]).then(function () {
-        if (closed) return;
-        report.progress = {partial: true, done: i + 1, of: jobs.length, next: (jobs[i + 1] || later)[0], elapsedMs: Date.now() - started};
-        if (i + 1 >= EARLY && i + 1 < jobs.length && probeOk('serviceReach')) post(4000).then(null, function () {});
+        if (closed || leaving) return;
+        report.progress = {partial: true, done: i + 1, of: selected.length, next: (selected[i + 1] || (fullCheck ? later : ['complete']))[0], elapsedMs: Date.now() - started};
+        if (i + 1 >= EARLY && i + 1 < selected.length && probeOk('serviceReach')) post(4000).then(null, function () {});
       });
     });
   }, Promise.resolve());
-  var limit = new Promise(function (resolve) { cap = setTimeout(function () { closed = true; resolve(); }, TOTAL_MS); });
+  var forgetLimit;
+  var limit = new Promise(function (resolve) {
+    function finish() { closed = true; clearTimeout(cap); resolve(); }
+    cap = setTimeout(finish, fullCheck ? TOTAL_MS : 45000); forgetLimit = trackScreenTask(finish);
+  });
   return Promise.race([steps, limit])
     .then(function () {
       var done = 0;
-      closed = true; clearTimeout(cap); clearInterval(tick); step = null;
-      jobs.forEach(function (j) {
-        if (!report.probe[j[0]]) report.probe[j[0]] = {ok: false, error: 'skipped: the checks took over ' + TOTAL_MS / 1000 + ' s'};
+      closed = true; clearTimeout(cap); forgetLimit(); clearInterval(tick); step = null;
+      if (leaving || epoch !== screenEpoch) return;
+      selected.forEach(function (j) {
+        if (!report.probe[j[0]]) report.probe[j[0]] = {ok: false, error: 'skipped: the checks took over ' + (fullCheck ? TOTAL_MS : 45000) / 1000 + ' s'};
         if (!/^skipped/.test(String(report.probe[j[0]].error || ''))) done++;
       });
-      report.progress = {partial: false, done: done, of: jobs.length, next: later[0], elapsedMs: Date.now() - started};
-      return post(10000).then(function () { delivered = true; }, function () {});
+      report.progress = {partial: false, done: done, of: selected.length, next: fullCheck ? later[0] : 'complete', elapsedMs: Date.now() - started};
+      return post(10000).then(function () { if (!leaving && epoch === screenEpoch) delivered = true; }, function () {});
     })
-    .then(function () { return readScreen().catch(function () { return null; }); })
-    .then(function (d) { lastScreen = d; render(d, false); }, function () { lastScreen = null; render(null, false); })
-    .then(function () { running = false; readPackages(); });
+    .then(function () { if (!leaving && epoch === screenEpoch) return readScreen().catch(function () { return null; }); })
+    .then(function (d) { if (!leaving && epoch === screenEpoch) { lastScreen = d; render(d, false); } }, function () { if (!leaving && epoch === screenEpoch) { lastScreen = null; render(null, false); } })
+    .then(function () { running = false; if (!leaving && epoch === screenEpoch && fullCheck) readPackages(); });
 }
 // The package list, after the verdict. When it arrives the report goes out again and the screen is drawn again.
 function readPackages() {
+  if (leaving) return;
   if (packagesBusy) { packagesAgain = true; return; }
   packagesBusy = true;
   var mine = report;
   attempt(later[0], later[1], later[2]).then(function () {
     packagesBusy = false;
     if (packagesAgain) { packagesAgain = false; if (!running) return readPackages(); }
-    if (running || report !== mine) return;
+    if (leaving || running || report !== mine) return;
     report.progress.packagesDone = true;
     post(10000).then(null, function () {});
     render(lastScreen, false);
   });
 }
-document.addEventListener('visibilitychange', function () { if (document.hidden && delivered) leave(); });
+document.addEventListener('visibilitychange', function () { if (document.hidden) { screenEpoch++; if (delivered && !pairing) leave(); } else if (!leaving) { checkPairing(); pollScreen(); } });
 document.addEventListener('keydown', function (e) {
+  if (leaving) return;
   var k = e && e.keyCode;
   resetIdle();
   if (k === 10009 || k === 27) leave();
-  else if (k === 13) run();
+  else if (k === 13) run(true);
 });
 window.addEventListener('resize', fit);
 fit();
 resetIdle();
-checkPairing();
-setInterval(checkPairing, 2000);
-setInterval(function () { if (pairing) paintPairing(); }, 1000);
+startPolling();
 // Module scripts run after this classic script and before DOMContentLoaded.
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else run();
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { run(false); }); else run(false);
 </script>
 <script type="module">import { Service } from 'wrt:service'; window.a2sService = Service;</script>
 </body>
