@@ -4,10 +4,10 @@ const path = require('path');
 const vm = require('vm');
 module.exports = function loadService(root, options) {
   options = options || {};
-  let router;
+  let router, listening;
   const dependencies = {
     fs: { readFileSync: function () { return ''; } },
-    http: { createServer: function (fn) { router = fn; return { listen: function () {} }; } },
+    http: { createServer: function (fn) { router = fn; return { on: function (event,callback) {if(event==='listening')listening=callback;return this;}, listen: function () {} }; } },
     './mqtt-bridge.js': Object.assign({},require('../service/mqtt-bridge.js'),{ MqttBridge: function (getTelemetry,onMessage) { this.onMessage=onMessage;this.event=function(){};this.connected=false; this.start = function () {};this.setTopics=function(){};this.status=function(){return {connected:false,state:'disabled',events:[]}};this.configure=function(){};this.publish=function(){throw Error('MQTT disconnected')}; } })
   };
   const context = vm.createContext({
@@ -17,6 +17,7 @@ module.exports = function loadService(root, options) {
     }, module: {exports: {}}, __dirname: path.join(root, 'service'), tizen: options.tizen, Buffer, process, console, setTimeout: options.setTimeout || setTimeout, clearTimeout, setInterval: options.setInterval || setInterval, clearInterval
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'service/main.js'), 'utf8'), context);
+  if (listening) listening();
   if (options.start !== false) context.module.exports.onStart();
   return { context: context, router: router, lifecycle: context.module.exports };
 };

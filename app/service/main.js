@@ -85,6 +85,7 @@ var PORT = Number(process.env.VETRO_PORT) || buildInfo.port || 8099;
 var authModule = require('./auth.js');
 var auth = new authModule.Auth();
 var tizenRuntime = typeof tizen === 'undefined' ? null : tizen;
+var serviceListening = false, serviceBinding = false, serviceRequested = !tizenRuntime, serviceStarted = false;
 var appIdentity = new (require('./app-identity.js').Resolver)(tizenRuntime);
 var appAccess = new (require('./app-access.js').Access)({
     identity: appIdentity,
@@ -110,7 +111,7 @@ function startAppCommunication() {
     // Read Tizen here too: a runtime may expose it only after evaluating this module.
     tizenRuntime = typeof tizen === 'undefined' ? null : tizen;
     appIdentity.tizen = tizenRuntime;
-    if (!tizenRuntime || appInitializing || appPorts && appPorts.ready) return;
+    if (!serviceListening || !serviceRequested || !tizenRuntime || appInitializing || appPorts && appPorts.ready) return;
     if (appPorts) { appPorts.stop(); appPorts = null; }
     function connect() {
         if(!widgetBootstrap)widgetBootstrap=new (require('./widget-bootstrap.js').Publisher)(auth,connectionDiagnostics);
@@ -141,11 +142,17 @@ function stopAppCommunication() {
     appReplies.clear();
     if (widgetBootstrap) { widgetBootstrap.stop(); widgetBootstrap = null; }
 }
-module.exports.onStart = function(){connectionDiagnostics.lifecycle('starts');startAppCommunication();startInputLifecycle();};
-module.exports.onRequest = function(){connectionDiagnostics.lifecycle('requests');startAppCommunication();startInputLifecycle();};
+function activateService() {
+    if (!serviceRequested) return;
+    if (!serviceListening) { if (!serviceBinding) listenService(); return; }
+    if (!serviceStarted) { serviceStarted = true; platform.start(); bridge.start(); }
+    startAppCommunication(); startInputLifecycle(); scheduleReturnApp();
+}
+module.exports.onStart = function(){connectionDiagnostics.lifecycle('starts');serviceRequested=true;activateService();};
+module.exports.onRequest = function(){connectionDiagnostics.lifecycle('requests');serviceRequested=true;activateService();};
 // TV Node services use onExit; other Tizen service runtimes use onStop.
-module.exports.onExit = function(){connectionDiagnostics.lifecycle('stops');stopInputLifecycle();stopAppCommunication();};
-module.exports.onStop = function(){connectionDiagnostics.lifecycle('stops');stopInputLifecycle();stopAppCommunication();};
+module.exports.onExit = function(){connectionDiagnostics.lifecycle('stops');serviceRequested=false;stopInputLifecycle();stopAppCommunication();};
+module.exports.onStop = function(){connectionDiagnostics.lifecycle('stops');serviceRequested=false;stopInputLifecycle();stopAppCommunication();};
 function developmentOnly() { return !tizenRuntime && platform.status().mode === 'app-only'; }
 
 
@@ -720,9 +727,9 @@ var physical=new PhysicalInput(agentExecute,function(event){
     pendingActions++;
     actionQueue=actionQueue.then(function(){return inputLifecycleActive&&generation===inputGeneration?runActions(actions):{ok:true};}).then(function(r){if(inputLifecycleActive&&generation===inputGeneration)inputError=r.launcherFallback||null;}).catch(function(e){if(inputLifecycleActive&&generation===inputGeneration){inputError=e.message;inputPaused=true;physical.stop();}}).finally(function(){pendingActions--;});
 });
-var inputObservers=[], inputPaused=false, inputRestoring=false, inputGeneration=0, inputLifecycleActive=!tizenRuntime;
+var inputObservers=[], inputPaused=false, inputRestoring=false, inputGeneration=0, inputLifecycleActive=false;
 function startInputLifecycle(){
-    if(inputLifecycleActive)return;
+    if(!serviceListening||!serviceRequested||inputLifecycleActive)return;
     inputLifecycleActive=true;inputPaused=false;restoreInput();
 }
 function stopInputLifecycle(){inputLifecycleActive=false;stopInput();}
@@ -841,7 +848,7 @@ function handleRemapRun(req,res){readJsonBody(req,res,function(p){
     runActions(remap.resolve(remapStore.rules,p.type,p.value,p.payload)).then(function(r){serveJson(res,r);}).catch(function(e){serveJson(res,{ok:false,error:e.message},503);});
 });}
 
-http.createServer(function (req, res) {
+var serviceServer=http.createServer(function (req, res) {
     var url = (req.url || '/').split('?')[0];
     if (appReplies.handle(req,res,url)) return;
     if (auth.gate(req,res,url,{open:developmentOnly(),
@@ -928,23 +935,21 @@ http.createServer(function (req, res) {
     if (url === '/remap') return handleRemap(req, res);
     if (url === '/' || url === '/index.html') return serveHtml(res, dashboardHtml());
     serveJson(res, { error: 'not found' }, 404);
-}).listen(PORT, function () {
-    console.log('VETRO listening on ' + PORT);
 });
 
-platform.start();
 // Explicit power transitions and actual Linux resume, never a root-agent reconnect alone.
 // With no selected app tick() returns without polling or sending a TV command.
-var startupAppTimer=setInterval(function(){startupApp.tick();},2000);if(startupAppTimer.unref)startupAppTimer.unref();
+var startupAppTimer=setInterval(function(){if(serviceListening&&serviceRequested)startupApp.tick();},2000);if(startupAppTimer.unref)startupAppTimer.unref();
 // One read at a time; a possible exit schedules its own short settling check.
 var returnAppTimer = null, returnPolling = false, returnDue = 0;
 function pollReturnApp() {
     returnAppTimer = null; returnPolling = true;
+    if (!serviceListening || !serviceRequested) { returnPolling = false; return; }
     return returnApp.tick().then(done, done);
     function done() { returnPolling = false; scheduleReturnApp(); }
 }
 function scheduleReturnApp(earlier) {
-    if (returnPolling) return;
+    if (!serviceListening || !serviceRequested || returnPolling) return;
     var delay = returnApp.nextDelay(), due = Date.now() + delay;
     if (returnAppTimer) {
         if (earlier && returnDue <= due) return;
@@ -953,12 +958,11 @@ function scheduleReturnApp(earlier) {
     returnDue = due; returnAppTimer = setTimeout(pollReturnApp, delay);
     if(returnAppTimer.unref)returnAppTimer.unref();
 }
-scheduleReturnApp();
 // The dock is started again after a boot or a crash while its switch is on.
 // A short tick notices the moment the root agent connects, so after a boot the dock starts at once
 // instead of waiting for the next 10 s round.
 var dockAgentWas=false,dockTicks=0;
-var dockTimer=setInterval(function(){var up=!!platform.status().agent.connected,edge=up&&!dockAgentWas;dockAgentWas=up;if(edge||++dockTicks>=5){dockTicks=0;dock.supervise(up).catch(function(){});}},2000);if(dockTimer.unref)dockTimer.unref();
+var dockTimer=setInterval(function(){if(!serviceListening||!serviceRequested)return;var up=!!platform.status().agent.connected,edge=up&&!dockAgentWas;dockAgentWas=up;if(edge||++dockTicks>=5){dockTicks=0;dock.supervise(up).catch(function(){});}},2000);if(dockTimer.unref)dockTimer.unref();
 // Retry after boot and helper disconnects, including late adapter availability.
 var inputRestoreTimer=setInterval(restoreInput,5000);if(inputRestoreTimer.unref)inputRestoreTimer.unref();
 
@@ -973,12 +977,11 @@ var bridge = new MqttBridge(readTelemetry,function(m){
  actionQueue=actionQueue.then(function(){return runActions(actions);}).then(function(r){bridge.event('trigger','Rule executed: '+m.topic+' · '+r.sent+' action(s)');}).catch(function(e){bridge.event('error','MQTT rule: '+e.message);}).finally(function(){pendingActions--;});
 });
 bridge.setTopics(remapStore.rules.filter(function(r){return r.enabled&&r.trigger.type==='mqtt'}).map(function(r){return r.trigger.value}));
-bridge.start();
 
 // Foreground app for MQTT: read-only, one small status query every 5 seconds,
 // only while a broker connection is up. Names come from the stored probe.
 var presenceTimer=setInterval(function(){
- if(!bridge.connected)return;
+ if(!serviceListening||!serviceRequested||!bridge.connected)return;
  presence.read().then(function(d){
   var fg=d.foreground;if(fg){var row=apps.normalize(state.apps,state.packages).filter(function(a){return a.appId===fg.appId})[0];fg=Object.assign({name:row&&row.name||fg.appId},fg);}
   bridge.publishPresence(fg);
@@ -987,16 +990,35 @@ var presenceTimer=setInterval(function(){
 
 // Native audio/source reads require no foreground UI and never alter the TV.
 var tvStateTimer=setInterval(function(){
- if(!bridge.connected)return;
+ if(!serviceListening||!serviceRequested||!bridge.connected)return;
  tvState.read().then(function(d){bridge.publishTvState(d);}).catch(function(){bridge.publishTvState(null);});
 },10000);if(tvStateTimer.unref)tvStateTimer.unref();
 
 // Restore only an explicitly saved local domain filter once the adapter is ready.
-var dnsRestoreAttempts=0;var dnsRestoreTimer=setInterval(function(){if(++dnsRestoreAttempts>12){clearInterval(dnsRestoreTimer);return}if(platform.status().agent.connected){dnsFilter.restore().then(function(s){if(!s.enabled||s.applied)clearInterval(dnsRestoreTimer)}).catch(function(){})}},5000);if(dnsRestoreTimer.unref)dnsRestoreTimer.unref();
+var dnsRestoreAttempts=0;var dnsRestoreTimer=setInterval(function(){if(!serviceListening||!serviceRequested)return;if(++dnsRestoreAttempts>12){clearInterval(dnsRestoreTimer);return}if(platform.status().agent.connected){dnsFilter.restore().then(function(s){if(!s.enabled||s.applied)clearInterval(dnsRestoreTimer)}).catch(function(){})}},5000);if(dnsRestoreTimer.unref)dnsRestoreTimer.unref();
 
 // Quick wins that need a task after every boot (HbbTV's flag lives in /tmp, AmbientApp is started by the firmware
 // 15 s after boot). Runs once the adapter is connected; the choice was saved by Vetro when the win was switched on.
-var winsBootAttempts=0;var winsBootTimer=setInterval(function(){if(++winsBootAttempts>60){clearInterval(winsBootTimer);return}if(platform.status().agent.connected){clearInterval(winsBootTimer);wins.boot(hbbtv).catch(function(){})}},5000);if(winsBootTimer.unref)winsBootTimer.unref();
+var winsBootAttempts=0;var winsBootTimer=setInterval(function(){if(!serviceListening||!serviceRequested)return;if(++winsBootAttempts>60){clearInterval(winsBootTimer);return}if(platform.status().agent.connected){clearInterval(winsBootTimer);wins.boot(hbbtv).catch(function(){})}},5000);if(winsBootTimer.unref)winsBootTimer.unref();
 
 // Put the service's own on-boot and auto-restart flags back once the adapter is connected (see ComponentActions.selfStartup).
-var selfStartupAttempts=0,selfStartupBusy=false;var selfStartupTimer=setInterval(function(){if(++selfStartupAttempts>60){clearInterval(selfStartupTimer);return}if(selfStartupBusy||!platform.status().agent.connected)return;selfStartupBusy=true;inventory(true).then(function(d){if(d.registryError)throw Error(d.registryError);return ComponentActions.selfStartup(d.apps).reduce(function(p,cmd){return p.then(function(){return agentExecute(cmd,30000).then(function(r){registryAt=0;if(r.exit_code||r.timed_out)throw Error(r.stderr||r.stdout||'Startup flag not set')})})},Promise.resolve())}).then(function(){clearInterval(selfStartupTimer)}).catch(function(){}).finally(function(){selfStartupBusy=false})},5000);if(selfStartupTimer.unref)selfStartupTimer.unref();
+var selfStartupAttempts=0,selfStartupBusy=false;var selfStartupTimer=setInterval(function(){if(!serviceListening||!serviceRequested)return;if(++selfStartupAttempts>60){clearInterval(selfStartupTimer);return}if(selfStartupBusy||!platform.status().agent.connected)return;selfStartupBusy=true;inventory(true).then(function(d){if(d.registryError)throw Error(d.registryError);return ComponentActions.selfStartup(d.apps).reduce(function(p,cmd){return p.then(function(){return agentExecute(cmd,30000).then(function(r){registryAt=0;if(r.exit_code||r.timed_out)throw Error(r.stderr||r.stdout||'Startup flag not set')})})},Promise.resolve())}).then(function(){clearInterval(selfStartupTimer)}).catch(function(){}).finally(function(){selfStartupBusy=false})},5000);if(selfStartupTimer.unref)selfStartupTimer.unref();
+
+// Native runtimes can keep a worker alive after a failed bind. That worker
+// must never publish credentials or start competing platform operations.
+serviceServer.on('error',function(error){
+    serviceBinding=false;serviceListening=false;stopInputLifecycle();stopAppCommunication();
+    console.error(error&&error.code==='EADDRINUSE'?'VETRO service port is already in use':'VETRO service listener unavailable');
+});
+serviceServer.on('close',function(){serviceBinding=false;serviceListening=false;stopInputLifecycle();stopAppCommunication();});
+serviceServer.on('listening',function(){
+    serviceBinding=false;serviceListening=true;activateService();
+    console.log('VETRO listening on '+PORT);
+});
+function listenService(){
+    if(serviceBinding||serviceListening)return;
+    serviceBinding=true;
+    serviceServer.listen(PORT);
+}
+listenService();
+
