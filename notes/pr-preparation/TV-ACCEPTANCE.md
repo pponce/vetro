@@ -6,6 +6,17 @@ Vetro remains at `488cdccf3f08916addf4d5f2af567eecd5c105c7`. Glass Home source m
 
 The source integration `f1eeaa30165a98a27502fc3f7b51a77db5238117` includes standby-only foreground opening, but that change is not yet installed. Its four-job CI result is not hardware acceptance.
 
+## Confirmed permission results — 2026-11-05
+
+The user reported fresh Recent activity for `GlassHome1.GlassHome` and confirmed that the launched app appeared on the TV. Times below are the reported local display times (America/Los_Angeles).
+
+| Acceptance check | Evidence | Result |
+| --- | --- | --- |
+| Fresh app-list access through Vetro | Five `apps.list` entries marked `completed`, from 12:18:17 PM through 12:18:22 PM | Passed |
+| One app launch through Vetro | `apps.launch` marked `completed` at 12:18:47 PM; user confirmed the app appeared | Passed |
+
+These observations establish a successful Vetro app-list and launch path on the existing installation. Installed commit hashes were not independently collected with this result. Approval persistence after reopening, pause/resume, revoke/reapproval, reduced scopes and standby/return behavior remain untested in this acceptance session.
+
 ## Glass Home on the existing installation
 
 Use the existing paired browser and existing approval first. Open App permissions and check that Glass Home is enabled with List TV apps and Open TV apps. Do not reinstall or reset pairing.
@@ -29,4 +40,4 @@ Test ordinary standby wake, remote-action cancellation, an expired wake window a
 
 Exercise return after another app exits, explicit Home, launch of a different app, input/menu navigation and standby. Require the selected return target only in the intended exit case; deliberate navigation cancels or suppresses pending return. When Glass Home initiates the launch, correlate with a completed Vetro permission launch before judging coordination. Record startup and return as separate results.
 
-All permission, standby-only and return rows beyond the previously reported checks remain pending until the user supplies TV observations.
+Fresh app-list and app-launch acceptance passed as recorded above. The remaining permission controls, persistence, standby-only and return checks remain pending.
