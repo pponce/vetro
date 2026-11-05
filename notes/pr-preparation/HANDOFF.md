@@ -44,11 +44,11 @@ Preserve that successful screen mechanism. Do not restore the failed MessagePort
 
 ## Latest hardware acceptance
 
-The user confirmed fresh Glass Home app-list and launch activity on 2026-11-05: five completed apps.list entries between 12:18:17 PM and 12:18:22 PM, and apps.launch completed at 12:18:47 PM (reported local time). The launched app appeared on the TV. Mark both positive permission paths passed. Full evidence summary and remaining controls are in [TV acceptance](TV-ACCEPTANCE.md).
+The user confirmed fresh Glass Home app-list and launch activity on 2026-11-05: five completed apps.list entries between 12:18:17 PM and 12:18:22 PM, and apps.launch completed at 12:18:47 PM (reported local time). The launched app appeared on the TV. Mark both positive permission paths passed. The subsequent paused refresh failed visibly in Glass Home and produced no new Recent activity. Resume is pending. Full evidence summary and remaining controls are in [TV acceptance](TV-ACCEPTANCE.md).
 
 ## Outstanding work and exact next steps
 
-1. Fresh Glass Home apps.list and apps.launch acceptance passed. Next test pause in Vetro, refresh in Glass Home and record its exact permission message; resume and require a new apps.list completed entry. Then exercise reopen persistence and revoke/reapproval using [TV acceptance](TV-ACCEPTANCE.md).
+1. Fresh Glass Home apps.list and apps.launch acceptance passed. While paused, Glass Home reported that it could not read Vetro's app list, with no new Recent activity. The visible pause behavior is observed; no explicit backend denial event was supplied. Next resume the existing approval, refresh apps and require a new apps.list completed entry. Then exercise reopen persistence and revoke/reapproval using [TV acceptance](TV-ACCEPTANCE.md).
 2. Review the two branch diffs and [prepared PR descriptions](PR-DESCRIPTIONS.md). Both target release-0.5.0 provisionally; the maintainer has not selected that target. The combined dependency stack is saved as `prep/screen-input-stack-release-20261105` at `beb68e29d6af23acc91e2813706639965be1dea2`; its source checks passed. Hardware testing remains separate.
 3. Extract the screen-authentication prerequisite, preserving private credentials, automatic bounded 401 recovery, listener ownership and explicit compatibility for upstream owner sessions. Add tests for existing cookie/bearer sessions, pending pairing reload, hostnames, sign-out, storage failure, credential scope/rotation and bind/stop races.
 4. Stack app permissions on that prerequisite. Preserve identity/signer verification, grants, bounded requests, protected-app rules and authenticated replies. Do not enable scoped app permissions while the local-app owner bypass remains.

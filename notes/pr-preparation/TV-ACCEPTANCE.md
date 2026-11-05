@@ -15,7 +15,11 @@ The user reported fresh Recent activity for `GlassHome1.GlassHome` and confirmed
 | Fresh app-list access through Vetro | Five `apps.list` entries marked `completed`, from 12:18:17 PM through 12:18:22 PM | Passed |
 | One app launch through Vetro | `apps.launch` marked `completed` at 12:18:47 PM; user confirmed the app appeared | Passed |
 
-These observations establish a successful Vetro app-list and launch path on the existing installation. Installed commit hashes were not independently collected with this result. Approval persistence after reopening, pause/resume, revoke/reapproval, reduced scopes and standby/return behavior remain untested in this acceptance session.
+### Pause observation
+
+The user paused Glass Home's approval and attempted to refresh its app list. Glass Home reported that it could not read the Vetro app list, and the user saw no new Recent activity. This is the expected visible behavior while paused. No explicit server-side denial event was supplied, so the empty activity list alone is not treated as proof of a rejected apps.list dispatch. Resume and a new successful apps.list entry are still pending.
+
+These observations establish a successful Vetro app-list and launch path and the expected client-side failure while paused on the existing installation. Installed commit hashes were not independently collected with these results. Resume, approval persistence after reopening, revoke/reapproval, reduced scopes and standby/return behavior remain untested in this acceptance session.
 
 ## Glass Home on the existing installation
 
@@ -40,4 +44,4 @@ Test ordinary standby wake, remote-action cancellation, an expired wake window a
 
 Exercise return after another app exits, explicit Home, launch of a different app, input/menu navigation and standby. Require the selected return target only in the intended exit case; deliberate navigation cancels or suppresses pending return. When Glass Home initiates the launch, correlate with a completed Vetro permission launch before judging coordination. Record startup and return as separate results.
 
-Fresh app-list and app-launch acceptance passed as recorded above. The remaining permission controls, persistence, standby-only and return checks remain pending.
+Fresh app-list and app-launch acceptance passed as recorded above. The paused client-side failure was observed; resume and the remaining permission controls, persistence, standby-only and return checks remain pending.
