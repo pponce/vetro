@@ -76,7 +76,7 @@ No capture read errors or startup errors were reported. This is evidence of Vetr
 
 Remaining startup checks: remote-action cancellation, an expired wake window and cold-boot exclusion. The Tizen Start at boot flag remains independent. A target visible after cold boot may come from that flag or native Autorun; use Vetro's recorded startup decision to distinguish them. Do not extend this one normal-wake pass to these untested cases.
 
-## Automatic return — one path passed; alternate path unresolved
+## Automatic return — both launch routes observed working
 
 The user reports two sequences:
 
@@ -93,14 +93,18 @@ Report: `after-power-on-20261105-130636-396569-2296124.json`, captured on 2026-1
 | Stable captured result | Return status unchanged before/after capture; pending=false, error=null, navigation=null | Confirmed at capture |
 | Runtime readiness | Root connected, input filtering connected, Home ready, app access enabled | Passed |
 | Return after Apple TV launched from Glass Home | User observed return; service-confirmed return supports the positive path | Passed for this reported route |
-| Return after launch from Samsung Home | User observed no return; transition/reason not captured | Unresolved |
+| Return after launch from Samsung Home | First attempt missed the return; user subsequently repeated the route and confirmed Glass Home came back | Passed on repeat, user-observed |
 
 The return confirmation preceded the capture by 99.198 seconds. The report shows Glass Home at capture time and does not record the intervening foreground transitions, so it cannot explain the unsuccessful alternate route. Do not infer that navigation was clear during the failed exit merely because navigation=null later. The report does not identify the app being left; Apple TV attribution comes from the user's observation. No new raw completed apps.launch activity row was supplied.
 
+### Subsequent Samsung Home repeat — passed by observation
+
+The user repeated Samsung Home → open the app → exit and confirmed that Glass Home returned. The user explicitly did not run the last capture script. No new diagnostic report, exact timing or raw activity rows are available for this repeat. Record a successful user-observed return from this entry point, alongside the earlier failed observation. Do not attribute the change to the diagnostic script, claim that code was fixed, or conclude that timing caused the first miss. The exact wait durations during the repeat were not independently supplied.
+
 The code's policy is transient: explicit Home clears a pending return and avoids reclaiming the screen during that navigation. It does not disable the configured return destination or limit returns to apps launched from Glass Home. Once another ordinary app is observed and the Home/dock guard has cleared, a later eligible fallback to Samsung Home/TV can trigger return. A still-active navigation guard, an unobserved foreground transition, visible native dock, overlay/source change or readiness gap could suppress an attempt, but none is established as the cause of this TV observation.
 
-Next capture the alternate route while its final screen still shows Samsung Home, before manually opening Glass Home. If repeating, leave Samsung Home visible for 10 seconds, launch the same Apple TV app from Samsung Home, leave it visible for 15 seconds, exit through its own exit flow without Home, and wait 20 seconds. Use the unchanged read-only capture-power-on.py collector. Keep the distinction between this controlled timing check and the original observation; a later pass does not establish why the earlier attempt failed. No runtime patch or reinstall is warranted from the current evidence alone.
+The repeat does not require another capture merely to record the observation. If the missed return recurs, capture the actual failed screen before manually reopening Glass Home. No runtime patch or reinstall has been made. The original miss remains unexplained despite the later successful repeat.
 
-Then complete deliberate Home/input/menu navigation, launch of another app, and standby cancellation checks. Record return and startup outcomes separately.
+Next check deliberate Home navigation from another ordinary app: open an app from Glass Home, use the Vetro launcher to choose Samsung Home, then leave the TV idle for 20 seconds. Samsung Home should remain visible without an automatic return. Then complete input/menu navigation, launch of another app, and standby cancellation checks. Record return and startup outcomes separately.
 
-Fresh app-list, app-launch, pause/resume, revoke/reapproval and Glass Home reopen acceptance passed before the update. The integrated update, automatic input restoration, post-update app-list access, one normal standby wake and one reported automatic-return route now pass. The Samsung Home launch route, post-update permission launch activity evidence, full-TV-restart persistence, reduced scopes and startup cancellation/expiry/cold-boot exclusion remain pending.
+Fresh app-list, app-launch, pause/resume, revoke/reapproval and Glass Home reopen acceptance passed before the update. The integrated update, automatic input restoration, post-update app-list access, one normal standby wake and automatic-return observations from both launch routes now pass. The initial missed return remains unexplained. Post-update permission launch activity evidence, deliberate-navigation cancellation, full-TV-restart persistence, reduced scopes and startup cancellation/expiry/cold-boot exclusion remain pending.
