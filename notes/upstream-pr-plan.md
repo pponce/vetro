@@ -1,5 +1,11 @@
 # Vetro upstream contribution plan — 2026-11-05
 
+## Current checkpoint — maintainer discussion first
+
+The integration is published: fork main, combined/runtime-wrapper-observation-20261103 and the TV are at f1eeaa30165a98a27502fc3f7b51a77db5238117; all four CI jobs passed. Permission list/launch, pause/resume, revoke/reapproval and reopen tests passed. The update restored remote input, preserved Glass Home app-list access, and was followed by successful standby opening, navigation cancellation and return observations. Cold-boot nonlaunch was already tested by the user; do not request a repeat. One missed return remains unexplained, and broader hardware acceptance is still limited.
+
+Focused screen/input branches and their combined stack are prepared against release-0.5.0 with passing source checks and unchanged upstream authentication. The user now prefers a maintainer issue to agree on scope, target and PR sequence. See [the issue draft](pr-preparation/MAINTAINER-ISSUE.md), [current handoff](pr-preparation/HANDOFF.md) and [acceptance record](pr-preparation/TV-ACCEPTANCE.md). No issue or new upstream PR has been submitted. The original planning snapshot below is retained for provenance; the checkpoint documents supersede its installation/testing status and immediate next steps.
+
 ## Objective and source baseline
 
 Publish the complete integrated work in the fork's `main`, then submit focused upstream changes with explicit dependencies and a reproducible Glass Home test. The foreground power-on choice is standby-only: it must never launch on cold boot, even if root is immediately available. The independent Tizen **Start at boot** flag is unchanged.
