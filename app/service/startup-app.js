@@ -1,10 +1,10 @@
 'use strict';
-// One foreground choice, independent of Tizen's per-app onboot/autorestart flags.
+// One foreground choice for standby wake, independent of Tizen's boot flags.
 var fs = require('fs');
 var Power = require('./power-state.js');
 var CONFIG = '/opt/usr/home/owner/share/vetro-startup-app.json';
 var SESSION = '/tmp/vetro-startup-app-session.json';
-var SETTLE_MS = 1000, EVENT_MS = 10000, WAKE_MS = 20000, SAMPLE_MS = 8000, VERIFY_MS = 15000;
+var SETTLE_MS = 1000, WAKE_MS = 20000, SAMPLE_MS = 8000, VERIFY_MS = 15000;
 var FALLBACK = /^(org\.tizen\.tv-viewer|com\.samsung\.tv\.csfs)$/;
 var RESUME_BLOCKED = /^(com\.samsung\.tv\.coba\.|org\.tizen\.menu|vetrotvapp(?:\.|$)|com\.samsung\.tv\.(screeneffectorapp|multiscreen|quickpanel)|org\.tizen\.(hbbtv|welcome-mode))/;
 var ID = /^[A-Za-z0-9_.-]{1,120}$/;
@@ -117,9 +117,11 @@ StartupApp.prototype.observe = function (power, clock) {
     var waking = !freshBoot && old.power === 'standby' && power === 'on';
     if (freshBoot) {
         old = this.session = {bootId: clock.bootId, power: null, suspendOffset: clock.suspendOffset,
-            handled: this.config.selectedBootId === clock.bootId};
+            handled: true};
         this.pending = null;
         this.lastSample = null;
+        this.eventInfo = null;
+        this.result('Skipped: cold boot; opens only after standby wake');
     }
     var enteringStandby = power === 'standby' && old.power !== 'standby';
     if (enteringStandby) {
@@ -143,16 +145,21 @@ StartupApp.prototype.observe = function (power, clock) {
     this.power = power;
     if (changed) this.saveSession();
     if (power === 'on' && !this.session.handled && !this.pending) {
-        // Service startup does not restart the cold-boot deadline.
-        var validBootAge = typeof clock.uptimeSeconds === 'number' && isFinite(clock.uptimeSeconds) && clock.uptimeSeconds >= 0;
-        var bootAge = freshBoot && validBootAge ? clock.uptimeSeconds * 1000 : 0;
         var isWake = waking || resumed;
-        var baseline = isWake ? this.session.resume : null;
-        var started = this.now() - bootAge, limit = isWake ? WAKE_MS : EVENT_MS;
+        // An initial on-state, root recovery or a persisted unhandled session
+        // is not evidence of standby wake. Never launch on cold boot.
+        if (!isWake) {
+            this.session.handled = true;
+            this.saveSession();
+            this.result('Skipped: standby wake was not observed');
+            return;
+        }
+        var baseline = this.session.resume;
+        var started = this.now(), limit = WAKE_MS;
         this.pending = {appId: this.config.appId, revision: this.config.revision, bootId: clock.bootId,
             started:started, deadline:started + limit, stage:'waiting', activity:activity, foreground:null,
             resume:baseline, readySince:activity.ready ? this.now() : null, powerSession:this.powerSession(), checks:{}};
-        this.eventInfo = {kind:isWake ? 'wake' : 'boot', startedAt:started, deadlineAt:started + limit,
+        this.eventInfo = {kind:'wake', startedAt:started, deadlineAt:started + limit,
             phase:'waiting', monitoringReadyAt:this.pending.readySince, resumedAppId:baseline && baseline.full || null,
             checks:this.pending.checks};
         this.result(null);
@@ -160,13 +167,11 @@ StartupApp.prototype.observe = function (power, clock) {
         // deadline. Persist before any asynchronous readiness or registry work.
         this.session.handled = true;
         this.saveSession();
-        if (freshBoot && !validBootAge) this.finish('Skipped: boot timing unavailable');
-        else if (bootAge > EVENT_MS) this.finish('Skipped: power-on launch expired before Vetro was ready');
-        else if (!freshBoot && !previousActivity) this.finish('Skipped: wake observation was interrupted by a service restart');
+        if (!previousActivity) this.finish('Skipped: wake observation was interrupted by a service restart');
         else if (navigationChanged || waking && this.session.standbyNavigation !== this.navigationSequence) this.finish('Skipped: deliberate navigation at power-on');
         else if (previousActivity && previousActivity.sequence !== activity.sequence ||
             waking && this.session.standbySequence !== activity.sequence ||
-            activity.lastAt && activity.lastAt >= this.now() - Math.max(2000, bootAge)) this.finish('Skipped: remote activity at power-on');
+            activity.lastAt && activity.lastAt >= this.now() - 2000) this.finish('Skipped: remote activity at power-on');
     }
 };
 StartupApp.prototype.current = function (event) {
@@ -321,5 +326,5 @@ StartupApp.prototype.tick = function () {
     }).finally(function () { self.busy = false; });
 };
 
-module.exports = {StartupApp: StartupApp, eligible: eligible, validId: validId, SETTLE_MS: SETTLE_MS, EVENT_MS: EVENT_MS, WAKE_MS:WAKE_MS};
+module.exports = {StartupApp: StartupApp, eligible: eligible, validId: validId, SETTLE_MS: SETTLE_MS, WAKE_MS:WAKE_MS};
 

@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('assert').strict,fs=require('fs'),path=require('path');
-const {StartupApp,EVENT_MS,WAKE_MS}=require('../service/startup-app.js');
+const {StartupApp,WAKE_MS}=require('../service/startup-app.js');
 const directory=fs.mkdtempSync(path.join(__dirname,'.startup-test-'));
 const HOME='com.samsung.tv.csfs';let sequence=0;
 function fixture(){
@@ -55,9 +55,33 @@ function fixture(){
  f=fixture();f.choose('video.one');f.foreground.full='video.two';await f.wake();assert.equal(f.launches.length,0);assert.match(f.app.status().lastResult,/another app/);
  f=fixture();f.choose('video.one');f.foreground.full='video.one';await f.wake();assert.equal(f.launches.length,0);assert.equal(f.app.status().lastResult,'App already onscreen');
  f=fixture();f.choose('video.one');f.root=false;await f.startWake();await f.tick(WAKE_MS);f.root=true;await f.tick();assert.equal(f.launches.length,0);assert.match(f.app.status().lastResult,/expired/);
- f=fixture();f.choose('video.one');f.clock.bootId='boot-b';f.clock.uptimeSeconds=90;f.app=new StartupApp(f.options);await f.tick();assert.equal(f.launches.length,0);assert.match(f.app.status().lastResult,/expired/,'late service startup cannot reset the cold-boot deadline');
- f=fixture();f.choose('video.one');f.clock.bootId='boot-b';f.clock.uptimeSeconds=null;await f.tick();assert.match(f.app.status().lastResult,/timing unavailable/);
- f=fixture();f.choose('video.one');f.clock.bootId='boot-b';f.app=new StartupApp(f.options);await f.tick();await f.tick();assert.deepEqual(f.launches,['video.one'],'early ready cold boot works');
+ // Cold boot is excluded regardless of timing, root readiness or saved selection.
+ for(const age of [0,2,90,null]){
+  f=fixture();f.choose('video.one');f.clock.bootId='boot-b';f.clock.uptimeSeconds=age;
+  f.app=new StartupApp(f.options);await f.tick();await f.tick();
+  assert.equal(f.launches.length,0,'cold boot never launches, even with root immediately ready');
+  assert.equal(f.app.status().pending,false);assert.equal(f.app.status().event,null);
+  assert.match(f.app.status().lastResult,/cold boot/);assert.equal(f.lookups.length,0);
+  f.root=false;await f.tick();f.root=true;await f.tick(90000);
+  assert.equal(f.launches.length,0,'late root readiness does not launch the cold-boot choice');
+  f.app=new StartupApp(f.options);await f.tick();assert.equal(f.launches.length,0,'service restart cannot replay a skipped cold boot');
+  await f.wake();assert.deepEqual(f.launches,['video.one'],'the saved choice remains usable on the next ordinary wake');
+  assert.equal(f.app.status().event.kind,'wake');
+ }
+ // A new boot cannot turn persisted standby or a changed suspend clock into a wake.
+ f=fixture();f.choose('video.one');f.power='standby';await f.tick();
+ f.clock.bootId='boot-b';f.clock.suspendOffset+=30;f.power='on';
+ await f.tick();await f.tick();assert.equal(f.launches.length,0);
+ assert.equal(f.app.status().event,null);assert.match(f.app.status().lastResult,/cold boot/);
+ await f.wake();assert.equal(f.launches.length,1);
+ // Missing session state and an initial unknown power state must fail closed.
+ f=fixture();f.choose('video.one');fs.unlinkSync(f.options.sessionFile);f.app=new StartupApp(f.options);
+ f.power='unknown';await f.tick();f.power='on';await f.tick();await f.tick();assert.equal(f.launches.length,0);
+ assert.match(f.app.status().lastResult,/cold boot/);await f.wake();assert.equal(f.launches.length,1);
+ // Unhandled state from an earlier build is not an observed standby transition.
+ f=fixture();f.choose('video.one');fs.writeFileSync(f.options.sessionFile,JSON.stringify({bootId:'boot-a',power:'on',suspendOffset:0,handled:false}));
+ f.app=new StartupApp(f.options);await f.tick();await f.tick();assert.equal(f.launches.length,0);
+ assert.match(f.app.status().lastResult,/standby wake was not observed/);
  f=fixture();f.choose('video.one');await f.tick();f.clock.suspendOffset+=30;await f.tick();await f.tick();assert.equal(f.launches.length,1,'a real resume is still detected');
  f=fixture();f.choose('video.one');f.registryError='offline';await f.wake();assert.match(f.app.status().error,/registry/);f.registryError=null;await f.tick();assert.equal(f.launches.length,1,'transient reads can recover within the early window');
  f=fixture();f.choose('video.one');f.apps[0].disabled=true;await f.wake();assert.match(f.app.status().lastResult,/disabled/);assert.equal(f.launches.length,0);
@@ -185,6 +209,7 @@ function fixture(){
  f=fixture();f.choose('video.one');f.launchError=true;await f.wake();await f.tick();await f.tick();
  assert.equal(f.launches.length,1,'uncertain launch acknowledgement cannot retry a command that may have run');
  assert.match(f.app.status().lastResult,/Launch not completed/);assert.equal(f.app.status().event.checks.launch.outcome,'error');
- console.log('PASS startup: bounded reconnect, verified resumed app, cold-boot age, activity/menu/input/native cancellation, queue guards, restart/no replay and timestamped sessions');
+ console.log('PASS startup: standby-only launch, cold-boot exclusion, bounded reconnect, verified resumed app, activity/menu/input/native cancellation, queue guards and restart/no replay');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>fs.rmSync(directory,{recursive:true,force:true}));
+
 

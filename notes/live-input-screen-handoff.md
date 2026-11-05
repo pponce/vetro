@@ -12,7 +12,7 @@ The report does not contain the live input policy, so it cannot establish whethe
 - `/screen?live=1` stays under the existing widget/owner authorization gate, disables caching and runs no root command or launcher process probe.
 - Failed reads show unknown status. Reconnecting is reported only while recovery is actually in progress. Disconnected input no longer claims that the physical remote is absent.
 - Connection reports retain only allowlisted input booleans and the last successful read timestamp, without remote names, nodes, events, raw errors or credentials.
-- Focused live-screen VM/HTTP, screen summary, connection diagnostics, widget/bootstrap, input persistence and Home routing tests pass. Full CI and TV verification remain required for this revision.
+- Focused live-screen VM/HTTP, screen summary, connection diagnostics, widget/bootstrap, input persistence and Home routing tests pass. All four CI jobs passed for `3d6a431727687cbd1e3ec5fe01d01471e79a151f` ([run 41799478206](https://github.com/pponce/vetro/actions/runs/41799478206)). This screen fix is not installed; TV verification remains pending.
 
 No input preferences, native helper processes, grabs or lifecycle callbacks were changed. Native helper source already releases its grab when the callback socket closes. Service stop callbacks omit input cleanup, but that separate gap has not been established as the cause of the reported warning.
 
@@ -35,3 +35,40 @@ The new permission registry reader is stricter than the old full inventory reade
 3. If permission readiness is healthy, diagnose the exact live registry queries using the service UID, reporting schema failures, counts, invalid/duplicate rows, output size and elapsed time. Keep identity lookup failure as an alternative until ruled out.
 4. Fix the observed approval failure without weakening identity, grant or protected-sibling checks; then require CI before another combined TV update.
 5. Verify live warning recovery, Glass approval/list/launch/revocation, and then resume startup/return acceptance. Keep all installation attempt records.
+
+## Read-only readiness check
+
+Open the paired Vetro dashboard and run this in its browser console. It prints no browser credentials or remote events. Return the JSON output before choosing a registry or identity correction.
+
+```javascript
+(async () => {
+  const read = async path => {
+    const r = await fetch(path, {cache: 'no-store'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    return d;
+  };
+  const [access, status, input] = await Promise.all([
+    read('/app-access'), read('/status'), read('/input')
+  ]);
+  console.log(JSON.stringify({
+    permissions: {
+      enabled: access.enabled,
+      available: access.available,
+      error: access.error,
+      pendingRequests: (access.pending || []).length
+    },
+    service: {
+      uid: status.self && status.self.uid,
+      rootConnected: status.agent && status.agent.connected
+    },
+    input: {
+      policy: input.status && input.status.policy,
+      preference: input.status && input.status.preference,
+      error: input.error
+    }
+  }, null, 2));
+})().catch(e => console.error(e.message));
+```
+
+Glass Home's unauthenticated health endpoint is `http://192.168.84.19:8090/health`. `vetroPermissions:1` means its companion update is still needed; `vetroPermissions:2` identifies the new integration. This is a running capability check, not proof that an app permission request completed.

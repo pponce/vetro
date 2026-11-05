@@ -2,6 +2,8 @@
 
 Vetro can give an installed TV app selected controls through a versioned Tizen MessagePort API. App access starts **off**. Each app must request permissions, and the owner chooses which to approve in **App permissions** in the paired dashboard.
 
+For an end-to-end client test, see [Test app permissions with Glass Home](APP-PERMISSIONS-TEST.md).
+
 ## Setup and use
 
 This build requires a Samsung **Partner** certificate because it declares `http://tizen.org/privilege/appmanager.certificate`. It also needs the Application, Package, MessagePort and private Filesystem APIs in the web service. Public-only signing is not sufficient for this manifest. App access stays unavailable when identity checks or package-change notifications cannot be established. Every app operation must arrive through MessagePort; HTTP can only retrieve an authenticated reply.

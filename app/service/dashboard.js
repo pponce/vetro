@@ -313,7 +313,7 @@ function renderStartupChoice(){
  var box=$('startupChoiceSummary');if(!box)return;
  if(!startupAppData){box.innerHTML='<p class="section-note">Power-on app: unavailable</p>';return}
  var id=startupAppData.appId;
- box.innerHTML='<p class="section-note">Power-on app: <strong>'+esc(id?startupAppName(id):'None')+'</strong>. One app can open onscreen after boot or standby wake.</p>'+(id?'<button id="clearStartupChoice" '+(componentBusy?'disabled':'')+'>Turn off automatic foreground launch</button>':'');
+ box.innerHTML='<p class="section-note">Power-on app: <strong>'+esc(id?startupAppName(id):'None')+'</strong>. Opens after standby wake when root is available. Does not run after a cold boot or restart.</p>'+(id?'<button id="clearStartupChoice" '+(componentBusy?'disabled':'')+'>Turn off automatic foreground launch</button>':'');
  if(id)$('clearStartupChoice').onclick=function(){return saveStartupApp({appId:id,name:startupAppName(id)},{checked:false})};
 }
 function startupAppMarkup(a){
@@ -321,7 +321,7 @@ function startupAppMarkup(a){
  var reason=startupAppError||(!data?'Reading the power-on choice…':!chosen?componentAvailability(a,inventory,verifiedDisableIds).launch.reason:'');
  var note=!data?'':data.appId?(chosen?'This app is selected.':'Currently selected: '+startupAppName(data.appId)+'. Selecting this app replaces it.'):'No app is selected.';
  return '<label class="switch"><input type="checkbox" role="switch" id="startupForeground" '+(chosen?'checked ':'')+(reason||componentBusy?'disabled ':'')+'aria-describedby="startupForegroundHelp"><span>Open onscreen at power-on</span></label>'+
-  '<p id="startupForegroundHelp" class="muted">Starts opening while the TV is idle, within 10 seconds of a cold boot or 20 seconds of a standby wake. If readiness checks take longer, that launch is skipped. Remote use cancels the pending launch. Remote monitoring must be ready. App loading can take longer. Only one app can be selected.</p>'+
+  '<p id="startupForegroundHelp" class="muted">Opens this app when the TV wakes from standby, with root and remote monitoring available. Does not run after a cold boot or restart. Starts opening within 20 seconds while the TV is idle; otherwise that wake is skipped. Remote use cancels the pending launch. App loading can take longer. Only one app can be selected.</p>'+
   '<p class="muted">'+esc(reason||note)+'</p>'+(data&&(data.error||data.lastResult)?'<p class="notice" role="status">'+esc(data.error||data.lastResult)+'</p>':'');
 }
 function refreshStartupAppControl(){
@@ -346,7 +346,7 @@ function saveStartupApp(a,control){
    return api('/startup-app').then(function(readback){
     startupAppData=readback;
     if(readback.appId!==value||readback.revision!==saved.revision)throw Error('Startup choice changed. Refresh state to see the current selection.');
-    return {resultLabel:'Saved',message:value?startupAppName(value)+' selected for power-on. Opens promptly while idle, or skips that wake.':'Automatic foreground launch is off.'};
+    return {resultLabel:'Saved',message:value?startupAppName(value)+' selected for standby wake. Does not run after a cold boot or restart.':'Automatic foreground launch is off.'};
    });
   });
  }).finally(function(){componentBusy=false;unlock();return loadStartupApp().then(function(){if(bootData)renderStartup()})});

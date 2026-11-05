@@ -1,18 +1,18 @@
 # Open an app at power-on
 
-Choose one installed app to open onscreen when the TV starts or wakes from standby.
+Choose one installed app to open onscreen when the TV wakes from standby, while root access is available. **This option does not run after a cold boot or TV restart.**
 
 1. Open Vetro's dashboard and select **Task manager**.
 2. Select the app's visible launcher component.
 3. Under **Startup**, enable **Open onscreen at power-on**.
 
-Only one app can have this option enabled. Selecting another app replaces the previous choice. Turn the selected app's switch off to stop automatic foreground launches. Saving a choice takes effect at the next power-on; it does not immediately open the app.
+Only one app can have this option enabled. Selecting another app replaces the previous choice. Turn the selected app's switch off to stop automatic foreground launches. Saving a choice takes effect at the next standby wake; it does not immediately open the app.
 
 ## Startup controls
 
 | Setting | Purpose | Number of apps |
 | --- | --- | --- |
-| Open onscreen at power-on | Ask Vetro to bring the selected app onscreen after boot or standby wake | One |
+| Open onscreen at power-on | Ask Vetro to bring the selected app onscreen after standby wake, with root available; excludes cold boot | One |
 | Start at boot | Set Tizen's startup flag for the app or component | Multiple |
 | Restart automatically | Set Tizen's restart flag for the component | Multiple |
 
@@ -21,8 +21,8 @@ The controls are independent. Selecting a power-on app does not change its boot 
 ## What to expect
 
 Vetro requests one launch while the TV is idle and ready. A standby wake has a
-twenty-second readiness window; a full boot has a ten-second window measured from
-system boot. Remote monitoring can reconnect within that window. It must then be
+twenty-second readiness window. Root and remote monitoring must be available
+before dispatch. Remote monitoring can reconnect within that window. It must then be
 ready for at least one second. Reconnection never extends the deadline.
 
 While the TV is on, Vetro records recent foreground and source observations. If
@@ -42,8 +42,11 @@ Remote events during a disconnected interval cannot be reconstructed. Vetro uses
 the current foreground, source and known navigation as additional checks; these
 do not identify every external app-to-app transition.
 
-If root becomes available after the deadline, Vetro leaves the current screen
-alone. A late service start after a full boot does not create a new deadline.
+Cold boot is always skipped, including when root is ready immediately. When the
+service first observes the TV already on, it waits for a subsequent standby wake.
+Root becoming available later does not create a launch attempt. If readiness
+after standby takes longer than twenty seconds, Vetro leaves the current screen
+alone.
 The Startup section reports a launch, an app already onscreen, or the reason the
 attempt was skipped. The app's own loading and network time can still vary. This
 setting does not preload apps or keep them running in the background.

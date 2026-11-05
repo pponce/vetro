@@ -59,7 +59,7 @@ Each switch shows *Done* or *Partly done*, so you can see what actually changed.
 
 Quick settings and Task manager share the same inventory: disable an assistant in one and its components show up as disabled in the other. Disabling a component keeps it installed and can be reversed; stopping ends the running process; uninstalling needs an installer to recover. Descriptions come from the Q80A's firmware, so on other models some packages are unclassified and left alone.
 
-**Choose your power-on app.** In **Task manager**, select an app and enable **Startup → Open onscreen at power-on**. Vetro opens that app after a full boot or a wake from standby. Only one app can be selected; choosing another replaces it. The separate **Start at boot** flags remain available for multiple apps. [Power-on app setup and behavior →](app/docs/STARTUP-APP.md)
+**Choose your power-on app.** In **Task manager**, select an app and enable **Startup → Open onscreen at power-on**. Vetro opens that app after a wake from standby when root is available. **This option does not run after a cold boot or TV restart.** Only one app can be selected; choosing another replaces it. The separate **Start at boot** flags remain available for multiple apps. [Power-on app setup and behavior →](app/docs/STARTUP-APP.md)
 
 **Choose a return app.** Enable **Return here after exiting another app** in an app's Task manager details to select one destination when another app falls back to Samsung Home or TV. It is independent of the power-on choice. [Return behavior and detection limits →](app/docs/RETURN-APP.md)
 
