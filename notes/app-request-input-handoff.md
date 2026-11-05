@@ -12,7 +12,7 @@ label. Remote input is now verified healthy on `542fd3da` as well as the earlier
 App launching, return/power-on behavior and approval persistence across a new
 Vetro update remain to be checked.
 
-Verified running Vetro: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`,
+Previously verified Vetro: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`,
 which combines TV-screen authentication recovery with compact approved-app rows.
 All four jobs passed in run `41944347516`. The owner sees the compact permission
 UI. The update report verifies the new clean service but did not verify screen
@@ -34,11 +34,13 @@ capture now shows alternating accepted/rejected private credentials from two
 The rejected file replaces an accepted file without a publication by that
 service. The exact competing process/worker has not been identified.
 
-Prepared runtime `6104eeaa7507d10f28edb68f08e37cff4d627aa5` gates credentials,
+Installed runtime `6104eeaa7507d10f28edb68f08e37cff4d627aa5` gates credentials,
 native ports, root/MQTT startup and background operations on HTTP listener
-ownership. All four jobs passed in CI run `41962819197`. It is ready for a
-single in-place update from `542fd3da`, but has not been installed or verified
-on the TV. Normal reopening delay remains a separate unverified issue.
+ownership. All four jobs passed in CI run `41962819197`. The latest update
+report verifies the clean service, matching screen and screen authentication
+within 10.2 seconds. Remote-input resume failed with an unclassified HTTPError;
+normal exit/reopening still blocks temporarily on this build. The user reports
+that the screen eventually reopens but the remote-input error remains.
 Last verified Glass Home: `30c490194f1748d523262a1ac8985fe45f735729`, which
 is still the head of `pponce/glass-home-samsung-tv`,
 `combined/vetro-permissions`. At the owner's explicit request, `main` was also
@@ -47,10 +49,11 @@ fast-forwarded to that exact tested revision. No new Glass Home package is neede
 ## Repositories and branches
 
 - Runtime: `pponce/vetro`, `combined/runtime-wrapper-observation-20261103`.
-  Installed baseline: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`.
-  Prepared head: `6104eeaa7507d10f28edb68f08e37cff4d627aa5`.
+  Installed head: `6104eeaa7507d10f28edb68f08e37cff4d627aa5`.
+  Previous baseline: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`.
 - Host updater: `pponce/vetro`, `combined/runtime-wrapper-inspection-20261103`.
-  Current installer: `tools/run-service-ownership-update.sh`, targeting `6104eeaa`
+  Current recovery: `tools/run-input-recovery.sh`; no further install is needed.
+  Completed installer: `tools/run-service-ownership-update.sh`, targeting `6104eeaa`
   from `542fd3da` and pinning CI run `41962819197`. Its four unchanged helpers
   remain pinned to `fc7b8663a7708e85a1f3427bfb62b001a2442345` with SHA-256
   verification. It does not ask the owner to submit another permission request.
@@ -461,4 +464,45 @@ exit and immediate reopen, repeating after two minutes. Confirm Glass Home's
 saved permission still permits refresh and app launch. If reopening still
 blocks, use the passive watcher and targeted process wait/exit evidence. Do not
 claim a TV fix from CI or replace normal-exit testing with inspector relaunches.
+
+## Ownership update installed; input resume failed
+
+Superseding the installation instructions above:
+`connection-report-20261104-194518-737306.json` verifies clean runtime and screen
+`6104eeaa`, a received private session, completed screen checks and authenticated
+service access after 10.2 seconds. One early URL read failed. The service's
+launch callback timed out after eight seconds, but service reach and screen
+authentication succeeded. This capture does not verify authentication across
+multiple credential renewal periods.
+
+Input was a connected filter with saved enablement and Home ready before update.
+Observation was confirmed and the old filter (PID 20075, start ticks 2531060)
+exited. After the update, the handoff passed its service/root check, set
+`resumeRequested=true` and failed inside the resume request with HTTPError.
+The updater did not retain the HTTP code/body, so the cause is unknown. Do not
+label this as a 401 or claim a particular input startup race from this report.
+The screen reported input enabled, disconnected and not recovering.
+
+The user subsequently exited the screen, could not immediately reopen it,
+then could reopen after waiting. The remote-input error remained. The normal
+reopening issue therefore persists on `6104eeaa`; TV-Store was not required.
+
+Next entry point: `tools/run-input-recovery.sh`, with the pinned host revision.
+It uses existing owner access and the existing input handoff journal. It waits
+30 seconds for automatic recovery including while mode is off, and preserves an
+already healthy filter. Before a single optional resume, it checks root/service
+revision, saved enablement, current recovery state and bounded helper/socket
+evidence. It refuses a competing or unverified helper. It records HTTP status
+and allowlisted input errors, then verifies resulting state without replaying
+an uncertain request. It does not install, relaunch an app, pair, kill processes
+or change saved mappings. The existing diagnostic-update lock prevents overlap.
+
+Nine local recovery tests passed: healthy-state preservation, off-mode automatic
+recovery, one guarded resume, HTTP-error capture with successful subsequent
+verification, unsuccessful resume without replay, secret redaction, active/foreign-helper refusal, journal/revision/
+preference guards, and owner-access refusal without pairing. This tool has not
+yet been run on the TV. Its report prints the Mac rsync command.
+
+After restoring input, capture the normal screen exit wait state separately.
+Do not submit another package until new evidence supports a runtime change.
 
