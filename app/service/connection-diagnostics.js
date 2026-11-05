@@ -10,7 +10,7 @@ var STAGES = ['not-started','port-create','reply-port-create','listener-add','li
 var APP_STAGES = ['received','sender-rejected','frame-rejected','params-rejected',
     'reply-unavailable','reply-rejected','reply-error','reply-reserved','dispatch',
     'handler-resolved','handler-rejected'];
-var APP_METHODS = ['access.request','access.status','apps.list','apps.launch','tasks.list','tasks.stop',
+var APP_METHODS = ['access.request','access.status','apps.list','apps.catalog','apps.launch','tasks.list','tasks.stop',
     'brightness.read','brightness.set','audio.key','playback.key','power.off'];
 var REPLY_REASONS = ['invalid','replay','replay-limit','app-replay-limit','app-busy','global-busy'];
 function errorName(error) {

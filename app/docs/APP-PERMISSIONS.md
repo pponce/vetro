@@ -22,7 +22,7 @@ Updates, reinstalls and signer changes require new approval. Vetro checks instal
 
 | Permission | Methods | Limits |
 | --- | --- | --- |
-| `apps.read` | `apps.list` | Visible TV-app names, IDs and disabled state; paginated. |
+| `apps.read` | `apps.list`, `apps.catalog` | Visible registry apps, or installed Samsung Apps with Home-row membership and order; paginated. |
 | `apps.launch` | `apps.launch` | Launch one eligible, enabled, visible TV app, including preinstalled media apps. |
 | `tasks.read` | `tasks.list` | Running eligible user apps and aggregate RSS; no raw process list, PIDs or command lines. |
 | `tasks.stop` | `tasks.stop` | Stop one eligible user UI app and check whether it is still running. Unsaved progress can be lost. |
@@ -34,6 +34,30 @@ Updates, reinstalls and signer changes require new approval. Vetro checks instal
 Apps requesting access and task-management targets must have positive native registry evidence: visible UI apps, removable, non-system, non-preloaded, and unprotected. Vetro and packages with protected or system siblings are excluded. Missing or ambiguous flags deny access.
 
 Listing and launching use a separate policy: visible, registered UI apps with known flags and no protected package components. This permits opening preinstalled media apps such as Netflix without granting task access to them. Services and hidden apps are excluded. Launch targets are checked against their installed package, version, installation timestamp and package-change generation before dispatch; callers and stop targets additionally require a verified author signer.
+
+### Samsung Apps catalog
+
+Launchers can call `apps.catalog` with the existing `apps.read` permission. It returns installed consumer apps registered with Samsung Apps, including apps that are not pinned to Samsung Home. It reads `widgetinfo` in Samsung's web-app database for app names and IDs, and the Home cache for row membership and order. Store recommendations for apps that are not installed are excluded. The metadata does not grant launch authority: every page is intersected with the live eligible app registry, and disabled apps are excluded.
+
+```js
+vetro.call('apps.catalog', {offset:0, limit:20});
+// {
+//   source: 'samsung-apps', revision: '<64-character SHA-256>',
+//   apps: [
+//     {appId:'org.tizen.netflix-app', name:'Netflix', disabled:false, homeOrder:0},
+//     {appId:'another.app', name:'Another app', disabled:false, homeOrder:null}
+//   ],
+//   total:2, nextOffset:null
+// }
+```
+
+`homeOrder` is the zero-based position in the Samsung Home cache, or `null` for an unpinned app. Positions can have gaps because input and system tiles are omitted. Home apps come first in Home order; other apps follow by name, then app ID. Samsung TV Plus Home tiles resolve to its verified deep-link app. Apps absent from Samsung's consumer catalog do not appear merely because a Tizen component has a visible flag. A client should also omit its own app from its chooser.
+
+Use Home membership for an initial selection and retain explicit user choices independently. Follow `nextOffset` until it is `null`; there is no 100-app cutoff. Each page accepts a limit from 1 to 20. Compare `revision` and `total` across pages and discard an incomplete or changed result. Pace requests within the per-app limit of 20 requests per 10 seconds. The catalog is bounded to 2,000 source records; exceeding that bound is an error, never a truncated success.
+
+Offset zero refreshes metadata. Later pages reuse a short-lived metadata snapshot while registry eligibility is checked again. Reads only inspect fixed local files and read-only SQLite queries; they do not change Samsung's Home row, start the launcher, or write a launcher catalog. Missing or incomplete source data returns `unavailable`. Firmware-specific differences between Samsung's installed Apps page and these metadata sources still require TV acceptance testing.
+
+`apps.list` retains its registry-list behavior. Vetro versions without `apps.catalog` reject the method with `not_allowed`; clients should request an update instead of silently substituting the broader registry. No owner credential, new permission, arbitrary database query, file path, or raw database record is exposed.
 
 Apps cannot uninstall or disable packages, change startup flags, send navigation/Home/service-menu keys, execute shell commands, edit files, fetch arbitrary URLs, install packages, configure MQTT, or manage permissions. The owner's authenticated dashboard remains a separate administrative interface.
 

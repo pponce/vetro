@@ -1,10 +1,11 @@
 'use strict';
 var Access = require('./app-access.js');
+var Catalog = require('./app-launcher-catalog.js');
 var control = require('./control.js');
 var component = require('./component-actions.js');
 var AUDIO = ['XF86AudioRaiseVolume','XF86AudioLowerVolume','XF86AudioMute'];
 var PLAYBACK = ['XF86AudioPlay','XF86AudioPause','XF86AudioStop','XF86AudioNext','XF86AudioPrev','XF86AudioRewind','XF86AudioForward'];
-var PARAMS = {'apps.list':['offset','limit'],'apps.launch':['appId'],'tasks.list':['offset','limit'],'tasks.stop':['appId'],
+var PARAMS = {'apps.list':['offset','limit'],'apps.catalog':['offset','limit'],'apps.launch':['appId'],'tasks.list':['offset','limit'],'tasks.stop':['appId'],
     'brightness.read':[],'brightness.set':['value','expected'],'audio.key':['key'],'playback.key':['key'],'power.off':[]};
 function validParams(method,p) {
     if (!Object.prototype.hasOwnProperty.call(PARAMS,method) || !p || typeof p!=='object' || Array.isArray(p) ||
@@ -20,9 +21,18 @@ function create(options) {
     return function perform(method,p,rows,check) {
         return Promise.resolve().then(function () {
             validParams(method,p);
-            var launching=method==='apps.list'||method==='apps.launch';
+            var launching=method==='apps.list'||method==='apps.catalog'||method==='apps.launch';
             var allowed=rows.filter(function (r) { return (launching?Access.launchableApp:Access.userApp)(r,rows); });
             if (method==='apps.list') return page(allowed.map(summary),p);
+            if (method==='apps.catalog') {
+                page([],p);
+                return options.catalog(!p.offset).then(function (metadata) {
+                    check();
+                    var catalog=Catalog.build(metadata,allowed),result=page(catalog.apps,p);
+                    result.revision=catalog.revision;result.source='samsung-apps';
+                    return result;
+                });
+            }
             if (method==='tasks.list') {
                 page([],p);
                 return options.monitor().then(function (snapshot) {

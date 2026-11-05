@@ -92,6 +92,7 @@ var appAccess = new (require('./app-access.js').Access)({
     inventory: function () { return require('./app-permission-registry.js').load(agentExecute,state); },
     perform: require('./app-api.js').create({
         identity: appIdentity, execute: agentExecute,
+        catalog: require('./app-launcher-catalog.js').createReader(agentExecute),
         monitor: function (force) { return monitor.snapshot('full', force); },
         launch: function (appId,check) { return runActions([{type:'launch', appId:appId}],check); },
         settings: {read:function () { return tvSettings.read(); }, write:function (p,check) { return tvSettings.write(p,check); }},

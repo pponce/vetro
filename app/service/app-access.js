@@ -13,7 +13,7 @@ var SCOPES = [
     {id:'remote.playback', label:'Control playback', description:'Send play, pause, stop, seek, previous and next commands.'},
     {id:'power.off', label:'Turn off the TV', description:'Put the TV in standby.'}
 ];
-var METHODS = {'apps.list':'apps.read','apps.launch':'apps.launch','tasks.list':'tasks.read','tasks.stop':'tasks.stop',
+var METHODS = {'apps.list':'apps.read','apps.catalog':'apps.read','apps.launch':'apps.launch','tasks.list':'tasks.read','tasks.stop':'tasks.stop',
     'brightness.read':'picture.brightness','brightness.set':'picture.brightness','audio.key':'remote.audio',
     'playback.key':'remote.playback','power.off':'power.off'};
 function fault(code, message) { var e = Error(message); e.code = code; return e; }

@@ -4,9 +4,9 @@ This guide exercises Vetro's optional app API with a real client. Glass Home req
 
 ## Build the test client
 
-Use [pponce/glass-home-samsung-tv at `30c490194f1748d523262a1ac8985fe45f735729`](https://github.com/pponce/glass-home-samsung-tv/tree/30c490194f1748d523262a1ac8985fe45f735729). Pin that commit when comparing results. Its app ID is `GlassHome1.GlassHome`, and its photo service is `GlassHome1.Photos`.
+Use [pponce/glass-home-samsung-tv at `9cc4188f04e527d4b62a03e90d7feedd5e5d1243`](https://github.com/pponce/glass-home-samsung-tv/tree/9cc4188f04e527d4b62a03e90d7feedd5e5d1243). Pin that commit when comparing results. Its app ID is `GlassHome1.GlassHome`, and its photo service is `GlassHome1.Photos`.
 
-Follow the client's [installation guide at that revision](https://github.com/pponce/glass-home-samsung-tv/blob/30c490194f1748d523262a1ac8985fe45f735729/docs/INSTALL.md), using the fork above for the source checkout. Configure `scripts/tizen-env.sh` with your own TV and signing profile. `scripts/build.sh` creates `dist/GlassHome.wgt`; `scripts/install.sh` installs and opens it. Keep the generated local key and signing credentials out of source control. Use your own author certificate and a distributor certificate that covers your TV.
+Follow the client's [installation guide at that revision](https://github.com/pponce/glass-home-samsung-tv/blob/9cc4188f04e527d4b62a03e90d7feedd5e5d1243/docs/INSTALL.md), using the fork above for the source checkout. Configure `scripts/tizen-env.sh` with your own TV and signing profile. `scripts/build.sh` creates `dist/GlassHome.wgt`; `scripts/install.sh` installs and opens it. Keep the generated local key and signing credentials out of source control. Use your own author certificate and a distributor certificate that covers your TV.
 
 Glass Home uses public-level privileges. **The Vetro permission build requires Partner-level signing**, including `appmanager.certificate`, so it can verify installed app identity. The two apps do not need the same author certificate. See [App permissions](APP-PERMISSIONS.md) for the exact API and prerequisites.
 
@@ -17,9 +17,37 @@ Keep Glass Home's photo service enabled: this client uses it to retrieve authent
 1. Install the candidate Vetro build and open its TV screen. Verify that the running screen and service match the candidate, authentication succeeds, and root and the saved remote setup are ready. Open the dashboard in your own paired browser.
 2. In **App permissions**, enable app access. Start from no Glass Home approval, or revoke its existing approval for this test.
 3. In Glass Home, open **+**, wait for its app check to finish, then choose **Connect to Vetro** once. In the Vetro dashboard, refresh requests. Confirm the installed Glass Home identity and only the two requested permissions above.
-4. Approve both permissions and save. Return to Glass Home and choose **Refresh apps**. Verify the list comes from Vetro. A previously saved list can remain visible when access fails, so tiles alone are not proof of a successful read.
+4. Approve both permissions and save. Return to Glass Home and choose **Refresh apps**. Verify the list comes from Vetro using `apps.catalog`. A previously saved list can remain visible when access fails, so tiles alone are not proof of a successful read.
 5. Open one ordinary installed TV app from Glass Home. Verify that it appears and that there is no reported permission or uncertain-result error. Glass Home has native fallback behavior in some situations, so an app opening by itself does not prove Vetro handled it; correlate the client result with Vetro's permission activity when available.
 6. Reopen both screens and refresh the list again. After a TV restart, repeat once root is ready. Vetro should retain approval when the installed Glass Home identity has not changed.
+
+## Samsung Apps and Home selection
+
+The catalog uses Samsung's installed web-app metadata and Home-row cache. Verify
+its coverage on the actual TV; firmware can differ. It does not include apps
+that are only recommended in the store and have not been installed.
+
+1. In Samsung Home, compare the installed/downloaded apps in **Apps** with the
+   apps pinned to the Home row. Identify an installed app that is not pinned.
+2. In Glass Home, choose **Refresh apps**, then **Choose apps**. Confirm that both
+   pinned and unpinned installed apps appear with consumer names. Registry-only
+   Cobalt components must not appear solely because their native label is “App”.
+3. Choose **Use Samsung Home selection**. Confirm that only eligible Home-row
+   apps are checked, in Home order. Save. Inputs and system controls have their
+   own UI and should not become app choices.
+4. Select an unpinned app, save, close and reopen Glass Home, then refresh. The
+   explicit selection should remain. Check Netflix when it is installed,
+   including when it is absent from the Home row.
+5. **Select all** saves the current list. **Clear selection** saves no apps.
+   **Use Samsung Home selection** restores the Home default. Cancel and Back
+   discard edits; failed saves must not claim success.
+6. Pause or revoke app access during a refresh. A failed or incomplete read
+   keeps the last complete cached catalog and choices. No legacy endpoint should
+   be used to bypass the denial. Reapprove and refresh to recover.
+
+Clients follow all pages, compare the catalog revision across pages, and respect
+Vetro's request rate. Automated tests exercise more than 100 entries; a small TV
+catalog does not require installing extra apps to reproduce that test.
 
 ## Permission controls
 
