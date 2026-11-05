@@ -5,7 +5,7 @@ from pathlib import Path
 import hashlib, ipaddress, re, subprocess, sys, urllib.request
 
 expected = {
-    'watch-screen-lifecycle.py': 'a50e8ad6ccc109185c466be1798b6c59a433a2fc5a3173a48bc55439ddc1d2ba',
+    'watch-screen-lifecycle.py': 'aa4478510cdb2548cee205d1e2957cb83ff140e2c934f1dab4604bd4f81ace4f',
     'vetro_owner.py': '56c6a1de5b079216e72029aabdf1482ebbd508e034eecda40ae2e13b0f1e3f00',
 }
 class NoRedirect(urllib.request.HTTPRedirectHandler):

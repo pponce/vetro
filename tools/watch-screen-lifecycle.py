@@ -15,7 +15,7 @@ import urllib.error
 
 from vetro_owner import OwnerClient
 
-REVISION = '542fd3da54fafc2bb01a6b3eb5665869beda9f0f'
+REVISION = '6104eeaa7507d10f28edb68f08e37cff4d627aa5'
 ROOTS = ('/opt/usr/apps/vetrotvapp', '/usr/apps/vetrotvapp',
     '/opt/usr/home/owner/apps_rw/vetrotvapp')
 MARKERS = {'1': 'screen-closed', '2': 'reopen-did-not-show-screen',

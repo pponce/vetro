@@ -28,8 +28,17 @@ remain unknown. Subsequent normal exits/reopenings still intermittently fail:
 the screen sometimes cannot be reopened for a while, and successful reopening
 can lead to a temporary 401 followed by green checks. A launch-time popup asks
 the owner to wait and try again; the next attempt can succeed. TV-Store is not
-required for either the failure or recovery. Keep the installed build; the next
-capture must observe normal operation without forcibly restarting the screen.
+required for either the failure or recovery. The passive normal-operation
+capture now shows alternating accepted/rejected private credentials from two
+120-second publishing sequences while the observed service stays unchanged.
+The rejected file replaces an accepted file without a publication by that
+service. The exact competing process/worker has not been identified.
+
+Prepared runtime `6104eeaa7507d10f28edb68f08e37cff4d627aa5` gates credentials,
+native ports, root/MQTT startup and background operations on HTTP listener
+ownership. All four jobs passed in CI run `41962819197`. It is ready for a
+single in-place update from `542fd3da`, but has not been installed or verified
+on the TV. Normal reopening delay remains a separate unverified issue.
 Last verified Glass Home: `30c490194f1748d523262a1ac8985fe45f735729`, which
 is still the head of `pponce/glass-home-samsung-tv`,
 `combined/vetro-permissions`. At the owner's explicit request, `main` was also
@@ -38,19 +47,21 @@ fast-forwarded to that exact tested revision. No new Glass Home package is neede
 ## Repositories and branches
 
 - Runtime: `pponce/vetro`, `combined/runtime-wrapper-observation-20261103`.
-  Installed candidate and branch head: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`.
+  Installed baseline: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`.
+  Prepared head: `6104eeaa7507d10f28edb68f08e37cff4d627aa5`.
 - Host updater: `pponce/vetro`, `combined/runtime-wrapper-inspection-20261103`.
-  Installer entry point: `tools/run-permissions-screen-update.sh`, targeting `542fd3da`
-  from `e4033b41` and pinning CI run `41944347516`. Its four unchanged helpers
+  Current installer: `tools/run-service-ownership-update.sh`, targeting `6104eeaa`
+  from `542fd3da` and pinning CI run `41962819197`. Its four unchanged helpers
   remain pinned to `fc7b8663a7708e85a1f3427bfb62b001a2442345` with SHA-256
   verification. It does not ask the owner to submit another permission request.
-  Do not reinstall to investigate the current authentication delay. The next
-  entry point is `tools/run-screen-auth-check.sh`, which preserves the running
+  The earlier entry point `tools/run-screen-auth-check.sh` preserves the running
   screen by default and finishes only the recorded input handoff. That handoff
   is now verified. The explicit `--inspect-screen` mode captured a healthy run,
   but forcibly stopping/relaunching the screen changes the normal exit path.
-  The next entry point is `tools/run-screen-lifecycle-watch.sh`: passive
-  process/service and published-credential observation during manual operation.
+  `tools/run-screen-lifecycle-watch.sh` provides passive process/service and
+  published-credential observation during manual operation. Its current helper
+  checks `6104eeaa`; the immutable `610841c6` host-tools revision retains the
+  earlier watcher for installed baseline `542fd3da`.
 - Authoritative combined branch: `combined/permissions-startup-return`,
   unchanged at `35ebe18507f9ea289c76d8920ad0bdd4e2bde191`.
 - Glass Home: `pponce/glass-home-samsung-tv`, `combined/vetro-permissions`,
@@ -414,5 +425,40 @@ can affect timing. Optional terminal markers store only known event labels.
 Local tests cover the actual shell probe with an isolated credential fixture,
 no credential in curl argv/output, invalid-token refusal, result allowlisting,
 exact revision checks, read-only route use, and pinned runner hashes. The helper
-is prepared for TV use; it has not yet captured the normal-exit failure.
+captured the normal-exit failure in `screen-lifecycle-20261105-031901-479063.json`.
+
+## Credential ownership fix ready for device testing
+
+The new capture has 33 samples, no errors and no terminal markers. User timing
+places successful reopening at 82–87 seconds after about 15 attempts and another
+close near 142 seconds. File modification epochs 1793848705 and 1793848825 carry
+credentials rejected with 401; epochs 1793848749 and 1793848869 are accepted with
+200. Each pair is separated by 120 seconds. Serving publisher counters advance
+53→54→55 only for the accepted sequence. Service PID 16051/start time stay fixed.
+Future expirations and direct fresh-file probes exclude expiry and an explanation
+limited to a stale screen cache.
+
+Screen candidate PID 31659 persists through 82 seconds (state D at 65–82), then
+PID 10007 appears at 87 seconds. The latter remains present after the reported
+close near 142 seconds. The process/worker writing the rejected file and the
+reason the screen process lingered are not established. No intentional cooldown
+or requirement to open TV-Store is established.
+
+The runtime correction and reproducible real-port-conflict test are documented
+in the runtime branch's `notes/service-listener-ownership-handoff.md`. Twelve
+targeted suites passed locally; complete application/integration/host checks,
+permissions UI, launcher and combined packaging passed for exact runtime
+`6104eeaa7507d10f28edb68f08e37cff4d627aa5` in run `41962819197`.
+
+The current updater reuses the certificate and input-preserving helper workflow,
+submits at most one installation, preserves earlier records and prints the
+report's Mac rsync command. Runner SHA256:
+`14bb26750dc17cffddd8c27aeb4a416f8194243efc1c756e8e5481c9901ed962`.
+The passive watcher is also repinned to the new runtime; its seven tests pass.
+
+Next: run the new updater, verify service/screen/input and then test normal Back
+exit and immediate reopen, repeating after two minutes. Confirm Glass Home's
+saved permission still permits refresh and app launch. If reopening still
+blocks, use the passive watcher and targeted process wait/exit evidence. Do not
+claim a TV fix from CI or replace normal-exit testing with inspector relaunches.
 
