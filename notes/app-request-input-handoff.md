@@ -1,5 +1,48 @@
 # App request receiver and update input handoff — 2026-11-05
 
+## Latest checkpoint: normal reopening, 2026-11-05
+
+The installed runtime remains `6104eeaa7507d10f28edb68f08e37cff4d627aa5`.
+Cold boot restored filter/Home automatically, and both the first opening and a
+later opening after a long closed interval produced fast green diagnostics.
+Immediate reopening after another Back exit still failed, including an attempt
+about 45 seconds later. The third attempt opened and went green quickly.
+
+Prepared runtime: `488cdccf3f08916addf4d5f2af567eecd5c105c7`, on
+`combined/runtime-wrapper-observation-20261103`. All four jobs passed in
+[CI 42064195199](https://github.com/pponce/vetro/actions/runs/42064195199).
+The new screen reuses an authenticated service instead of issuing redundant
+starts; HTTP refusals retain normal authentication recovery. Exit is idempotent
+and cancels screen work. A new test fails on the installed baseline with two
+unneeded start calls, then passes on the new code. Eleven targeted local suites
+and the complete CI checks passed. See `notes/screen-lifecycle-handoff.md` on
+the runtime branch for details.
+
+The native cause of the TV's delayed reopening remains unconfirmed. This build
+is ready for a normal-operation device test, not declared fixed or installed.
+
+Pinned installer: `tools/run-screen-lifecycle-update.sh` on this host branch.
+It targets the new runtime from installed baseline `6104eeaa`, checks all four
+CI jobs, reuses the existing certificate and pairing, retains the at-most-once
+install ledger, and pauses/verifies/restores the saved input using the existing
+pinned helpers. A repeated run collects/verifies the recorded attempt without
+installing again. It prints the report retrieval command. Runner SHA-256:
+`713f2f1e7a1e4e6fe5648ceebfb0c8e7c980f80e1646c70c26c5af636caef539`.
+
+Exact next steps:
+1. Install this pinned Vetro build once using the prepared runner with the
+   established project, TV, local host and report-host arguments.
+2. After the update finishes, cold boot once to test the installed package in a
+   fresh runtime, open Vetro, then rerun the same runner for verification only.
+   Do not delete the install-attempt or input-handoff records.
+3. Test normal Back and immediate reopening three times, without an inspector
+   or forced app restart. Record any delay, popup, auth failure or lost input.
+4. Verify Glass Home's saved approval, app refresh and app launch. Its main
+   remains `30c490194f1748d523262a1ac8985fe45f735729`; no new Glass Home install.
+5. If reopening remains blocked, collect the screen process wait channel and
+   bounded exit evidence rather than claiming that repeated start/exit cleanup
+   explained the native delay.
+
 ## Objective and current state
 
 Restore Glass Home's explicitly approved app-list and launch access while
@@ -7,8 +50,9 @@ preserving remote input across a single in-place Vetro diagnostic update.
 
 Glass Home request delivery and owner approval are now verified. The owner
 subsequently reports `Apps from Vetro · 11 selected`, the live app-list success
-label. Remote input is now verified healthy on `542fd3da` as well as the earlier
-`e4033b41` build; no resume request was needed in the follow-up captures.
+label. Remote input is now verified healthy after a cold boot on `6104eeaa`, as well
+as in earlier `542fd3da` and `e4033b41` captures. The post-boot verifier found a
+connected filter and Home ready on its first read; no resume request was needed.
 App launching, return/power-on behavior and approval persistence across a new
 Vetro update remain to be checked.
 
@@ -38,9 +82,11 @@ Installed runtime `6104eeaa7507d10f28edb68f08e37cff4d627aa5` gates credentials,
 native ports, root/MQTT startup and background operations on HTTP listener
 ownership. All four jobs passed in CI run `41962819197`. The latest update
 report verifies the clean service, matching screen and screen authentication
-within 10.2 seconds. Remote-input resume failed with an unclassified HTTPError;
-normal exit/reopening still blocks temporarily on this build. The user reports
-that the screen eventually reopens but the remote-input error remains.
+within 10.2 seconds. Before the cold boot, remote-input resume failed with an
+unclassified HTTPError and normal exit/reopening still blocked temporarily.
+After a cold boot, the user reports fast passing TV checks; the verification
+console confirms input filter connected, Home ready and no recovery pending.
+Normal exit/immediate reopening after that cold boot remains to be tested.
 Last verified Glass Home: `30c490194f1748d523262a1ac8985fe45f735729`, which
 is still the head of `pponce/glass-home-samsung-tv`,
 `combined/vetro-permissions`. At the owner's explicit request, `main` was also
@@ -540,3 +586,24 @@ helper still disconnects following a cold boot, capture bounded native helper
 failure markers and correlate them with input attempts before making another
 runtime change. Reopening delay remains unresolved.
 
+
+## Cold boot restores saved input without a resume request
+
+The user reports that Vetro passed its TV checks very quickly after a cold boot.
+The pasted output for `input-recovery-20261105-160845-206224.json` shows the first
+read as `mode=filter`, `connected=True`, `Home ready=True`, `recovering=False`,
+followed directly by the verified result. The pinned recovery code therefore
+completed through its already-healthy path; it did not submit an input resume.
+The JSON report itself has not been attached or reviewed in this session.
+
+This verifies automatic restoration of the saved input/Home setup after the
+cold boot. It supports a transient or resident-runtime explanation for the
+pre-boot failure, but does not identify an old worker as the proven cause or
+establish that future package updates can safely omit this recovery step.
+
+Next device tests: normal Back exit followed by immediate reopening two or
+three times; then leave the screen visible for at least three minutes to span
+a private-credential renewal. Check for prompt reopening and sustained passing
+authentication/input status. Glass Home's saved permission across update/boot,
+app refresh and app launch remain to be verified. No new installation or runtime
+change is prepared from this success alone.
