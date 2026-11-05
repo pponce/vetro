@@ -19,7 +19,11 @@ The user reported fresh Recent activity for `GlassHome1.GlassHome` and confirmed
 
 The user paused Glass Home's approval and attempted to refresh its app list. Glass Home reported that it could not read the Vetro app list, and the user saw no new Recent activity. This is the expected visible behavior while paused. No explicit server-side denial event was supplied, so the empty activity list alone is not treated as proof of a rejected apps.list dispatch. The user then resumed the approval and confirmed that Glass Home could access Vetro again and activity appeared in Recent activity. Pause/resume passes for the observed client behavior; no resume timestamp or additional raw activity rows were supplied.
 
-These observations establish a successful Vetro app-list and launch path and successful pause/resume behavior on the existing installation. Installed commit hashes were not independently collected with these results. Approval persistence after reopening, revoke/reapproval, reduced scopes and standby/return behavior remain untested in this acceptance session.
+### Revoke and reapproval — passed
+
+The user revoked Glass Home's approval. Glass Home recognized that it no longer had access and offered Connect to Vetro. A new access request appeared in Vetro; the user approved it, returned to Glass Home and confirmed that access was restored. This confirms the observed revocation, new-request and owner-reapproval flow. No additional timestamp or raw activity rows were supplied for this step.
+
+These observations establish a successful Vetro app-list and launch path, pause/resume behavior, and revoke/reapproval flow on the existing installation. Installed commit hashes were not independently collected with these results. Approval persistence after reopening or a TV/service restart, reduced scopes and standby/return behavior remain untested in this acceptance session.
 
 ## Glass Home on the existing installation
 
@@ -44,4 +48,4 @@ Test ordinary standby wake, remote-action cancellation, an expired wake window a
 
 Exercise return after another app exits, explicit Home, launch of a different app, input/menu navigation and standby. Require the selected return target only in the intended exit case; deliberate navigation cancels or suppresses pending return. When Glass Home initiates the launch, correlate with a completed Vetro permission launch before judging coordination. Record startup and return as separate results.
 
-Fresh app-list and app-launch acceptance passed as recorded above. Pause/resume also passed. Revoke/reapproval, persistence, reduced scopes, standby-only and return checks remain pending.
+Fresh app-list, app-launch, pause/resume and revoke/reapproval acceptance passed as recorded above. Persistence, reduced scopes, standby-only and return checks remain pending.
