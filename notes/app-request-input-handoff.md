@@ -7,17 +7,18 @@ preserving remote input across a single in-place Vetro diagnostic update.
 
 Glass Home request delivery and owner approval are now verified. The owner
 subsequently reports `Apps from Vetro · 11 selected`, the live app-list success
-label. The remote-input handoff also passed on the installed Vetro build.
+label. The remote-input handoff passed on the earlier `e4033b41` build.
 App launching, return/power-on behavior and approval persistence across a new
 Vetro update remain to be checked.
 
-Verified installed Vetro: `e4033b41f29fc418228494db38364199026902a6`.
-Prepared next runtime: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`,
+Verified running Vetro: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`,
 which combines TV-screen authentication recovery with compact approved-app rows.
-All four jobs passed in run `41944347516`. It has not been installed or verified
-on the TV.
-`tools/run-permissions-screen-update.sh` prepares this update from the installed build,
-using the same verified input handoff and existing certificate/owner pairing.
+All four jobs passed in run `41944347516`. The owner sees the compact permission
+UI. The update report verifies the new clean service but did not verify screen
+authentication or finish the remote-input handoff. Later, the owner reports good
+TV diagnostics after a long delay and repeated manual checks. This does not
+establish reliable automatic recovery. Preserve the working screen and collect
+current state before another restart or install.
 Last verified Glass Home: `30c490194f1748d523262a1ac8985fe45f735729`, which
 is still the head of `pponce/glass-home-samsung-tv`,
 `combined/vetro-permissions`. At the owner's explicit request, `main` was also
@@ -26,15 +27,15 @@ fast-forwarded to that exact tested revision. No new Glass Home package is neede
 ## Repositories and branches
 
 - Runtime: `pponce/vetro`, `combined/runtime-wrapper-observation-20261103`.
-  Installed candidate: `e4033b41f29fc418228494db38364199026902a6`.
-  New branch head: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`.
+  Installed candidate and branch head: `542fd3da54fafc2bb01a6b3eb5665869beda9f0f`.
 - Host updater: `pponce/vetro`, `combined/runtime-wrapper-inspection-20261103`.
-  Current entry point: `tools/run-permissions-screen-update.sh`, targeting `542fd3da`
+  Installer entry point: `tools/run-permissions-screen-update.sh`, targeting `542fd3da`
   from `e4033b41` and pinning CI run `41944347516`. Its four unchanged helpers
   remain pinned to `fc7b8663a7708e85a1f3427bfb62b001a2442345` with SHA-256
   verification. It does not ask the owner to submit another permission request.
-  The older `run-app-request-update.sh` targets the already installed build;
-  do not use it for this screen-recovery update.
+  Do not reinstall to investigate the current authentication delay. The next
+  entry point is `tools/run-screen-auth-check.sh`, which preserves the running
+  screen by default and finishes only the recorded input handoff.
 - Authoritative combined branch: `combined/permissions-startup-return`,
   unchanged at `35ebe18507f9ea289c76d8920ad0bdd4e2bde191`.
 - Glass Home: `pponce/glass-home-samsung-tv`, `combined/vetro-permissions`,
@@ -247,12 +248,12 @@ owner-client tests passed before publication.
    no Glass Home installation is required for the branch promotion.
 2. Verify one intentional app launch from Glass Home and reopening it with the
    saved permission. App-list success alone does not establish launch behavior.
-3. Apply the requested screen recovery and permission-row changes together with
-   `run-permissions-screen-update.sh` for runtime `542fd3da` from `e4033b41`. Keep the
-   relay available with no other clients. Verify authenticated screen, restored
-   remote input and retained Glass app-list/launch access after the update.
-   Open an approved app row to verify permission details and Pause/Resume;
-   revocation remains a deliberate separate test.
+3. Keep runtime `542fd3da` installed. Run `run-screen-auth-check.sh` without the
+   inspector flag to preserve the now-working TV screen, collect service/screen
+   evidence and verify or resume the recorded saved remote input. Review the
+   report before any new package or service restart. If authentication fails
+   again, use the explicit `--inspect-screen` mode for credential/status/pairing
+   observations. That mode relaunches only the screen and can change timing.
 4. Preserve native caller identity, signer checks, explicit grants and protected
    system-app restrictions. Do not replace native authentication with an
    HTTP-supplied app ID or share the owner's credential with Glass Home.
@@ -263,4 +264,41 @@ owner-client tests passed before publication.
 Prior detail: `glass-access-capture-handoff.md` and
 `input-lifecycle-handoff.md`. No raw reports, credentials, or personal network
 details are included here.
+
+## Installed screen recovery: delayed success remains unresolved
+
+`connection-report-20261104-171207-666667.json` records the exact clean `542fd3da`
+service, ready security storage, two successful private credential publications,
+and an available app port. Screen diagnostics were absent throughout the
+three-minute capture. The author certificate was unchanged. Installation was
+submitted once; the CLI's successful exit did not supply its expected confirmed
+install/launch fields. The new running service and owner-observed dashboard UI
+establish installation separately from screen authentication.
+
+Input observation was confirmed and the old filtering helper exited. The saved
+handoff still had `observationRequested:true`, `resumeRequested:false` and
+`verified:false`. That is not a current input status read: check the actual mode
+before restoring, and never restart a filter that is already healthy.
+
+The owner observed repeated HTTP 401 on both screen diagnostics and pairing,
+then eventual good diagnostics after a long wait and repeated checks. The same
+widget credential protects `/status`, `/screen` and `/auth/pending`; the existing
+owner browser pairing uses separate credentials. Do not reset browser pairings
+or bypass local scoped widget authorization. No exact failing sequence or cause
+of recovery has been established, and no further runtime fix is claimed.
+
+`capture-screen-auth.py` defaults to a 30-second current-state observation with
+existing owner pairing. It validates the current clean service and recorded
+handoff, finishes only a verified input handoff, and otherwise leaves the screen
+and service running. An explicit inspector mode verifies the installed auth
+source, reopens only the screen, records automatic-request completion counts and
+page flags for 60 seconds, and tests cached/fresh private credentials against
+status and pairing reads. Tokens, codes, response bodies and headers remain on
+the TV; Network and Runtime event feeds are not enabled. Normal screen reopening
+runs on success or failure after a debug launch attempt. This mode is diagnostic,
+not a proven fix, and debug relaunch is an acknowledged timing change.
+
+Local tests cover normal-mode preservation, exact-revision/old-helper guards,
+resuming only saved input, preserving an already healthy filter, allowlisted
+results, credential containment and screen-only cleanup after inspector failure.
 
