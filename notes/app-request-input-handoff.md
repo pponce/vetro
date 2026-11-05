@@ -1,6 +1,61 @@
 # App request receiver and update input handoff — 2026-11-05
 
-## Device update result: new screen with the previous service
+## Verified current state after cold boot — 2026-11-05
+
+Runtime `488cdccf3f08916addf4d5f2af567eecd5c105c7` is now verified after a
+user-performed cold boot. The user reports that Vetro's quick checks returned
+promptly and all green. The rerun of the checksum-pinned lifecycle updater
+printed, in sequence:
+- Collecting only; no installation will be repeated.
+- AUTHENTICATED: the screen completed an authenticated service request.
+- VERIFIED: remote input matches the saved setup.
+- VERIFIED: new service, authenticated screen and restored remote input.
+
+Report filename: `connection-report-20261105-110003-905354.json`.
+Only the pasted console output has been supplied; the JSON has not been read.
+The verified path in the pinned updater requires both the service and screen
+to match the target revision, successful screen authentication, and a verified
+saved-input handoff. The original handoff had filter connected and Home ready,
+so the verified result includes those saved requirements. No installation was
+repeated. No new package or additional diagnostic rerun is needed for this
+already completed verification.
+
+Before this cold boot, the user also reported that normal exit and immediate
+reopening no longer caused a delay, and that diagnostics returned immediately.
+They explicitly clarified those observations occurred without a cold boot.
+This is encouraging evidence for the screen changes; it does not establish the
+exact native cause of the previous delay or long-term reliability.
+
+Repositories / pinned work:
+- `pponce/vetro` runtime branch:
+  `combined/runtime-wrapper-observation-20261103`, tested runtime `488cdccf`.
+- `pponce/vetro` host branch:
+  `combined/runtime-wrapper-inspection-20261103`.
+- Installer remains pinned to host commit
+  `07543d1dec496c82b40052e884633dcc7d29ccfb`; later host commits are notes only.
+- `pponce/glass-home-samsung-tv` main and the tested permission branch remain
+  `30c490194f1748d523262a1ac8985fe45f735729`. No Glass Home update is required.
+- Runtime changes: reuse an authenticated service, avoid another start after an
+  HTTP refusal, exit once, and cancel screen work. Eleven focused local suites
+  and all four CI jobs passed in run `42064195199`.
+
+Post-boot normal reopening also passed: the user exited Vetro and immediately
+reopened it three consecutive times without an issue; every opening returned
+green checks. This completes the planned normal Back/immediate-reopen device
+test. These were normal operations, not forced Web Inspector relaunches.
+
+Remaining ordinary-use checks:
+1. In Glass Home, confirm saved approval still works, refresh the app list and
+   launch an app. Do not reset grants or re-pair merely to perform this check.
+2. Observe normal use for recurrence; collect targeted evidence only if the
+   delay, authentication failure or lost input returns. No more repeated Vetro
+   install/verification runs are requested after the passing tests.
+
+The installer does not close Vetro on completion. A healthy screen has its own
+five-minute idle exit and may exit when hidden. This closes the screen while
+the service is intended to continue in the background.
+
+## Earlier update result before cold boot: new screen with the previous service
 
 The attached `connection-report-20261105-093044-123070.json` was read directly.
 The 180-second collection finished with:
