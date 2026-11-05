@@ -4,9 +4,9 @@ This guide exercises Vetro's optional app API with a real client. Glass Home req
 
 ## Build the test client
 
-Use [pponce/glass-home-samsung-tv at `9cc4188f04e527d4b62a03e90d7feedd5e5d1243`](https://github.com/pponce/glass-home-samsung-tv/tree/9cc4188f04e527d4b62a03e90d7feedd5e5d1243). Pin that commit when comparing results. Its app ID is `GlassHome1.GlassHome`, and its photo service is `GlassHome1.Photos`.
+Use [pponce/glass-home-samsung-tv at `8aa83f1ec60566e5a8a56d2520856ae9dcf1f3d9`](https://github.com/pponce/glass-home-samsung-tv/tree/8aa83f1ec60566e5a8a56d2520856ae9dcf1f3d9). Pin that commit when comparing results. Its app ID is `GlassHome1.GlassHome`, and its photo service is `GlassHome1.Photos`.
 
-Follow the client's [installation guide at that revision](https://github.com/pponce/glass-home-samsung-tv/blob/9cc4188f04e527d4b62a03e90d7feedd5e5d1243/docs/INSTALL.md), using the fork above for the source checkout. Configure `scripts/tizen-env.sh` with your own TV and signing profile. `scripts/build.sh` creates `dist/GlassHome.wgt`; `scripts/install.sh` installs and opens it. Keep the generated local key and signing credentials out of source control. Use your own author certificate and a distributor certificate that covers your TV.
+Follow the client's [installation guide at that revision](https://github.com/pponce/glass-home-samsung-tv/blob/8aa83f1ec60566e5a8a56d2520856ae9dcf1f3d9/docs/INSTALL.md), using the fork above for the source checkout. Configure `scripts/tizen-env.sh` with your own TV and signing profile. `scripts/build.sh` creates `dist/GlassHome.wgt`; `scripts/install.sh` installs and opens it. Keep the generated local key and signing credentials out of source control. Use your own author certificate and a distributor certificate that covers your TV.
 
 Glass Home uses public-level privileges. **The Vetro permission build requires Partner-level signing**, including `appmanager.certificate`, so it can verify installed app identity. The two apps do not need the same author certificate. See [App permissions](APP-PERMISSIONS.md) for the exact API and prerequisites.
 
