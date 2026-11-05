@@ -1,12 +1,24 @@
 # Remaining TV acceptance
 
-## Update and installed-version evidence
+## Verified update and installed state
 
-The user ran the prepared updater targeting `f1eeaa30165a98a27502fc3f7b51a77db5238117` from baseline `488cdccf3f08916addf4d5f2af567eecd5c105c7`. Vetro opened and the user reports that all checks went green. The remote-input check briefly showed red before quickly returning to green without intervention. Mark the observed startup checks and automatic recovery of that check passed for this startup. No exact delay was supplied.
+Report: `connection-report-20261105-124305-997919.json`, captured at 2026-11-05T20:43:32.928626Z.
 
-The updater report and terminal verification line have not yet been supplied, so the exact running service/screen revisions and recorded input restoration remain pending verification. Do not infer successful remote-button dispatch, retained Glass Home approval or standby/return behavior from the green check alone.
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Running service and screen revision | Both match `f1eeaa30165a98a27502fc3f7b51a77db5238117`; service sourceDirty=false | Passed |
+| Screen authentication and quick checks | capture.complete=true; sessionReceived=true; serviceAuthenticated=true; summaryReady=true; quick checks finished | Passed |
+| Private screen credential | bootstrapTransport=private-storage; bootstrap ready with no error | Passed |
+| Remote-input handoff | Old filtering helper exited; final mode=filter, connected=true, savedEnabled=true, homeReady=true; verified=true | Passed |
+| Automatic input restoration | resumeRequested=false; observationRequested=false at completion | Passed |
+| Existing signing identity | authorCertificateUnchanged=true | Passed |
+| Glass Home app-list access after update | User reports that Glass Home retained access in response to the post-update check | Passed, user-observed |
 
-Glass Home source main remains `30c490194f1748d523262a1ac8985fe45f735729`; verify the installed client when reporting results. The preceding Vetro baseline had fast green diagnostics and three user-confirmed immediate reopen cycles. The integrated target includes standby-only foreground opening; its four-job CI result is separate from hardware acceptance.
+The user reported all green checks after opening Vetro, with a brief red remote-input check that quickly turned green without intervention. The report contains an earlier screen sample with connected=false and a later successful input-handoff verification with connected=true. It supports recovery during this startup, without establishing the precise recovery duration or every future reconnect.
+
+The collector completed after 9.1 seconds of observation; this is not total build/install time. It recorded one transient URLError. The CLI returned zero but did not provide the structured install/launch confirmation expected by the updater. The matching live service and authenticated screen independently establish the installed revision, so this is not a reason to reinstall. The outer status response says to pair the requesting device because that diagnostic fetch was unauthenticated; the screen and maintenance input checks authenticated successfully. The incomplete MessagePort reply matrix does not invalidate the private-storage screen path.
+
+The preceding Vetro baseline was `488cdccf3f08916addf4d5f2af567eecd5c105c7`. Glass Home source main remains `30c490194f1748d523262a1ac8985fe45f735729`; its installed revision was not independently collected by this Vetro report. No new raw Glass Home activity rows or post-update app-launch result were supplied. App-list access across the Vetro update/service restart is now user-confirmed; a full TV restart and standby/return behavior remain separate pending tests.
 
 ## Confirmed permission results — 2026-11-05
 
@@ -29,7 +41,7 @@ The user revoked Glass Home's approval. Glass Home recognized that it no longer 
 
 After reapproval, the user closed and reopened Glass Home and confirmed that refreshing the app list worked. Client reopen access passes. No additional activity rows or timestamps were supplied for this observation, and it does not establish durable approval across a Vetro service or TV restart.
 
-These observations establish a successful Vetro app-list and launch path, pause/resume behavior, revoke/reapproval flow and access after reopening Glass Home on the existing installation. Installed commit hashes were not independently collected with these results. Approval persistence across a TV/service restart, reduced scopes and standby/return behavior remain untested in this acceptance session.
+The permission-control observations in this section preceded the integrated update and establish a successful Vetro app-list and launch path, pause/resume behavior, revoke/reapproval and client reopen access on the earlier installation. The verified update and subsequent user-confirmed app-list access are recorded above. A full TV restart, reduced scopes and standby/return behavior remain untested in this acceptance session.
 
 ## Glass Home on the existing installation
 
@@ -46,7 +58,7 @@ Record every result as observed, failed or not tested. Access-status responses a
 
 ## Standby-only opening on the integration candidate
 
-Install the candidate only when a TV update is explicitly requested. Use the existing verified update/signing procedure and preserve install ledgers, owner pairing and saved remote preferences.
+The requested integrated update is verified above. Use the existing installation for this test. Select Glass Home as the foreground target, open a different ordinary app and let it settle, then perform a normal standby/wake cycle with short Samsung remote Power presses. Leave Start at boot and native Autorun unchanged. Keep the remote idle after wake; capture the startup event before any further TV navigation.
 
 Test ordinary standby wake, remote-action cancellation, an expired wake window and cold boot separately. Vetro must dispatch within the fixed 20-second ordinary-wake window and skip every cold boot even if root is already ready. A target app visible after cold boot can result from Tizen Start at boot or native Autorun; use Vetro's startup decision to distinguish these mechanisms. The Tizen flag remains independent.
 
@@ -54,4 +66,4 @@ Test ordinary standby wake, remote-action cancellation, an expired wake window a
 
 Exercise return after another app exits, explicit Home, launch of a different app, input/menu navigation and standby. Require the selected return target only in the intended exit case; deliberate navigation cancels or suppresses pending return. When Glass Home initiates the launch, correlate with a completed Vetro permission launch before judging coordination. Record startup and return as separate results.
 
-Fresh app-list, app-launch, pause/resume, revoke/reapproval and Glass Home reopen acceptance passed as recorded above. TV/service restart persistence, reduced scopes, standby-only and return checks remain pending.
+Fresh app-list, app-launch, pause/resume, revoke/reapproval and Glass Home reopen acceptance passed before the update. The integrated update, automatic input restoration and post-update app-list access now pass as recorded above. Post-update app launch, full-TV-restart persistence, reduced scopes, standby-only and return checks remain pending.
