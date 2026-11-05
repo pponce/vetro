@@ -76,6 +76,25 @@ No capture read errors or startup errors were reported. This is evidence of Vetr
 
 Remaining startup checks: remote-action cancellation, an expired wake window and cold-boot exclusion. The Tizen Start at boot flag remains independent. A target visible after cold boot may come from that flag or native Autorun; use Vetro's recorded startup decision to distinguish them. Do not extend this one normal-wake pass to these untested cases.
 
+## Standby wake with deliberate navigation — passed
+
+The user supplied the complete console JSON for `after-power-on-20261105-132949-314450-2311190.json`, captured on 2026-11-05 at 1:29:48–1:29:49 PM America/Los_Angeles. The user clarified that they pressed Right and Left several times after power-on and that Glass Home did not load. This is a multiple-button activity test, not a measured single-key timing test.
+
+| Acceptance check | Evidence | Result |
+| --- | --- | --- |
+| Current standby wake | event.kind=wake; resumedAppId=com.samsung.tv.aria-video | Confirmed |
+| Intentional cancellation | lastResult=Skipped: deliberate navigation at power-on | Passed |
+| No pending startup launch | pending=false, phase=finished, checks={} | Passed |
+| Result belongs to this wake | lastResultSession equals current powerSession; result unchanged during capture | Passed |
+| Original app remained visible | Native fullscreen read=com.samsung.tv.aria-video; user confirms Glass Home did not load | Passed |
+| Runtime readiness | Clean f1eeaa3, root connected, filtering connected, Home ready, app access enabled | Passed |
+
+The wake event began at 1:29:19.652 PM and the skip was recorded at 1:29:19.672 PM, before foreground/queue/launch checks began. Do not treat this 20 ms service decision interval as measured key-to-response latency.
+
+The returnApp entry says Return requested at 1:27:04.052 PM, belongs to an earlier power session, and has pending=false. It is historical state, not an automatic-return launch during this cancellation test. Its presence does not invalidate the current startup skip.
+
+Next combine full-TV-restart approval persistence with cold-boot exclusion. Keep the existing foreground choice and native boot/Autorun settings. Perform a full restart, allow root/service readiness to recover, and capture the startup decision before further TV navigation. Require a new boot identity and an explicit cold-boot skip. Native Tizen behavior may still show an app; visibility alone cannot attribute it to Vetro. Then refresh Glass Home without reconnecting or reapproving and check fresh app-list activity. This test remains pending.
+
 ## Automatic return — both launch routes observed working
 
 The user reports two sequences:
@@ -110,6 +129,6 @@ The repeat does not require another capture merely to record the observation. If
 
 The user confirmed that deliberate Samsung Home selection through the Vetro launcher was already tested and keeps the TV at Samsung Home. Record that control as passed without requiring repetition; no additional diagnostic capture was supplied for it. Input/menu navigation, switching to another app and standby cancellation remain distinct checks.
 
-Next startup check: begin from a settled ordinary app, perform a normal standby/wake, and press Right once as the picture appears, before the configured startup app opens. Leave the TV idle and inspect the startup decision with the existing read-only collector. The pending startup launch should be skipped for observed remote activity. A button pressed after launch dispatch does not test cancellation of a pending launch. Cold-boot exclusion and full-TV-restart approval persistence remain separate pending checks.
+The standby-wake navigation cancellation check now passes as recorded above, using several Left/Right presses and a current-session skip result. Cold-boot exclusion and full-TV-restart approval persistence are the next combined check. Expiry remains a separate untested hardware case.
 
-Fresh app-list, app-launch, pause/resume, revoke/reapproval and Glass Home reopen acceptance passed before the update. The integrated update, automatic input restoration, post-update app-list access, one normal standby wake and automatic-return observations from both launch routes now pass. The initial missed return remains unexplained. Deliberate Samsung Home selection also passes by user observation. Post-update permission launch activity evidence, the other return-cancellation paths, full-TV-restart persistence, reduced scopes and startup cancellation/expiry/cold-boot exclusion remain pending.
+Fresh app-list, app-launch, pause/resume, revoke/reapproval and Glass Home reopen acceptance passed before the update. The integrated update, automatic input restoration, post-update app-list access, one normal standby wake and automatic-return observations from both launch routes now pass. The initial missed return remains unexplained. Deliberate Samsung Home selection also passes by user observation. Startup cancellation on deliberate wake navigation also passes with report evidence and user confirmation. Post-update permission launch activity evidence, the other return-cancellation paths, full-TV-restart persistence, reduced scopes and startup expiry/cold-boot exclusion remain pending.
