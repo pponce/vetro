@@ -79,19 +79,27 @@ var screenSummaryData = null, screenInputReadAt = null, liveScreenBusy = false, 
 var screenConnectionError = null, screenReportError = '';
 var widgetClient=null,widgetCredential=null,widgetConnecting=null,pairingBusy=false;
 var widgetServiceAuthenticated=false;
+var leaving=false,pairingTimer=null,screenTimer=null,screenTasks=[];
+function trackScreenTask(cancel) {
+  screenTasks.push(cancel);
+  return function(){var i=screenTasks.indexOf(cancel);if(i!==-1)screenTasks.splice(i,1);};
+}
 function widgetError(message, status, authentication) {
   var error=Error(message);error.status=status||null;error.authentication=authentication===true;return error;
 }
 function widgetSession() {
+  if(leaving)return Promise.reject(Error('Screen is closing'));
   if(widgetCredential && widgetCredential.expires>Date.now()+30000)return Promise.resolve(widgetCredential.token);
   if(widgetConnecting)return widgetConnecting;
   widgetConnecting=Promise.resolve().then(function(){
+    if(leaving)throw Error('Screen is closing');
     // Optional one-way diagnostics do not participate in credential delivery.
     if(window.VetroConnectionDiagnostics&&!widgetClient)try{
       widgetClient=new VetroAppAccess({widget:true,timeout:2000,diagnostics:window.VetroConnectionDiagnostics});
     }catch(_){}
     return VetroWidgetSession.read(typeof tizen==='undefined'?null:tizen,2500);
   }).then(function(d){
+    if(leaving)throw Error('Screen is closing');
     if(!d||typeof d.token!=='string'||!/^[a-f0-9]{64}$/.test(d.token)||typeof d.expires!=='number'||!isFinite(d.expires)||d.expires<=Date.now())throw Error('Widget identity was not verified');
     widgetCredential=d;return d.token;
   }).then(function(token){widgetConnecting=null;return token;},function(e){
@@ -103,25 +111,32 @@ function widgetSession() {
 // invalidates widget sessions; renew only after its explicit authentication refusal.
 function widgetRequest(method, route, body, timeout, renewed) {
   return widgetSession().then(function(token){return new Promise(function(resolve,reject){
-    var xhr=new XMLHttpRequest();
+    if(leaving)return reject(Error('Screen is closing'));
+    var xhr=new XMLHttpRequest(),done=false;
+    var forget=trackScreenTask(function(){finish(false,Error('Screen is closing'));try{xhr.abort();}catch(_){}});
+    function finish(ok,value){if(done)return;done=true;forget();(ok?resolve:reject)(value);}
+    try {
     xhr.open(method,BASE+route,true);xhr.timeout=timeout;
     xhr.setRequestHeader('X-Vetro-Widget',token);
     if(body!==undefined)xhr.setRequestHeader('Content-Type','application/json');
     xhr.onload=function(){
+      if(done)return;
       if(xhr.status===401){
         // A delayed refusal for an older token must not invalidate a new session.
         if(!widgetCredential||widgetCredential.token===token){widgetServiceAuthenticated=false;widgetCredential=null;}
-        if(!renewed)return resolve(widgetRequest(method,route,body,timeout,true).catch(function(e){
+        if(!renewed)return finish(true,widgetRequest(method,route,body,timeout,true).catch(function(e){
           if(e.authentication&&!e.status)e.status=401;
           throw e;
         }));
       }
-      if(xhr.status!==200)return reject(widgetError('Service replied HTTP '+xhr.status,xhr.status,xhr.status===401));
-      try{var response=JSON.parse(xhr.responseText);widgetServiceAuthenticated=true;resolve(response);}catch(e){reject(Error('Service response is not JSON'));}
+      if(xhr.status!==200)return finish(false,widgetError('Service replied HTTP '+xhr.status,xhr.status,xhr.status===401));
+      try{var response=JSON.parse(xhr.responseText);widgetServiceAuthenticated=true;finish(true,response);}catch(e){finish(false,widgetError('Service response is not JSON',xhr.status,false));}
     };
-    xhr.onerror=function(){reject(Error('The authenticated request did not answer on port 8099.'));};
-    xhr.ontimeout=function(){reject(Error('Service request timed out'));};
+    xhr.onerror=function(){finish(false,Error('The authenticated request did not answer on port 8099.'));};
+    xhr.ontimeout=function(){finish(false,Error('Service request timed out'));};
+    xhr.onabort=function(){finish(false,Error('Screen request was cancelled'));};
     xhr.send(body===undefined?null:JSON.stringify(body));
+    }catch(e){finish(false,e);}
   });});
 }
 function pairingStatus() {
@@ -129,10 +144,13 @@ function pairingStatus() {
   if(el)el.textContent=pairingError?'Pairing unavailable: '+pairingError:'To pair a browser or installer, request a code there. It appears here without running full diagnostics.';
 }
 function pollPairing() {
-  if(document.hidden||pairingBusy)return Promise.resolve();
+  if(leaving||document.hidden||pairingBusy)return Promise.resolve();
   pairingBusy=true;
+  var epoch=screenEpoch;
+  function current(){return !leaving&&epoch===screenEpoch&&!document.hidden;}
   return widgetRequest('GET','/auth/pending',undefined,4000)
     .then(function(d){
+      if(!current())return;
       if(!d||typeof d!=='object')throw Error('Pairing response is invalid');
       var wasVisible=pairingVisible;
       pairingVisible=typeof d.code==='string'&&/^\d{6}$/.test(d.code);
@@ -143,30 +161,52 @@ function pollPairing() {
       document.getElementById('pairingExpiry').textContent=d.code?'Expires in '+d.expiresIn+' seconds.':'';
       if(wasVisible!==pairingVisible)resetIdle();
     }).catch(function(e){
+      if(!current())return;
       pairingVisible=false;pairingError=String(e&&e.message||e);
       document.getElementById('pairing').hidden=true;
       document.getElementById('pairingCode').textContent='';
       resetIdle();
-    }).then(function(){pairingBusy=false;pairingStatus();if(widgetClient&&widgetClient.diagnostics)widgetClient.diagnostics.publish();});
+    }).then(function(){pairingBusy=false;if(!current())return;pairingStatus();if(widgetClient&&widgetClient.diagnostics)widgetClient.diagnostics.publish();});
 }
 
 // The service keeps running without this page; a resident page only holds memory.
-function leave() { try { tizen.application.getCurrentApplication().exit(); } catch (e) {} }
+function startPolling() {
+  pairingTimer=setInterval(pollPairing,2000);
+  screenTimer=setInterval(pollScreen,5000);
+}
+function leave() {
+  if(leaving)return;
+  leaving=true;screenEpoch++;
+  clearTimeout(idleTimer);idleTimer=null;
+  clearInterval(pairingTimer);clearInterval(screenTimer);
+  screenTasks.slice().forEach(function(cancel){cancel();});
+  if(widgetClient){try{widgetClient.close();}catch(_){}widgetClient=null;}
+  try { tizen.application.getCurrentApplication().exit(); }
+  catch (e) { leaving=false;startPolling();resetIdle(); }
+}
 // Every probe gets a time limit: a Tizen call whose callback never fires must not leave the screen on "Checking".
 function attempt(name, fn, limit) {
   limit = limit || 8000;
   return new Promise(function (resolve) {
+    if(leaving)return resolve();
+    var epoch=screenEpoch;
     var done = false, timer = setTimeout(function () { finish({ok: false, error: 'no answer in ' + Math.round(limit / 1000) + ' s'}); }, limit || 8000);
-    function finish(r) { if (done) return; done = true; clearTimeout(timer); report.probe[name] = r; resolve(); }
+    var forget=trackScreenTask(function(){finish(null);});
+    function finish(r) { if (done) return; done = true; clearTimeout(timer);forget();if(!leaving&&epoch===screenEpoch&&r)report.probe[name] = r; resolve(); }
     try {
       Promise.resolve(fn()).then(function (v) { finish({ok: true, value: v}); },
         function (e) { finish({ok: false, error: String(e && e.message || e)}); });
     } catch (e) { finish({ok: false, error: String(e && e.message || e)}); }
   });
 }
-// A public-level certificate may not get the on-boot start honored, so the page starts the service itself.
+// Reuse a reachable service without attaching another screen-start request to it.
+// A public-level certificate may not get the on-boot start honored, so retain the
+// runtime launcher when the service cannot be reached. An HTTP refusal belongs
+// to connection recovery; another start cannot authenticate the screen.
 function launchService() {
-  return cb(function (ok, ko) {
+  return widgetRequest('GET','/status',undefined,1000).then(function(){return 'already running';},function(e){
+    if(leaving||e.status)throw e;
+    return cb(function (ok, ko) {
     function failed(e) { ko(new Error('launch failed (wrt:service: ' + (e && e.message || e) + ')')); }
     if (typeof window.a2sService === 'function') {
       try { Promise.resolve(new window.a2sService('vetrotvapp.svc').start()).then(ok, failed); }
@@ -174,12 +214,17 @@ function launchService() {
       return;
     }
     tizen.application.launch('vetrotvapp.svc', ok, ko);
+    });
   });
 }
 function reach(tries) {
+  if(leaving)return Promise.resolve();
   return widgetRequest('GET','/status',undefined,4000).then(function () { return 200; }).catch(function (e) {
-    if (tries <= 1) throw e;
-    return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return reach(tries - 1); });
+    if (leaving||tries <= 1) throw e;
+    return new Promise(function (resolve) {
+      var timer=setTimeout(finish,1500),forget=trackScreenTask(finish);
+      function finish(){clearTimeout(timer);forget();resolve();}
+    }).then(function () { return reach(tries - 1); });
   });
 }
 function cb(call) { return new Promise(function (ok, ko) { call(ok, ko); }); }
@@ -200,10 +245,10 @@ function readScreen() {
 // Once a summary exists, refresh only live connection facts. Neither path starts
 // the service, enumerates TV apps/packages, or posts diagnostic reports.
 function pollScreen() {
-  if(document.hidden||running||liveScreenBusy)return Promise.resolve();
+  if(leaving||document.hidden||running||liveScreenBusy)return Promise.resolve();
   liveScreenBusy=true;
   var epoch=screenEpoch,needsSummary=!screenSummaryData;
-  function current(){return epoch===screenEpoch&&!document.hidden&&!running;}
+  function current(){return !leaving&&epoch===screenEpoch&&!document.hidden&&!running;}
   function update(){var wasIdle=canIdle;render(screenSummaryData,false);if(wasIdle!==canIdle)resetIdle();}
   return (needsSummary?readScreen():widgetRequest('GET','/screen?live=1',undefined,4000)).then(function(d){
     if(!current())return;
@@ -224,14 +269,17 @@ function pollScreen() {
 }
 function tryConnect(port) {
   return new Promise(function (resolve, reject) {
+    if(leaving)return reject(Error('Screen is closing'));
     var ws = new WebSocket('ws://127.0.0.1:' + port + '/api/v2/channels/samsung.remote.control?name=' + btoa('Vetro'));
-    var t = setTimeout(function () { try { ws.close(); } catch (e) {} reject(new Error('timeout')); }, 4000);
-    ws.onopen = function () { clearTimeout(t); ws.close(); resolve('open'); };
-    ws.onerror = function () { clearTimeout(t); reject(new Error('refused')); };
+    var done=false,t=setTimeout(function(){finish(false,Error('timeout'));},4000);
+    var forget=trackScreenTask(function(){finish(false,Error('Screen is closing'));});
+    function finish(ok,value){if(done)return;done=true;clearTimeout(t);forget();try{ws.close();}catch(_){}(ok?resolve:reject)(value);}
+    ws.onopen = function () { finish(true,'open'); };
+    ws.onerror = function () { finish(false,Error('refused')); };
   });
 }
 var jobs = [
-  ['serviceLaunch', launchService],
+  ['serviceLaunch', launchService, 12000],
   ['tizenObject', function () { return typeof tizen !== 'undefined'; }],
   ['webapisObject', function () { return typeof webapis !== 'undefined'; }],
   ['supportedKeys', function () { return tizen.tvinputdevice.getSupportedKeys().map(function (k) { return k.name; }); }],
@@ -360,8 +408,8 @@ function fit() {
 function resetIdle() {
   clearTimeout(idleTimer);
   idleTimer = null;
-  if(running||!canIdle||pairingVisible||pairingError)return;
-  idleTimer = setTimeout(function(){if(!running&&canIdle&&!pairingVisible&&!pairingError)leave();}, IDLE_MS);
+  if(leaving||running||!canIdle||pairingVisible||pairingError)return;
+  idleTimer = setTimeout(function(){if(!leaving&&!running&&canIdle&&!pairingVisible&&!pairingError)leave();}, IDLE_MS);
 }
 // Shows how far the checks are, so a slow TV reads as working and not as stuck.
 function progress(n, total) {
@@ -369,7 +417,7 @@ function progress(n, total) {
   if (el) el.textContent = 'Checking ' + n + ' of ' + total;
 }
 function run(full) {
-  if (running) return Promise.resolve();
+  if (leaving||running) return Promise.resolve();
   screenEpoch++;screenSummaryData=null;screenInputReadAt=null;summaryReady=false;liveScreenError=false;screenConnectionError=null;screenReportError='';
   running = true; delivered = false; canIdle = false; screenError = ''; fullCheck = full === true;
   resetIdle();
@@ -379,27 +427,28 @@ function run(full) {
   // must never be on the path to displaying an owner-pairing code.
   var selected=fullCheck?jobs:[jobs[0],jobs[1],jobs[2],jobs[6],jobs[9]];
   return selected.reduce(function (p, j, i) { return p.then(function () {
+    if(leaving)return;
     if(pairingVisible)fullCheck=false;
     if(!fullCheck&&(j[0]==='apps'||j[0]==='packages'))return;
     progress(i + 1, selected.length);
     return attempt(j[0], j[1], j[2]).then(function(){if(i===0)return pollPairing();});
   }); }, Promise.resolve())
     // Do not replace the service's last full inventory with a quick-check report.
-    .then(function () { if(fullCheck)return sendReport().then(function () { delivered = true; }, function (e) {screenError=screenReportError=String(e&&e.message||e);}); })
-    .then(function () { return readScreen().catch(function (e) {screenConnectionError=e;screenError=String(e&&e.message||e);return null;}); })
-    .then(function (d) { screenSummaryData=d;screenInputReadAt=d?Date.now():null;render(d, false); }, function () { screenSummaryData=null;screenInputReadAt=null;render(null, false); })
-    .then(function () { running = false;resetIdle();if(widgetClient&&widgetClient.diagnostics)widgetClient.diagnostics.publish(true); });
+    .then(function () { if(!leaving&&fullCheck)return sendReport().then(function () { if(!leaving)delivered = true; }, function (e) {if(!leaving)screenError=screenReportError=String(e&&e.message||e);}); })
+    .then(function () { if(!leaving)return readScreen().catch(function (e) {if(!leaving){screenConnectionError=e;screenError=String(e&&e.message||e);}return null;}); })
+    .then(function (d) { if(leaving)return;screenSummaryData=d;screenInputReadAt=d?Date.now():null;render(d, false); }, function () { if(leaving)return;screenSummaryData=null;screenInputReadAt=null;render(null, false); })
+    .then(function () { running = false;if(leaving)return;resetIdle();if(widgetClient&&widgetClient.diagnostics)widgetClient.diagnostics.publish(true); });
 }
 document.addEventListener('visibilitychange', function () { screenEpoch++;if(document.hidden){if(canIdle&&!running&&!pairingVisible&&!pairingError)leave();}else pollScreen(); });
 document.addEventListener('keydown', function (e) {
+  if(leaving)return;
   var k = e && e.keyCode;
   resetIdle();
   if (k === 10009 || k === 27) leave();
   else if (k === 13 && !pairingVisible) run(summaryReady && !pairingError);
 });
 window.addEventListener('resize', fit);
-setInterval(pollPairing,2000);
-setInterval(pollScreen,5000);
+startPolling();
 fit();
 resetIdle();
 // Module scripts run after this classic script and before DOMContentLoaded.

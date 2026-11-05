@@ -20,7 +20,7 @@ function fixture(){
   window:{innerWidth:1920,innerHeight:1080,addEventListener(){}},XMLHttpRequest:XHR,
   VetroWidgetSession:{read:async()=>({token:'a'.repeat(64),expires:Date.now()+300000})},
   tizen:{application:{getCurrentApplication:()=>({appInfo:{version:'0.3.5'},exit(){}})}},
-  setInterval:(fn,ms)=>{f.intervals.push({fn,ms});},
+  setInterval:(fn,ms)=>{f.intervals.push({fn,ms});},clearInterval(){},
   setTimeout:(fn,ms)=>{f.timers.push({fn,ms,cleared:false});return f.timers.length;},
   clearTimeout:id=>{if(f.timers[id-1])f.timers[id-1].cleared=true;},console};
  vm.createContext(context);vm.runInContext(source,context);f.context=context;
@@ -63,7 +63,10 @@ function fixture(){
  c.document.hidden=false;c.running=true;await c.pollScreen();assert.equal(f.requests.length,count,'full checks pause live reads');c.running=false;
  // A response started before hiding cannot repaint after the screen reappears.
  const old=c.pollScreen();await flush();const oldXhr=f.live[f.live.length-1];
+ // Pairing keeps a hidden page resident; healthy unpaired pages instead exit.
+ c.pairingVisible=true;
  c.document.hidden=true;f.handlers.visibilitychange();c.document.hidden=false;f.handlers.visibilitychange();
+ c.pairingVisible=false;
  f.respond(oldXhr,{...GOOD,input:{enabled:true,connected:false}});await old;
  assert.match(f.html(),/input ok/);await f.poll();
  // A response from before a new full check cannot replace the new summary.

@@ -19,7 +19,7 @@ function fixture(){
   VetroWidgetSession:{read:async()=>{f.reads++;if(f.readError)throw Error('Private widget credential is not available');
    return {token:f.token,expires:Date.now()+300000};}},
   tizen:{application:{getCurrentApplication:()=>({appInfo:{version:'0.3.5'},exit(){}})}},
-  setInterval:(fn,ms)=>f.intervals.push({fn,ms}),setTimeout:()=>1,clearTimeout(){},console};
+  setInterval:(fn,ms)=>f.intervals.push({fn,ms}),clearInterval(){},setTimeout:()=>1,clearTimeout(){},console};
  vm.createContext(c);vm.runInContext(source,c);f.c=c;
  c.attempt=async name=>{c.report.probe[name]={ok:true};};
  f.tick=()=>f.intervals.find(item=>item.ms===5000).fn();

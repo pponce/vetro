@@ -23,6 +23,7 @@ async function run(options) {
     const route = this.url.slice('http://127.0.0.1:8099'.length);
     sent.push({method:this.method,url:this.url,body:body ? JSON.parse(body) : undefined});
     if(o.http){const result=o.http(this,route);if(result===false){pending.push(this);return;}}
+    if(route==='/status'&&o.unavailableUntilLaunch&&launched.length===0)return this.onerror();
     if(route==='/status'&&o.failFetch&&o.failFetch.n-- > 0)return this.onerror();
     if(route==='/screen'&&o.screen===null)return this.onerror();
     this.status=this.status||200;
@@ -36,7 +37,7 @@ async function run(options) {
     window: {a2sService: o.Service, innerWidth: 1920, innerHeight: 1080, addEventListener: (n, f) => { windowListeners[n] = f; }},
     XMLHttpRequest: XHR, WebSocket: WS,
     VetroAppAccess: function(){throw Error('Screen authentication must not require MessagePort');},
-    VetroWidgetSession: {read:async()=>{sessions++;return o.session ? o.session(sessions) : {token:"a".repeat(64),expires:Date.now()+300000};}}, setInterval(){},
+    VetroWidgetSession: {read:async()=>{sessions++;return o.session ? o.session(sessions) : {token:"a".repeat(64),expires:Date.now()+300000};}}, setInterval(){},clearInterval(){},
     fetch: async () => { if (o.failFetch && o.failFetch.n-- > 0) throw new Error('refused'); return {status: 200}; },
     tizen: {
       tvinputdevice: {getSupportedKeys: () => [{name: 'VolumeUp'}]},
@@ -60,7 +61,7 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
 (async function () {
   assert.ok(html.includes("<script type=\"module\">import { Service } from 'wrt:service'; window.a2sService = Service;</script>"));
   // The classic script must wait for the later module before choosing a launcher.
-  const deferred = await run({readyState: 'loading'}), started = [];
+  const deferred = await run({readyState: 'loading',failFetch:{n:1}}), started = [];
   assert.equal(deferred.launched.length, 0);
   assert.equal(deferred.sent.filter(s => s.method === 'POST').length, 0);
   deferred.context.window.a2sService = function (id) {
@@ -72,11 +73,11 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   assert.equal(deferred.launched.length, 0);
   assert.equal(deferred.context.report.probe.serviceLaunch.ok, true);
   assert.equal(deferred.sent.filter(s => s.method === 'POST').length, 0);
-  const noReturn = await run({Service: function () { this.start = () => {}; }});
+  const noReturn = await run({failFetch:{n:1},Service: function () { this.start = () => {}; }});
   assert.equal(noReturn.sent.find(s => s.method === 'POST').body.probe.serviceLaunch.ok, true);
   assert.equal(noReturn.launched.length, 0);
   for (const synchronous of [false, true]) {
-    const refused = await run({screen: null, Service: function () {
+    const refused = await run({screen: null,unavailableUntilLaunch:true, Service: function () {
       this.start = () => { if (synchronous) throw new Error('refused <start>'); return Promise.reject(new Error('refused <start>')); };
     }});
     assert.equal(refused.launched.length, 0);
@@ -84,7 +85,7 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
     assert.ok(refused.screen.innerHTML.includes('launch failed (wrt:service: refused &lt;start&gt;)'));
   }
   // Missing/unsupported module on an older runtime leaves the legacy launcher available.
-  const older = await run({readyState: 'loading'});
+  const older = await run({readyState: 'loading',unavailableUntilLaunch:true});
   older.listeners.DOMContentLoaded();
   await older.settle();
   assert.deepEqual(older.launched, ['vetrotvapp.svc']);
@@ -96,7 +97,7 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   assert.equal(posts[0].url, 'http://127.0.0.1:8099/probe');
   assert.equal(posts[0].body.apps[0].id, 'vetrotvapp.app');
   assert.equal(posts[0].body.probe.serviceReach.ok, true);
-  assert.deepEqual(good.launched, ['vetrotvapp.svc','vetrotvapp.svc'], 'the page starts the background service itself');
+  assert.deepEqual(good.launched, [], 'opening and full checks reuse an authenticated background service');
   assert.ok(good.sent.some(s => s.method === 'GET' && s.url === 'http://127.0.0.1:8099/screen'));
   assert.ok(good.screen.innerHTML.includes('Running in the background'));
   assert.ok(good.screen.innerHTML.includes('You can close this screen, Vetro keeps running without it.'));
@@ -122,7 +123,10 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   assert.equal(good.exits.length, 1, 'Back closes the screen');
   const idle = good.timers.filter(t => t.ms === 300000).pop();
   idle.f();
-  assert.equal(good.exits.length, 2);
+  assert.equal(good.exits.length, 1, 'a queued idle callback cannot request exit twice');
+  const idleOnly=await run();
+  idleOnly.timers.filter(t=>t.ms===300000&&!t.cleared).pop().f();
+  assert.equal(idleOnly.exits.length,1,'healthy idle still exits');
 
   // Errors are loud and say what to do.
   const root = await run({screen: Object.assign({}, GOOD, {root: {mode: 'app-only', connected: false}})});
@@ -160,9 +164,9 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   leaving.listeners.visibilitychange();
   assert.equal(leaving.exits.length, 1, 'a delivered page leaves when the user goes elsewhere');
   // A Tizen call that never answers must not keep the screen on "Checking": its probe times out and the rest goes on.
-  const hung = await run({hangLaunch: true});
+  const hung = await run({hangLaunch: true,unavailableUntilLaunch:true});
   assert.ok(hung.screen.innerHTML.includes('Checking'), 'still waiting for the stuck call');
-  const limit = hung.timers.find(t => t.ms === 8000);
+  const limit = hung.timers.find(t => t.ms === 12000);
   assert.ok(limit, 'every probe has a time limit');
   limit.f();
   await hung.settle();
@@ -172,7 +176,7 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   assert.equal(report.probe.serviceReach.ok, true, 'the probes after the stuck one still run');
   assert.ok(!hung.context.running, 'the screen leaves the waiting state');
   // While the checks run the screen says what it is doing: placeholders for each check, a turning ring, a step counter.
-  const waiting = await run({hangLaunch: true});
+  const waiting = await run({hangLaunch: true,unavailableUntilLaunch:true});
   assert.ok(waiting.screen.innerHTML.includes('class="c wait"'), 'one placeholder per check while waiting');
   assert.ok(waiting.screen.innerHTML.includes('Root access'));
   assert.ok(waiting.screen.innerHTML.includes('Vetro is checking the service connection'));
