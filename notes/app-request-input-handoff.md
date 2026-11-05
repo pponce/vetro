@@ -1,6 +1,40 @@
 # App request receiver and update input handoff — 2026-11-05
 
-## Latest checkpoint: normal reopening, 2026-11-05
+## Device update result: new screen with the previous service
+
+The attached `connection-report-20261105-093044-123070.json` was read directly.
+The 180-second collection finished with:
+- `screenBuildVerified=true`: the screen is `488cdccf3f08916addf4d5f2af567eecd5c105c7`.
+- `screenChecksFinished=true`, `screenSessionReceived=true` and
+  `screenServiceAuthenticated=true`, with no screen or pairing error.
+- `runningServiceVerified=false`: the service still reports clean
+  `6104eeaa7507d10f28edb68f08e37cff4d627aa5`, started at
+  `2026-11-05T16:08:16.222Z`, before this update.
+- The recent screen sample reports input enabled/connected/available and not
+  recovering. This is not a fresh owner-level verification of filter/Home.
+- The input journal confirms the previous filter exited before install, but
+  `resumeRequested=false` and `verified=false`: restoration was not attempted
+  because the service revision did not match. The generic paused-input message
+  follows that journal, not a new disconnected-input observation.
+
+The CLI returned zero but its expected install confirmation was absent. The
+new screen is verified; a matching newly loaded service is not. One initial
+`URLError` was recorded. The serviceLaunch probe timed out at 12 seconds, while
+the later serviceReach probe succeeded. Do not interpret the partial result as
+an authentication failure or proof of a failed package installation.
+
+Next: cold boot once, open Vetro and allow quick checks to finish, then rerun
+the existing checksum-pinned lifecycle block. Its saved attempt ledger prevents
+another installation. Verify service/screen both `488cdccf` and saved filter/Home
+before testing normal Back/immediate reopening. No new build is required for
+this verification.
+
+Follow-up diagnostic wording: the collector currently says it is checking
+authentication even when only the service revision fails. The paused-input
+message should also distinguish an unfinished handoff from fresh live state.
+Do not ship another TV package solely to change these host messages.
+
+## Prepared build checkpoint: normal reopening, 2026-11-05
 
 The installed runtime remains `6104eeaa7507d10f28edb68f08e37cff4d627aa5`.
 Cold boot restored filter/Home automatically, and both the first opening and a
