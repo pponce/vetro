@@ -506,3 +506,37 @@ yet been run on the TV. Its report prints the Mac rsync command.
 After restoring input, capture the normal screen exit wait state separately.
 Do not submit another package until new evidence supports a runtime change.
 
+## Input recovery capture; cold-start verification next
+
+`input-recovery-20261105-035826-818160.json` did not recover input and did not
+submit a resume request. All eight state samples have root connected, saved
+input enabled, input off/disconnected and Home not ready. They retain the
+allowlisted native-bridge error `input helper disconnected; original keys
+released`. There were no HTTP request errors in this capture. The recovering
+flag is false at 0–30 seconds and true in the final read at 42 seconds, after
+the process audit. That final retry flag caused the guard to stop; it is not
+evidence of successful recovery.
+
+The bounded process audit found filtering helper PID 20554/start ticks 3059504,
+input node event6, callback port 42783, an established loopback connection and
+listener owned by service host PID 16051. The latter has the same process start
+ticks 1071660 as in the earlier normal-reopening capture, despite the newer
+module's start time/revision. Samsung's runtime can host service workers; the
+PID identifies the host process, not an individual JavaScript service context.
+The audit spans time and is non-atomic. It does not distinguish a competing
+worker from a helper that starts and disconnects between HTTP samples, and it
+does not directly prove which descriptor holds an exclusive input grab.
+
+Next recovery step: one Samsung cold restart, then open Vetro once and allow
+background startup to settle. This clears existing runtime contexts/helpers
+and tests the installed `6104eeaa` code from a clean boot. A surviving older
+context is a hypothesis, not an established cause. Preserve the installed
+package, pairing, permissions and saved remote mapping; no factory reset,
+Smart Hub reset, firmware update, process kill or new installation is proposed.
+
+After startup, use the pinned input-recovery runner to verify the recorded
+handoff. Test normal Back exit/reopen separately after input is verified. If the
+helper still disconnects following a cold boot, capture bounded native helper
+failure markers and correlate them with input attempts before making another
+runtime change. Reopening delay remains unresolved.
+
