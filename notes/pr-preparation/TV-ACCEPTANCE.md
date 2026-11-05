@@ -1,10 +1,12 @@
 # Remaining TV acceptance
 
-## Installed baseline
+## Update and installed-version evidence
 
-Vetro remains at `488cdccf3f08916addf4d5f2af567eecd5c105c7`. Glass Home source main is `30c490194f1748d523262a1ac8985fe45f735729`; verify the installed client when reporting results. Fast green diagnostics and three immediate reopen cycles were reported. No installation or TV settings change occurred during this preparation.
+The user ran the prepared updater targeting `f1eeaa30165a98a27502fc3f7b51a77db5238117` from baseline `488cdccf3f08916addf4d5f2af567eecd5c105c7`. Vetro opened and the user reports that all checks went green. The remote-input check briefly showed red before quickly returning to green without intervention. Mark the observed startup checks and automatic recovery of that check passed for this startup. No exact delay was supplied.
 
-The source integration `f1eeaa30165a98a27502fc3f7b51a77db5238117` includes standby-only foreground opening, but that change is not yet installed. Its four-job CI result is not hardware acceptance.
+The updater report and terminal verification line have not yet been supplied, so the exact running service/screen revisions and recorded input restoration remain pending verification. Do not infer successful remote-button dispatch, retained Glass Home approval or standby/return behavior from the green check alone.
+
+Glass Home source main remains `30c490194f1748d523262a1ac8985fe45f735729`; verify the installed client when reporting results. The preceding Vetro baseline had fast green diagnostics and three user-confirmed immediate reopen cycles. The integrated target includes standby-only foreground opening; its four-job CI result is separate from hardware acceptance.
 
 ## Confirmed permission results — 2026-11-05
 
