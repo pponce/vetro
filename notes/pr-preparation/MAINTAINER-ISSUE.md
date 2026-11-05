@@ -16,7 +16,11 @@ The combined build includes:
 
 3. **Owner-approved app permissions.** An optional API for installed TV apps, off by default. Owners review each app's verified identity and requested permissions, approve selected controls, view recent activity, and reduce, pause/resume or revoke access. Available scopes cover app listing/launching, eligible user-app task controls, brightness, audio/playback and standby. Task controls exclude system and protected apps; clients do not receive owner credentials or shell access. Glass Home is the working client example for app-list and app-launch access.
 
-4. **Separate authentication for Vetro's own TV screen.** A limited, short-lived credential delivered through package-private storage, with credential renewal/recovery and service ownership checks. This supports the permission boundary while keeping the screen's status, diagnostics and pairing-code access working.
+4. **Separate authentication for Vetro's own TV screen.** Per-app permissions require a distinction between Vetro's trusted screen and other apps running on the same TV. Those apps must use their approved permissions rather than inherit owner access through a local connection. Vetro's screen still needs limited access to status, diagnostics and the owner's pairing code.
+
+   During this integration on my S95C, the service was generating pairing codes, but the initial MessagePort credential exchange was not establishing an authenticated screen session, so the screen could not retrieve and display them. Delivering a short-lived credential through Vetro's package-private storage allowed the screen to authenticate and display the code successfully.
+
+   Credential renewal handles stale credentials, and only the service that actually owns the HTTP listener publishes them, preventing competing service instances from issuing conflicting credentials. This addressed authentication within the permissions integration; speeding up the diagnostic checks was a separate improvement. It does not establish that changing the owner-session storage format was necessary. For upstream submission, I plan to preserve the existing owner pairing and sessions while adapting this screen-authentication layer.
 
 5. **Home and launcher improvements.** Short-press/duplicate-event handling, coordination between the launcher and physical Home key, a configurable launcher Home tile and label, and one shared Home assignment across Launcher and Remapper. Home can use Samsung Home, toggle Vetro's launcher, or open a selected app; saved mappings can be edited and restored.
 
