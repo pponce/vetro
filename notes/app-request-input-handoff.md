@@ -19,9 +19,17 @@ UI. The update report verifies the new clean service but did not verify screen
 authentication or finish the remote-input handoff. Later, the owner reports good
 TV diagnostics after a long delay and repeated manual checks. This does not
 establish reliable automatic recovery. Two subsequent current-state captures
-verify stable service and input but still have no screen telemetry. The next
-useful test is the already-published explicit screen inspector capture, not
-another current-state capture or package installation.
+verify stable service and input but have no screen telemetry. A later direct
+inspector capture now verifies fast authenticated startup, continued automatic
+polling and successful status/pairing reads; the owner also reports fast normal
+reopening. A service restart occurred between the earlier and later captures,
+before the inspector script ran. Its trigger and the original failure sequence
+remain unknown. Subsequent normal exits/reopenings still intermittently fail:
+the screen sometimes cannot be reopened for a while, and successful reopening
+can lead to a temporary 401 followed by green checks. A launch-time popup asks
+the owner to wait and try again; the next attempt can succeed. TV-Store is not
+required for either the failure or recovery. Keep the installed build; the next
+capture must observe normal operation without forcibly restarting the screen.
 Last verified Glass Home: `30c490194f1748d523262a1ac8985fe45f735729`, which
 is still the head of `pponce/glass-home-samsung-tv`,
 `combined/vetro-permissions`. At the owner's explicit request, `main` was also
@@ -39,8 +47,10 @@ fast-forwarded to that exact tested revision. No new Glass Home package is neede
   Do not reinstall to investigate the current authentication delay. The next
   entry point is `tools/run-screen-auth-check.sh`, which preserves the running
   screen by default and finishes only the recorded input handoff. That handoff
-  is now verified. Use the explicit `--inspect-screen` mode to observe the
-  screen's requests and credential checks directly.
+  is now verified. The explicit `--inspect-screen` mode captured a healthy run,
+  but forcibly stopping/relaunching the screen changes the normal exit path.
+  The next entry point is `tools/run-screen-lifecycle-watch.sh`: passive
+  process/service and published-credential observation during manual operation.
 - Authoritative combined branch: `combined/permissions-startup-return`,
   unchanged at `35ebe18507f9ea289c76d8920ad0bdd4e2bde191`.
 - Glass Home: `pponce/glass-home-samsung-tv`, `combined/vetro-permissions`,
@@ -253,12 +263,13 @@ owner-client tests passed before publication.
    no Glass Home installation is required for the branch promotion.
 2. Verify one intentional app launch from Glass Home and reopening it with the
    saved permission. App-list success alone does not establish launch behavior.
-3. Keep runtime `542fd3da` installed. Current-state captures have verified the
-   remote input handoff and stable service. Use the already-published
-   `run-screen-auth-check.sh` from tools commit `7097b616` with explicit
-   `--inspect-screen` for direct credential/status/pairing observations.
-   This requires an idle TV-Store relay and relaunches only the screen. Keep it
-   visible without pressing OK during the capture. Debug mode can change timing.
+3. Keep runtime `542fd3da` installed. Run `run-screen-lifecycle-watch.sh` while
+   manually closing/reopening Vetro. It starts no app, stops no process and needs
+   no SDB/TV-Store relay. Optional numbered markers correlate user-visible
+   closure, blocked reopening, error and green states. Review process lifetimes,
+   service restarts and loopback acceptance of the published credential before
+   changing either exit handling or authentication. Do not use an inspector
+   relaunch to replace this observation; that can clear the state under study.
 4. Preserve native caller identity, signer checks, explicit grants and protected
    system-app restrictions. Do not replace native authentication with an
    HTTP-supplied app ID or share the owner's credential with Glass Home.
@@ -335,4 +346,73 @@ screen sequence. The existing explicit inspector mode observes page flags and
 request completion counts and tests cached versus freshly read credentials for
 status and pairing without exporting them. The authentication reliability issue
 remains open; no additional runtime patch or installation has been made.
+
+## First direct screen capture: fast authentication verified
+
+Evidence: `screen-auth-20261105-014221-470724.json`. Capture completed without
+errors. Installed private-reader, publisher and authentication source hashes
+match exact runtime `542fd3da`.
+
+- At the zero-second sample the page is still running its startup checks; by
+  the five-second sample it has an authenticated summary with no screen or
+  pairing error. The first `/status` request completed about 1.455 seconds after
+  page initialization. There was one startup run (`screenEpoch:1`) and no
+  manual OK press during the capture.
+- At 60 seconds there are 13 completed screen requests and 31 pairing-poll
+  requests. Automatic screen refresh continues at approximately five-second
+  intervals; authentication remains true throughout the completed samples.
+- A freshly read private credential returns HTTP 200 for `/status` and
+  `/auth/pending`. The cached credential differs from the fresh one and also
+  returns HTTP 200 for `/status`. Rotation from publication five to six therefore
+  coexists with a working cached credential in this run. This does not reproduce
+  the earlier persistent 401 or establish its cause. No new pairing was created.
+- Input is healthy before and after the capture; no resume request is issued.
+  The owner reports that the subsequent normal-mode screen reopening also
+  reaches green quickly. The report's final service-side screen telemetry is
+  unchanged from the debug startup, so the normal-mode result is owner-observed,
+  not a separate fresh telemetry confirmation.
+- The service start timestamp is `2026-11-05T01:33:08.066Z`, compared with
+  `2026-11-05T01:12:28.729Z` in both earlier current-state captures. Thus the
+  service restarted between the earlier and later tests, before this inspector
+  capture. `serviceRestartObserved:false` only means it did not restart during
+  this capture. The script did not request a service restart. The trigger remains
+  unknown; ask whether the owner restarted the TV or Vetro around that time.
+
+This is a verified healthy run on the installed code, with a useful changed
+service-lifecycle condition. It is not proof of a permanent authentication fix.
+
+## Normal exit/reopen recurrence and next observation
+
+After the healthy inspector run, the owner repeatedly observes normal exit
+followed by an interval in which Vetro cannot be opened. Opening and closing
+TV-Store sometimes precedes successful reopening, but does not reliably restore
+it; later reopening also succeeds without opening any other app. One attempt
+shows a launch-time "please wait a moment and try again" popup, followed by a
+successful next attempt. Reopened Vetro can again show the service/authentication
+error, then recover to green shortly afterward. Keep launch refusal and the
+subsequent HTTP authentication failure distinct until evidence links them.
+
+The screen source has no deliberate reopen cooldown. Its normal Back handler
+calls `tizen.application.getCurrentApplication().exit()`. A healthy hidden screen
+can also call `exit()` from its visibility handler. The successful inspector
+script instead used `app_launcher -k` before both debug and normal launches, so
+those successes do not validate the normal Back-exit path. No failure cause or
+appropriate code change has yet been established.
+
+`watch-screen-lifecycle.py` samples for three minutes using existing owner
+pairing. It reads the diagnostic envelope and a bounded process inventory. It
+looks for the fixed widget credential filename only within the Vetro package's
+known directories and tests that record against loopback `/status` and
+`/auth/pending`. The credential goes to curl over stdin; it never appears in
+argv, stdout, stderr or saved output. Only expiry/file metadata and HTTP codes
+leave the TV. The script launches/stops no app, changes no input or grants,
+and starts no pairing. The screen's cached credential is not directly observed.
+Process classification and directory discovery are best effort; absence does
+not prove a process is terminated or a credential is missing. Sampling itself
+can affect timing. Optional terminal markers store only known event labels.
+
+Local tests cover the actual shell probe with an isolated credential fixture,
+no credential in curl argv/output, invalid-token refusal, result allowlisting,
+exact revision checks, read-only route use, and pinned runner hashes. The helper
+is prepared for TV use; it has not yet captured the normal-exit failure.
 
