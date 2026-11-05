@@ -11,9 +11,10 @@ const GOOD = {version: '0.3.5', port: 8099, address: '192.168.1.42', root: {mode
 
 // screen: the /screen body (null: the service answers nothing); probeResponse: the /probe reply.
 async function run(options) {
-  const o = Object.assign({probeResponse: {ok: true, persisted: true}, screen: GOOD, failFetch: null, appVersion: '0.3.5', hangLaunch: false, pending: {code: null}}, options || {});
+  const o = Object.assign({probeResponse: {ok: true, persisted: true}, screen: GOOD, failFetch: null, appVersion: '0.3.5', hangLaunch: false, pending: {code: null}, full: true, serviceRunning: false}, options || {});
   const sent = [], timers = [], intervals = [], listeners = {}, windowListeners = {}, exits = [], launched = [];
   const screen = {innerHTML: ''}, stage = {style: {}};
+  let statusReads = 0;
   function XHR() {}
   XHR.prototype.open = function (method, url) { this.method = method; this.url = url; };
   XHR.prototype.setRequestHeader = function () {};
@@ -22,6 +23,11 @@ async function run(options) {
       sent.push({method: this.method, url: this.url, body: JSON.parse(body)});
       this.status = 200; this.responseText = JSON.stringify(o.probeResponse); this.onload();
     } else {
+      if (/\/status$/.test(this.url)) {
+        statusReads++;
+        if ((!o.serviceRunning && statusReads === 1) || (o.failFetch && o.failFetch.n-- > 0)) return this.onerror();
+        this.status = o.statusCode || 200; this.responseText = '{}'; return this.onload();
+      }
       sent.push({method: this.method, url: this.url});
       if (/\/auth\/pending$/.test(this.url)) { this.status = 200; this.responseText = JSON.stringify(o.pending); return this.onload(); }
       if (o.screen === null) return this.onerror();
@@ -45,15 +51,16 @@ async function run(options) {
     btoa: s => Buffer.from(s).toString('base64'), clearTimeout, clearInterval: () => {}, setInterval: (f, ms) => { intervals.push({f, ms}); return intervals.length; },
     setTimeout: (f, ms) => { if (ms === 1500) { setImmediate(f); return 0; } timers.push({f, ms}); return timers.length; }
   };
-  vm.runInNewContext(script, context);   // its value is the page's run() promise, which a stuck call leaves pending
+  vm.runInNewContext(o.full ? script.replace(/run\(false\)/g, 'run(true)') : script, context);   // its value is the page's run() promise, which a stuck call leaves pending
   // run() is not awaited by the page: let its promise chain settle.
   for (let i = 0; i < 40; i++) await new Promise(r => setImmediate(r));
   const settle = async () => { for (let i = 0; i < 40; i++) await new Promise(r => setImmediate(r)); };
   return {settle, intervals, sent, timers, exits, launched, listeners, windowListeners, screen, stage, context};
 }
+module.exports = {run, GOOD};
 const key = (r, keyCode) => r.listeners.keydown({keyCode});
 
-(async function () {
+if (require.main === module) (async function () {
   assert.ok(html.includes("<script type=\"module\">import { Service } from 'wrt:service'; window.a2sService = Service;</script>"));
   // The classic script must wait for the later module before choosing a launcher.
   const deferred = await run({readyState: 'loading'}), started = [];
@@ -132,7 +139,7 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   assert.equal(good.exits.length, 1, 'Back closes the screen');
   const idle = good.timers.filter(t => t.ms === 300000).pop();
   idle.f();
-  assert.equal(good.exits.length, 2);
+  assert.equal(good.exits.length, 1, 'a queued idle callback cannot exit twice');
 
   // Errors are loud and say what to do.
   const root = await run({screen: Object.assign({}, GOOD, {root: {mode: 'app-only', connected: false}})});
@@ -208,11 +215,11 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   assert.ok(waiting.screen.innerHTML.includes('class="c wait"'), 'one placeholder per check while waiting');
   assert.ok(waiting.screen.innerHTML.includes('Root access'));
   assert.ok(waiting.screen.innerHTML.includes('Vetro is checking the TV'));
-  assert.ok(waiting.screen.innerHTML.includes('1&ndash;2 minutes: please do not close this screen'), 'the wait is announced');
+  assert.ok(waiting.screen.innerHTML.includes('Pairing is available as soon as the service answers.'), 'the wait is announced');
   assert.equal(waiting.screen.textContent, 'Checking 1 of 9 \u00b7 Starting the service \u00b7 0 s', 'the step, its name and its seconds');
   assert.ok(waiting.intervals.some(t => t.ms === 1000), 'the seconds tick');
   assert.ok(!waiting.screen.innerHTML.includes('<i>OK</i>'), 'no OK key while OK does nothing (#104)');
-  assert.ok(good.screen.innerHTML.includes('<i>OK</i>Check again'), 'and back once the checks are done');
+  assert.ok(good.screen.innerHTML.includes('<i>OK</i>Full diagnostics'), 'and back once the checks are done');
   // A step stuck past the total limit: the screen gives its verdict anyway, and says which steps did not answer.
   const capped = await run({hangLaunch: true});
   capped.timers.find(t => t.ms === 100000).f();
@@ -226,7 +233,7 @@ const key = (r, keyCode) => r.listeners.keydown({keyCode});
   // The service never answers: no early report (it would fail), and the reason is in the support line (#2).
   const unreachable = await run({screen: null, failFetch: {n: 99}});
   assert.equal(unreachable.sent.filter(s => s.method === 'POST').length, 2, 'only the verdict report and the package one are tried');
-  assert.ok(unreachable.screen.innerHTML.includes('SVC DOWN (reach: refused)'));
+  assert.ok(unreachable.screen.innerHTML.includes('SVC DOWN (reach: Service unreachable)'));
   // The package list is slow: the verdict does not wait for it, then it is drawn when it times out.
   const pk = await run({hangPackages: true});
   assert.ok(pk.screen.innerHTML.includes('Running in the background'), 'the verdict is there before the package list');
