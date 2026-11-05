@@ -22,7 +22,7 @@ Updates, reinstalls and signer changes require new approval. Vetro checks instal
 
 | Permission | Methods | Limits |
 | --- | --- | --- |
-| `apps.read` | `apps.list`, `apps.catalog` | Visible registry apps, or installed Samsung Apps with Home-row membership and order; paginated. |
+| `apps.read` | `apps.list`, `apps.catalog`, `apps.icon` | Visible registry apps, installed Samsung Apps with Home-row membership and order, and bounded Samsung app icons. |
 | `apps.launch` | `apps.launch` | Launch one eligible, enabled, visible TV app, including preinstalled media apps. |
 | `tasks.read` | `tasks.list` | Running eligible user apps and aggregate RSS; no raw process list, PIDs or command lines. |
 | `tasks.stop` | `tasks.stop` | Stop one eligible user UI app and check whether it is still running. Unsaved progress can be lost. |
@@ -42,7 +42,7 @@ Launchers can call `apps.catalog` with the existing `apps.read` permission. It r
 ```js
 vetro.call('apps.catalog', {offset:0, limit:20});
 // {
-//   source: 'samsung-apps', revision: '<64-character SHA-256>',
+//   source: 'samsung-apps', revision: '<64-character SHA-256>', iconSupport: true,
 //   apps: [
 //     {appId:'org.tizen.netflix-app', name:'Netflix', disabled:false, homeOrder:0},
 //     {appId:'another.app', name:'Another app', disabled:false, homeOrder:null}
@@ -58,6 +58,27 @@ Use Home membership for an initial selection and retain explicit user choices in
 Offset zero refreshes metadata. Later pages reuse a short-lived metadata snapshot while registry eligibility is checked again. Reads only inspect fixed local files and read-only SQLite queries; they do not change Samsung's Home row, start the launcher, or write a launcher catalog. Missing or incomplete source data returns `unavailable`. Firmware-specific differences between Samsung's installed Apps page and these metadata sources still require TV acceptance testing.
 
 `apps.list` retains its registry-list behavior. Vetro versions without `apps.catalog` reject the method with `not_allowed`; clients should request an update instead of silently substituting the broader registry. No owner credential, new permission, arbitrary database query, file path, or raw database record is exposed.
+
+### Samsung app icons
+
+When a catalog response advertises `iconSupport: true`, an approved client can use `apps.icon` under `apps.read`. The target must still be an enabled, eligible entry in the Samsung Apps catalog, including when it is not pinned to Home. Each call repeats the live registry and permission checks. A missing capability flag means the client should keep its own icon or name fallback.
+
+```js
+vetro.call('apps.icon', {appId:'com.samsung.tv.cobalt-yt', offset:0});
+// {
+//   appId:'com.samsung.tv.cobalt-yt', mimeType:'image/png',
+//   revision:'<SHA-256 of the complete PNG>', offset:0, totalBytes:12000,
+//   data:'<base64 for the first 8192 bytes>', nextOffset:8192
+// }
+// Pass the returned revision with every later chunk:
+vetro.call('apps.icon', {appId:'com.samsung.tv.cobalt-yt', offset:8192, revision:iconRevision});
+```
+
+`offset` defaults to zero and must be a multiple of 8,192. Follow `nextOffset` until it is `null`. Require consistent app ID, MIME type, revision, total length, and offsets; decode each chunk separately and concatenate its bytes. Verify the complete SHA-256 before displaying the PNG. `icon_changed` means a transfer's image is no longer current; discard the partial image. An absent, unreadable, oversized or unsupported image returns `{appId, icon:null}` on the first chunk. Keep the app usable with a fallback tile.
+
+Vetro resolves the app's Samsung store ID internally and reads only fixed PNG filenames in Samsung's app artwork directory. Samsung TV Plus also has a fixed package-icon fallback. Caller-supplied paths, URLs, filenames and image sizes are not accepted, and resolved paths must stay within their artwork directory. Images are limited to 128 KiB and 1,024 pixels per dimension, with PNG header and end-marker checks. Each response contains at most 8 KiB of image bytes encoded as base64, so the existing authenticated reply limits remain unchanged. The service keeps at most 32 image results for up to two minutes.
+
+Download icons separately from the app list. Respect the shared request-rate limit and allow launches between chunks. Existing authenticated MessagePort/reply transport is used; there is no public icon endpoint or owner credential. Revoking access denies subsequent chunks and invalidates outstanding authenticated replies. A client may still display an image it already cached.
 
 Apps cannot uninstall or disable packages, change startup flags, send navigation/Home/service-menu keys, execute shell commands, edit files, fetch arbitrary URLs, install packages, configure MQTT, or manage permissions. The owner's authenticated dashboard remains a separate administrative interface.
 

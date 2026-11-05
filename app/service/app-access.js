@@ -4,7 +4,7 @@ var Store = require('./access-store.js').Store;
 var validId = require('./app-identity.js').validId;
 var protectedApp = require('./debloat.js').isProtected;
 var SCOPES = [
-    {id:'apps.read', label:'List TV apps', description:'Read names and IDs of visible TV apps, including preinstalled apps.'},
+    {id:'apps.read', label:'List TV apps', description:'Read names, IDs and app icons of visible TV apps, including preinstalled apps.'},
     {id:'apps.launch', label:'Open TV apps', description:'Open enabled, visible TV apps, including preinstalled apps.'},
     {id:'tasks.read', label:'View running user apps', description:'Read running state and memory totals for eligible user apps.'},
     {id:'tasks.stop', label:'Close user apps', description:'Stop eligible user apps. Unsaved progress may be lost.'},
@@ -13,7 +13,7 @@ var SCOPES = [
     {id:'remote.playback', label:'Control playback', description:'Send play, pause, stop, seek, previous and next commands.'},
     {id:'power.off', label:'Turn off the TV', description:'Put the TV in standby.'}
 ];
-var METHODS = {'apps.list':'apps.read','apps.catalog':'apps.read','apps.launch':'apps.launch','tasks.list':'tasks.read','tasks.stop':'tasks.stop',
+var METHODS = {'apps.list':'apps.read','apps.catalog':'apps.read','apps.icon':'apps.read','apps.launch':'apps.launch','tasks.list':'tasks.read','tasks.stop':'tasks.stop',
     'brightness.read':'picture.brightness','brightness.set':'picture.brightness','audio.key':'remote.audio',
     'playback.key':'remote.playback','power.off':'power.off'};
 function fault(code, message) { var e = Error(message); e.code = code; return e; }

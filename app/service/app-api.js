@@ -1,11 +1,12 @@
 'use strict';
 var Access = require('./app-access.js');
 var Catalog = require('./app-launcher-catalog.js');
+var Icons = require('./app-icons.js');
 var control = require('./control.js');
 var component = require('./component-actions.js');
 var AUDIO = ['XF86AudioRaiseVolume','XF86AudioLowerVolume','XF86AudioMute'];
 var PLAYBACK = ['XF86AudioPlay','XF86AudioPause','XF86AudioStop','XF86AudioNext','XF86AudioPrev','XF86AudioRewind','XF86AudioForward'];
-var PARAMS = {'apps.list':['offset','limit'],'apps.catalog':['offset','limit'],'apps.launch':['appId'],'tasks.list':['offset','limit'],'tasks.stop':['appId'],
+var PARAMS = {'apps.list':['offset','limit'],'apps.catalog':['offset','limit'],'apps.icon':['appId','offset','revision'],'apps.launch':['appId'],'tasks.list':['offset','limit'],'tasks.stop':['appId'],
     'brightness.read':[],'brightness.set':['value','expected'],'audio.key':['key'],'playback.key':['key'],'power.off':[]};
 function validParams(method,p) {
     if (!Object.prototype.hasOwnProperty.call(PARAMS,method) || !p || typeof p!=='object' || Array.isArray(p) ||
@@ -21,7 +22,7 @@ function create(options) {
     return function perform(method,p,rows,check) {
         return Promise.resolve().then(function () {
             validParams(method,p);
-            var launching=method==='apps.list'||method==='apps.catalog'||method==='apps.launch';
+            var launching=method==='apps.list'||method==='apps.catalog'||method==='apps.icon'||method==='apps.launch';
             var allowed=rows.filter(function (r) { return (launching?Access.launchableApp:Access.userApp)(r,rows); });
             if (method==='apps.list') return page(allowed.map(summary),p);
             if (method==='apps.catalog') {
@@ -29,8 +30,33 @@ function create(options) {
                 return options.catalog(!p.offset).then(function (metadata) {
                     check();
                     var catalog=Catalog.build(metadata,allowed),result=page(catalog.apps,p);
-                    result.revision=catalog.revision;result.source='samsung-apps';
+                    result.revision=catalog.revision;result.source='samsung-apps';result.iconSupport=typeof options.icons==='function';
                     return result;
+                });
+            }
+            if (method==='apps.icon') {
+                var offset=p.offset===undefined?0:p.offset;
+                if (typeof p.appId!=='string' || !/^[A-Za-z0-9_.-]{1,120}$/.test(p.appId) || !Number.isInteger(offset) ||
+                    offset<0 || offset>=Icons.MAX_BYTES || offset%Icons.CHUNK_BYTES ||
+                    (offset>0 || p.revision!==undefined) && (typeof p.revision!=='string' || !/^[a-f0-9]{64}$/.test(p.revision)))
+                    throw Access.fault('invalid_request','Use an app ID and a valid icon offset and revision');
+                if (typeof options.icons!=='function') throw Access.fault('unavailable','App icons are unavailable');
+                return options.catalog(false).then(function (metadata) {
+                    check();
+                    if (!Catalog.build(metadata,allowed).apps.some(function (a) { return a.appId===p.appId; }))
+                        throw Access.fault('not_allowed','The target is not an enabled Samsung Apps entry');
+                    return Promise.resolve(options.icons(p.appId,metadata));
+                }).then(function (icon) {
+                    check();
+                    if (!icon) {
+                        if (offset) throw Access.fault('icon_changed','The app icon changed. Read it again from the beginning.');
+                        return {appId:p.appId,icon:null};
+                    }
+                    if (p.revision!==undefined && p.revision!==icon.revision) throw Access.fault('icon_changed','The app icon changed. Read it again from the beginning.');
+                    if (offset>=icon.data.length) throw Access.fault('invalid_request','The icon offset is past the image');
+                    var end=Math.min(icon.data.length,offset+Icons.CHUNK_BYTES);
+                    return {appId:p.appId,mimeType:'image/png',revision:icon.revision,offset:offset,totalBytes:icon.data.length,
+                        data:icon.data.slice(offset,end).toString('base64'),nextOffset:end<icon.data.length?end:null};
                 });
             }
             if (method==='tasks.list') {

@@ -4,9 +4,9 @@ This guide exercises Vetro's optional app API with a real client. Glass Home req
 
 ## Build the test client
 
-Use [pponce/glass-home-samsung-tv at `8aa83f1ec60566e5a8a56d2520856ae9dcf1f3d9`](https://github.com/pponce/glass-home-samsung-tv/tree/8aa83f1ec60566e5a8a56d2520856ae9dcf1f3d9). Pin that commit when comparing results. Its app ID is `GlassHome1.GlassHome`, and its photo service is `GlassHome1.Photos`.
+Use [pponce/glass-home-samsung-tv at `5edd0180dd67c7f2eb1e478253a054ba77272594`](https://github.com/pponce/glass-home-samsung-tv/tree/5edd0180dd67c7f2eb1e478253a054ba77272594). Pin that commit when comparing results. Its app ID is `GlassHome1.GlassHome`, and its photo service is `GlassHome1.Photos`.
 
-Follow the client's [installation guide at that revision](https://github.com/pponce/glass-home-samsung-tv/blob/8aa83f1ec60566e5a8a56d2520856ae9dcf1f3d9/docs/INSTALL.md), using the fork above for the source checkout. Configure `scripts/tizen-env.sh` with your own TV and signing profile. `scripts/build.sh` creates `dist/GlassHome.wgt`; `scripts/install.sh` installs and opens it. Keep the generated local key and signing credentials out of source control. Use your own author certificate and a distributor certificate that covers your TV.
+Follow the client's [installation guide at that revision](https://github.com/pponce/glass-home-samsung-tv/blob/5edd0180dd67c7f2eb1e478253a054ba77272594/docs/INSTALL.md), using the fork above for the source checkout. Configure `scripts/tizen-env.sh` with your own TV and signing profile. `scripts/build.sh` creates `dist/GlassHome.wgt`; `scripts/install.sh` installs and opens it. Keep the generated local key and signing credentials out of source control. Use your own author certificate and a distributor certificate that covers your TV.
 
 Glass Home uses public-level privileges. **The Vetro permission build requires Partner-level signing**, including `appmanager.certificate`, so it can verify installed app identity. The two apps do not need the same author certificate. See [App permissions](APP-PERMISSIONS.md) for the exact API and prerequisites.
 
@@ -49,6 +49,13 @@ Clients follow all pages, compare the catalog revision across pages, and respect
 Vetro's request rate. Automated tests exercise more than 100 entries; a small TV
 catalog does not require installing extra apps to reproduce that test.
 
+## Samsung app icons
+
+1. Confirm `apps.catalog` advertises `iconSupport: true`. In Glass Home, select YouTube and Prime Video when installed, then choose **Refresh apps**. Confirm their app artwork appears instead of a Cobalt engine icon or a name-only tile. Test Samsung TV Plus and an unpinned app when available.
+2. Move through the dock and open an app while icons are loading. The list and launch controls should remain usable. Reopen Glass Home: cached artwork can appear immediately while it is checked in the background. Configured custom images retain priority.
+3. Confirm fresh `apps.icon` reads in Vetro's permission activity; a cached image alone is not proof of access. Approving only **List TV apps** permits icon reads but no Vetro app launch. No additional permission is requested for images.
+4. Pause or revoke access during icon loading. Further image chunks must be denied, with no owner or legacy fallback. Previously cached images may remain. Reapprove and choose **Refresh apps** to recover. Missing or unreadable icons leave a usable native-image or app-name fallback.
+
 ## Permission controls
 
 | Test | Expected result |
@@ -65,7 +72,7 @@ Pause, revoke and scope changes cancel operations still waiting for dispatch. Th
 
 ## Automated coverage and reporting
 
-Run Vetro's `node app/tests/run.cjs` and the repository CI jobs. These include identity, grant storage, protected-app rules, native port framing, authenticated reply verification, HTTP authorization, screen authentication and lifecycle tests. The browser job exercises the permission controls. Glass Home has focused tests in `dev/test-vetro-permissions.js`, `dev/test-vetro-replies.js` and `dev/test-vetro-reply-integration.js`.
+Run Vetro's `node app/tests/run.cjs` and the repository CI jobs. These include identity, grant storage, protected-app rules, native port framing, authenticated reply verification, HTTP authorization, screen authentication, lifecycle and bounded icon reads. The browser job exercises the permission controls. Glass Home has focused tests in `dev/test-vetro-permissions.js`, `dev/test-vetro-icons.js`, `dev/test-vetro-replies.js` and `dev/test-vetro-reply-integration.js`.
 
 The Glass Home flow does not exercise task stopping, brightness, volume/playback keys or power-off permissions. Review those scope tests separately and test applicable operations on a suitable TV before claiming hardware support. Rooted apps already outside the platform isolation boundary are not sandboxed by this API.
 
