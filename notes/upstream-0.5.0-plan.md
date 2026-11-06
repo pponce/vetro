@@ -64,7 +64,7 @@ Current controls use the custom scoped API and are not drop-in compatible. Task 
 
 The release branch is a test candidate. Earlier Q80A builds have hardware validation; that is not validation of the current head on S95C. New root runtime preflight changes are described as offline-tested and not deployed to a TV in the current changelog.
 
-CI for `cacb6c9d819ff2f382a38944785fd9fe38122fab` passed in [run 42241323401](https://github.com/andrearicci93/vetro/actions/runs/42241323401). At this checkpoint, current-head [run 42260533724](https://github.com/andrearicci93/vetro/actions/runs/42260533724) was in progress. Recheck before selecting any test build.
+CI for `cacb6c9d819ff2f382a38944785fd9fe38122fab` passed in [run 42241323401](https://github.com/andrearicci93/vetro/actions/runs/42241323401). Current-head [run 42260533724](https://github.com/andrearicci93/vetro/actions/runs/42260533724) and [run 42260502427](https://github.com/andrearicci93/vetro/actions/runs/42260502427) both completed successfully during this review. Passing CI does not establish S95C hardware compatibility. Recheck if the selected test revision changes.
 
 Important same-day change: Custom launcher no longer disables Samsung Home, following [commit 3ed9b7c](https://github.com/andrearicci93/vetro/commit/3ed9b7c648a5f51c2a5c987af57810d8033b69fd). It now uses the dock guard. Earlier descriptions of automatic package disabling are superseded. The maintainer found that disabling Samsung Home can prevent the Q80A boot script finishing; the standalone disabling switch should not be used for a reboot test.
 
@@ -85,7 +85,7 @@ The fork's current double-press/tile/assignment behavior is not included in stoc
 
 Objective: preserve the preferred Home interaction while reducing the maintained Vetro fork after upstream 0.5.0.
 
-Current state: working integration is pponce/vetro feat/home-double-press fbbbafd. Upstream release-0.5.0 head fd68ce2 is unreleased; current-head CI was running at the checkpoint and must be rechecked. Input lifecycle cleanup is already upstream as e7ba796. No TV installation, runtime code change or comment posting is part of this checkpoint.
+Current state: working integration is pponce/vetro feat/home-double-press fbbbafd. Upstream release-0.5.0 head fd68ce2 is unreleased; its two current-head CI runs passed. S95C validation of that build is outstanding. Input lifecycle cleanup is already upstream as e7ba796. No TV installation, runtime code change or comment posting is part of this checkpoint.
 
 Decisions: wait for release; adapt Glass/Garage to stock APIs; permissions are optional; preserve independent double press and editable Home tile. Custom launcher now uses a guard and no longer disables Samsung Home. Keep stock-auth compatibility and configuration migration explicit.
 
