@@ -288,6 +288,7 @@ function fixture(options) {
         stateFile: f.dock.stateFile, appsFile: f.dock.appsFile});
     assert.deepEqual((await reopened.status()).homeShortcut, netflix);
     assert.equal((await reopened.status()).doublePressHome,false,'missing preference defaults off');
+    assert.equal((await reopened.status()).doublePressHomeTarget,null,'existing installs follow the Home shortcut');
     const beforeDoubleSave=f.tv.scripts.length;
     await reopened.setDoublePressHome(true);
     assert.equal(reopened.readState().doublePressHome,true);
@@ -301,6 +302,27 @@ function fixture(options) {
     const write=reopenedAgain.writeState;reopenedAgain.writeState=()=>{throw Error('disk full');};
     await assert.rejects(reopenedAgain.setDoublePressHome(false),/disk full/);
     reopenedAgain.writeState=write;assert.equal(reopenedAgain.readState().doublePressHome,true,'failed persistence keeps the saved preference');
+    const target={appId:'GlassHome1.GlassHome',label:'Glass Home'},targetApps=[{appId:target.appId,name:target.label,show:true,disabled:false}];
+    const beforeTargetSave=f.tv.scripts.length;
+    assert.deepEqual((await reopenedAgain.setDoublePressHomeTarget(target.appId,targetApps)).doublePressHomeTarget,target);
+    assert.deepEqual(reopenedAgain.readState().homeShortcut,netflix,'the double-press app never changes the launcher shortcut');
+    assert.equal(reopenedAgain.readState().doublePressHome,true,'saving a destination preserves the on/off preference');
+    assert.ok(!f.tv.scripts.slice(beforeTargetSave).some(c=>Buffer.from(c.split(' ')[1],'base64').toString().includes('setsid')),'destination changes do not restart the launcher');
+    const targetRestart=new Dock({execute:f.dock.execute,dir:f.dock.dir,stateFile:f.dock.stateFile,appsFile:f.dock.appsFile});
+    assert.deepEqual(targetRestart.readState().doublePressHomeTarget,target,'the separate app survives a service restart');
+    await targetRestart.setDoublePressHome(false);await targetRestart.setDoublePressHome(true);
+    assert.deepEqual(targetRestart.readState().doublePressHomeTarget,target,'other preference changes retain the independent app');
+    for(const id of [undefined,'',false,{},'bad;command'])await assert.rejects(targetRestart.setDoublePressHomeTarget(id,targetApps),/Choose an installed app/);
+    for(const apps of [[],[{...targetApps[0],show:false}],[{...targetApps[0],disabled:true}]])await assert.rejects(targetRestart.setDoublePressHomeTarget(target.appId,apps),/visible launch entry/);
+    assert.deepEqual(targetRestart.readState().doublePressHomeTarget,target,'invalid or unavailable selections retain the saved app');
+    targetRestart.writeState=()=>{throw Error('disk full');};
+    await assert.rejects(targetRestart.setDoublePressHomeTarget(null),/disk full/);
+    targetRestart.writeState=write;assert.deepEqual(targetRestart.readState().doublePressHomeTarget,target,'failed writes retain the independent app');
+    await targetRestart.setDoublePressHomeTarget('com.samsung.tv.csfs');
+    assert.equal(targetRestart.readState().doublePressHomeTarget.appId,'com.samsung.tv.csfs','Samsung Home can be chosen independently of the shortcut');
+    await targetRestart.setDoublePressHomeTarget(null);
+    assert.equal(targetRestart.readState().doublePressHomeTarget,null,'following the Home shortcut is restored explicitly');
+    assert.deepEqual(targetRestart.readState().homeShortcut,netflix);
     assert.match(fs.readFileSync(f.dock.appsFile, 'utf8'), /customhome\tNetflix\tsys:org\.tizen\.netflix-app\tcom\.samsung\.tv\.csfs/);
 
     f = fixture();f.dock.mappedHome=true;

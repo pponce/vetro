@@ -665,11 +665,15 @@ function handleDock(req, res) {
     readJsonBody(req, res, function (p) {
         if (!p || typeof p.action !== 'string') return serveJson(res, {error:'Launcher action required'}, 400);
         if (homeRouting.busy) return serveJson(res, {error: 'A remote shortcut change is already in progress'}, 409);
-        if(p.action==='doublePressHome'||p.action==='homeShortcut'){homePress.reset();homePressRevision++;}
+        if(p.action==='doublePressHome'||p.action==='doublePressHomeTarget'||p.action==='homeShortcut'){homePress.reset();homePressRevision++;}
         var t = p.action === 'enable' || p.action === 'disable' ?
             homeRouting.setLauncher(p.action === 'enable', {device: p.device, expectedRevision: p.expectedRevision}).then(function () { return dock.status(); }) :
             p.action === 'refresh' ? dock.refresh() : p.action === 'fixTizenTube' ? dock.setFixTizenTube(p.on) :
             p.action === 'doublePressHome' ? dock.setDoublePressHome(p.on) :
+            p.action === 'doublePressHomeTarget' ? (p.appId===null||p.appId==='com.samsung.tv.csfs'?dock.setDoublePressHomeTarget(p.appId):inventory(true).then(function(d){
+                if(d.registryError)throw Error('TV registry unavailable');
+                return dock.setDoublePressHomeTarget(p.appId,d.apps);
+            })) :
             p.action === 'homeShortcut' ? (p.appId === null ? dock.setHomeShortcut(null) : inventory(true).then(function (d) {
                 if (d.registryError) throw Error('TV registry unavailable');
                 return dock.setHomeShortcut({appId:p.appId,label:p.label},d.apps);
@@ -716,14 +720,14 @@ function homePressContext() {
     if(!inputLifecycleActive||inputPaused||homeRouting&&homeRouting.busy||dock.busy||!state.enabled||!state.doublePressHome||
         !rule||!rule.enabled||rule.actions.length!==1||rule.actions[0].type!=='launcher'||
         !policy||!policy.connected||policy.mode!=='filter'||(policy.blocked||[]).indexOf(HomeRouting.code(remapStore))<0)return null;
-    return JSON.stringify([inputGeneration,physical.generation||0,policy.node||null,homePressRevision,remapStore.revision||0,HomeRouting.code(remapStore),state.homeShortcut||null]);
+    return JSON.stringify([inputGeneration,physical.generation||0,policy.node||null,homePressRevision,remapStore.revision||0,HomeRouting.code(remapStore),state.homeShortcut||null,state.doublePressHomeTarget||null]);
 }
 function openLauncherHome(context, intent) {
     function current(){return context&&homePressIntent===intent&&homePressContext()===context;}
     function guard(){if(!current()){var e=Error('Home shortcut cancelled');e.code='home_gesture_cancelled';throw e;}return true;}
     if(!current())return Promise.resolve({sent:0});
-    var shortcut=dock.readState().homeShortcut;
-    return (shortcut?inventory(true):Promise.resolve({apps:[]})).then(function(data){
+    var state=dock.readState(),shortcut=state.doublePressHomeTarget||state.homeShortcut;
+    return (shortcut&&shortcut.appId!=='com.samsung.tv.csfs'?inventory(true):Promise.resolve({apps:[]})).then(function(data){
         if(!current())return {sent:0};
         if(data.registryError)throw Error('App registry unavailable; Home shortcut was not opened');
         var target=shortcut&&data.apps.some(function(app){return app.appId===shortcut.appId&&app.show===true&&app.disabled===false;})?shortcut.appId:'com.samsung.tv.csfs';

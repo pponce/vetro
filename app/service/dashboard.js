@@ -937,6 +937,7 @@ $('quick').onclick=function(e){var b=e.target.closest?e.target.closest('button')
 // --- Launcher: a glass launcher for the Home key. The service builds its app list from Samsung's Home row. ---
 var dockDetecting=false,dockDetectPolling=false,dockNeedsDetection=false;
 var dockData=null,dockError=null,dockBusy=false,dockConfirm=false,dockReadGeneration=0,dockHomeDraft=null,dockHomeSaving=false,dockHomeError=null;
+var dockDoubleHomeDraft=null,dockDoubleHomeSaving=false,dockDoubleHomeError=null;
 function loadDock(){var generation=++dockReadGeneration;return api('/dock').then(function(d){if(generation===dockReadGeneration){dockData=d;dockError=null}}).catch(function(e){if(generation===dockReadGeneration)dockError=e.message}).finally(function(){if(generation===dockReadGeneration)renderDock()})}
 function isTizenTube(id){return String(id).toLowerCase().indexOf('tizentube')>=0}
 // TizenTube is a sideloaded app. It has a tile when the launcher list has it; it is installed when the TV registry or that list has it.
@@ -980,9 +981,19 @@ function dockHomeControls(d){
  return '<div class="quick-item"><div><h3>Home shortcut</h3><p>Choose the app opened by the launcher’s Home shortcut.</p><label class="field" for="dockHomeApp"><span>App</span><select id="dockHomeApp" data-dock-home-app '+(dockBusy?'disabled':'')+'>'+options+'</select></label><label class="field" for="dockHomeLabel"><span>Button label (1–12 characters)</span><input id="dockHomeLabel" maxlength="12" value="'+esc(saved.label)+'" placeholder="AeroTizen" '+(!saved.appId||dockBusy?'disabled':'')+'></label><p class="section-note">An unavailable app falls back to Samsung Home when the launcher list refreshes. Keep a custom home app’s own Home takeover off when using Vetro’s launcher.</p><p id="dockHomeError" class="quick-callout" role="alert" '+(dockHomeError?'':'hidden')+'>'+esc(dockHomeError||'')+'</p><div class="quick-actions"><button data-dock-home-save '+(dockBusy||!d.installed?'disabled':'')+'>'+(dockHomeSaving?'Saving…':'Save shortcut')+'</button></div></div></div>';
 }
 function dockDoubleHomeControls(d){
- var target=d.homeShortcut?d.homeShortcut.label:'Samsung Home',active=!!d.enabled;
+ var saved=d.doublePressHomeTarget,target=saved?saved.label:d.homeShortcut?d.homeShortcut.label:'Samsung Home',active=!!d.enabled;
+ var choice=dockDoubleHomeDraft||{mode:saved?'app':'shortcut',appId:saved?saved.appId:''},disabled=dockBusy||!d.installed;
+ var fields='<label class="field" for="dockDoubleHomeMode"><span>Open on double press</span><select id="dockDoubleHomeMode" data-dock-double-home-mode '+(disabled?'disabled':'')+'><option value="shortcut"'+(choice.mode==='shortcut'?' selected':'')+'>Use Home shortcut above</option><option value="app"'+(choice.mode==='app'?' selected':'')+'>Choose a different app</option></select></label>';
+ if(choice.mode==='app'){
+  var available=inventory.filter(function(a){return a.show&&!a.disabled&&a.appId!=='com.samsung.tv.csfs'}).sort(function(a,b){return(a.name||a.appId).localeCompare(b.name||b.appId)});
+  var options='<option value=""'+(!choice.appId?' selected':'')+'>Choose an app</option><option value="com.samsung.tv.csfs"'+(choice.appId==='com.samsung.tv.csfs'?' selected':'')+'>Samsung Home</option>';
+  if(choice.appId&&choice.appId!=='com.samsung.tv.csfs'&&!available.some(function(a){return a.appId===choice.appId}))options+='<option value="'+esc(choice.appId)+'" selected>'+esc(saved&&saved.appId===choice.appId?saved.label:choice.appId)+' (unavailable)</option>';
+  options+=available.map(function(a){return '<option value="'+esc(a.appId)+'"'+(a.appId===choice.appId?' selected':'')+'>'+esc(a.name||a.appId)+'</option>'}).join('');
+  fields+='<label class="field" for="dockDoubleHomeApp"><span>App</span><select id="dockDoubleHomeApp" data-dock-double-home-app '+(disabled?'disabled':'')+'>'+options+'</select></label>';
+ }
+ fields+='<p class="section-note">'+(dockDoubleHomeDraft?'Save changes to apply this choice. ':'')+'If the selected app is unavailable, Samsung Home opens.</p><p id="dockDoubleHomeError" class="quick-callout" role="alert" '+(dockDoubleHomeError?'':'hidden')+'>'+esc(dockDoubleHomeError||'')+'</p><div class="quick-actions"><button data-dock-double-home-save '+(disabled||!dockDoubleHomeDraft||choice.mode==='app'&&!choice.appId?'disabled':'')+'>'+(dockDoubleHomeSaving?'Saving…':'Save double-press action')+'</button></div>';
  var state=d.doublePressHome?chip(active?'On':'Saved · inactive',active?'on':'partial'):chip('Off');
- return '<div class="quick-item"><div><h3>Double-press Home</h3><p>Press Home twice quickly to open '+esc(target)+'. The first press shows or hides the launcher immediately.</p><p class="section-note">Uses the saved Home shortcut above. Active only when Home is assigned to Vetro’s launcher.</p><div class="quick-state">'+state+'</div></div>'+switchMarkup('data-dock-double-home',!!d.doublePressHome,dockBusy||!d.installed||!active&&!d.doublePressHome,'Double-press Home')+'</div>';
+ return '<div class="quick-item"><div><h3>Double-press Home</h3><p>Press Home twice quickly to open '+esc(target)+'. The first press shows or hides the launcher immediately.</p><p class="section-note">Active only when the launcher is enabled and Home is assigned to Vetro’s launcher.</p><div class="quick-state">'+state+'</div>'+fields+'</div>'+switchMarkup('data-dock-double-home',!!d.doublePressHome,dockBusy||!d.installed||!active&&!d.doublePressHome,'Double-press Home')+'</div>';
 }
 function renderDock(){
  var box=$('dockBody');if(!box)return;var d=dockData;
@@ -1005,19 +1016,25 @@ function setDock(action,label,extra){
  if(dockBusy)return;
  ++dockReadGeneration;
  if(action==='homeShortcut'){dockHomeDraft={appId:extra.appId||'',label:extra.label||''};dockHomeSaving=true;dockHomeError=null;}
+ if(action==='doublePressHomeTarget'){dockDoubleHomeDraft={mode:extra.appId===null?'shortcut':'app',appId:extra.appId||''};dockDoubleHomeSaving=true;dockDoubleHomeError=null;}
  dockBusy=true;dockConfirm=false;renderDock();
  if((action==='enable'||action==='disable')&&dockData&&dockData.home)extra=Object.assign({expectedRevision:dockData.home.revision},extra||{});
  return runUiOperation('dock',label,'Launcher',null,function(mark){return api('/dock',Object.assign({action:action},extra||{})).then(function(d){
   ++dockReadGeneration;dockData=d;dockError=null;if(d.home)homeAssignment=d.home;if(action==='enable'||action==='disable'){dockNeedsDetection=false;loadRules();pollInput();}
   if(action==='doublePressHome'&&d.doublePressHome!==extra.on)throw Error('The double-press setting could not be confirmed. Refresh the current settings.');
+  if(action==='doublePressHomeTarget'){
+   var selected=d.doublePressHomeTarget;
+   if(!Object.prototype.hasOwnProperty.call(d,'doublePressHomeTarget')||(extra.appId===null?selected!==null:!selected||selected.appId!==extra.appId))throw Error('The TV returned a different double-press action. Read the current settings before trying again.');
+   dockDoubleHomeDraft=null;dockDoubleHomeError=null;
+  }
   if(action==='homeShortcut'){
    var saved=d.homeShortcut,expected=extra.appId?extra:null;
    if(!Object.prototype.hasOwnProperty.call(d,'homeShortcut')||(expected?(!saved||saved.appId!==expected.appId||saved.label!==expected.label):saved!==null))throw Error('The TV returned a different Home shortcut. Read the current settings before trying again.');
    dockHomeDraft=null;dockHomeError=null;
   }
-  var message=action==='doublePressHome'?'Double-press Home '+(d.doublePressHome?'on':'off')+(d.doublePressHome&&!d.enabled?'; active when Home uses Vetro’s launcher.':'.'):action==='homeShortcut'?'Home shortcut saved'+(d.enabled?'; the launcher restarted.':'; it applies when the launcher is on.'):action==='enable'?'Launcher on'+(d.running?' and running':'')+'. Press Home to show or hide it.':action==='disable'?'Launcher off. Samsung’s Home answers the Home key again.':action==='fixTizenTube'?'Fix TizenTube '+(d.fixTizenTube?'on':'off')+(d.enabled?'; the launcher was restarted with the new list.':'; it applies when the launcher is on.'):'App list rebuilt and the launcher restarted.';
+  var message=action==='doublePressHomeTarget'?'Double-press action saved: '+(d.doublePressHomeTarget?d.doublePressHomeTarget.label:'use Home shortcut above')+'.':action==='doublePressHome'?'Double-press Home '+(d.doublePressHome?'on':'off')+(d.doublePressHome&&!d.enabled?'; active when Home uses Vetro’s launcher.':'.'):action==='homeShortcut'?'Home shortcut saved'+(d.enabled?'; the launcher restarted.':'; it applies when the launcher is on.'):action==='enable'?'Launcher on'+(d.running?' and running':'')+'. Press Home to show or hide it.':action==='disable'?'Launcher off. Samsung’s Home answers the Home key again.':action==='fixTizenTube'?'Fix TizenTube '+(d.fixTizenTube?'on':'off')+(d.enabled?'; the launcher was restarted with the new list.':'; it applies when the launcher is on.'):'App list rebuilt and the launcher restarted.';
   mark(message,'Service confirmed');return {state:'success',resultLabel:'Service confirmed',message:message};
- }).catch(function(e){if(action==='homeShortcut')dockHomeError='Save could not be confirmed. '+e.message;if(e.code==='home_detection_required')dockNeedsDetection=true;throw e;})}).then(function(ok){if(!ok)return loadDock()}).finally(function(){dockBusy=false;dockHomeSaving=false;renderDock()});
+ }).catch(function(e){if(action==='homeShortcut')dockHomeError='Save could not be confirmed. '+e.message;if(action==='doublePressHomeTarget')dockDoubleHomeError='Save could not be confirmed. '+e.message;if(e.code==='home_detection_required')dockNeedsDetection=true;throw e;})}).then(function(ok){if(!ok)return loadDock()}).finally(function(){dockBusy=false;dockHomeSaving=false;dockDoubleHomeSaving=false;renderDock()});
 }
 function cancelDockDetection(){dockDetecting=false;return api('/input',{mode:'resume'}).catch(function(e){dockError=e.message}).then(function(){renderDock()})}
 function startDockDetection(){if(dockBusy)return;dockBusy=true;dockNeedsDetection=true;dockError=null;renderDock();return api('/input',{mode:'observe',device:'auto'}).then(function(){if(currentPanel!=='dock')return cancelDockDetection();dockDetecting=true;}).catch(function(e){dockError=e.message;}).finally(function(){dockBusy=false;renderDock()})}
@@ -1026,6 +1043,8 @@ setInterval(function(){if(dockDetecting&&!document.hidden)pollDockDetection()},1
 function rememberDockHome(){dockHomeDraft={appId:$('dockHomeApp').value,label:$('dockHomeLabel').value};dockHomeError=null;var error=$('dockHomeError');if(error)error.hidden=true;}
 $('dock').oninput=function(e){if(e.target.id==='dockHomeLabel')rememberDockHome()};
 $('dock').onchange=function(e){var x=e.target;if(!x.dataset)return;
+ if(x.dataset.dockDoubleHomeMode!=null){var saved=dockData&&dockData.doublePressHomeTarget;dockDoubleHomeDraft={mode:x.value,appId:dockDoubleHomeDraft?dockDoubleHomeDraft.appId:saved?saved.appId:''};dockDoubleHomeError=null;renderDock();var field=$(x.value==='app'?'dockDoubleHomeApp':'dockDoubleHomeMode');if(field)field.focus();return}
+ if(x.dataset.dockDoubleHomeApp!=null){dockDoubleHomeDraft={mode:'app',appId:x.value};dockDoubleHomeError=null;renderDock();var picker=$('dockDoubleHomeApp');if(picker)picker.focus();return}
  if(x.dataset.dockHomeApp!=null){var app=inventory.filter(function(a){return a.appId===x.value})[0],label=$('dockHomeLabel');label.disabled=!x.value;label.value=app?(app.name||app.appId).slice(0,12):'';rememberDockHome();return}
  if(x.id==='dockHomeLabel'){rememberDockHome();return}
  if(x.dataset.dockFix!=null)return setDock('fixTizenTube',x.checked?'Turn on Fix TizenTube':'Turn off Fix TizenTube',{on:!!x.checked});
@@ -1038,6 +1057,7 @@ $('dock').onclick=function(e){var b=e.target.closest?e.target.closest('button'):
  if(ds.dockDetect!=null)return startDockDetection();
  if(ds.dockDetectCancel!=null)return cancelDockDetection();
  if(ds.dockHomeSave!=null){var id=$('dockHomeApp').value,label=$('dockHomeLabel').value.trim();if(id&&(!label||label.length>12)){say('Enter a button label of 1–12 characters');return}return setDock('homeShortcut','Save Home shortcut',{appId:id||null,label:id?label:null})}
+ if(ds.dockDoubleHomeSave!=null){if(!dockDoubleHomeDraft)return;var choice=dockDoubleHomeDraft;if(choice.mode==='app'&&!choice.appId){dockDoubleHomeError='Choose an app for double press.';renderDock();return}return setDock('doublePressHomeTarget','Save double-press action',{appId:choice.mode==='app'?choice.appId:null})}
  if(ds.dockCancel!=null){dockConfirm=false;renderDock();var s=document.querySelector('[data-dock-switch]');if(s)s.focus();return}
  if(ds.dockConfirm!=null)return setDock('enable','Turn on the launcher');
  if(ds.dockRebuild!=null)return setDock('refresh','Rebuild the launcher app list');

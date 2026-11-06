@@ -5,6 +5,7 @@ const nodes = {};
 const el = id => nodes[id] || (nodes[id] = {id, value: '', hidden: true, textContent: '', innerHTML: '', disabled: false, focus() {}});
 const calls = [];
 let homeSaveWait = null, homeSaveError = null, ignoreHomeSave = false, dockReadWait = null, ignoreDoubleSave = false;
+let doubleTargetSaveWait=null,doubleTargetSaveError=null,ignoreDoubleTargetSave=false;
 let dock = {installed: true, enabled: false, running: false, busy: false, error: null, apps: null, log: '', fixTizenTube: false,
     entries: [{slug: 'netflix', label: 'Netflix', appId: 'org.tizen.netflix-app', system: false}, {slug: 'tizentube', label: 'TizenTube', appId: 'xvvl3S1TT1.TizenTubeStandalone', system: false}, {slug: 'settings', label: 'Settings', appId: 'com.samsung.tv.csfs', system: true}]};
 const sandbox = {document: {getElementById: el, querySelectorAll: () => [], querySelector: () => null, addEventListener() {}}, console, setTimeout() { return 1; }, clearTimeout() {}, setInterval() {},
@@ -17,6 +18,11 @@ const sandbox = {document: {getElementById: el, querySelectorAll: () => [], quer
             if (body.action === 'enable') dock = Object.assign({}, dock, {enabled: true, running: true, apps: {count: 11, skipped: [{item: 'd/webapp@gone', reason: 'Not installed'}]}, log: 'elm_run'});
             if (body.action === 'fixTizenTube') dock = Object.assign({}, dock, {fixTizenTube: body.on});
             if (body.action === 'doublePressHome' && !ignoreDoubleSave) dock = Object.assign({}, dock, {doublePressHome: body.on});
+            if(body.action==='doublePressHomeTarget'){
+                if(doubleTargetSaveWait)await doubleTargetSaveWait;
+                if(doubleTargetSaveError)return {ok:false,json:async()=>({error:doubleTargetSaveError})};
+                if(!ignoreDoubleTargetSave)dock=Object.assign({},dock,{doublePressHomeTarget:body.appId?{appId:body.appId,label:body.appId==='com.samsung.tv.csfs'?'Samsung Home':'Glass Home'}:null});
+            }
             if (body.action === 'homeShortcut') {
                 if (homeSaveWait) await homeSaveWait;
                 if (homeSaveError) return {ok: false, json: async () => ({error: homeSaveError})};
@@ -57,6 +63,8 @@ const tick = () => new Promise(r => setImmediate(r));
     assert.doesNotMatch(page, /data-dock-fix[^>]* checked/);
     assert.match(page, /data-dock-double-home[^>]* disabled/,'double press cannot be enabled while the launcher is off');
     assert.doesNotMatch(page, /data-dock-double-home[^>]* checked/,'double press starts off');
+    assert.match(page, /value="shortcut" selected>Use Home shortcut above/,'the existing shortcut remains the default destination');
+    assert.doesNotMatch(page, /id="dockDoubleHomeApp"/,'a separate app picker is shown only in app mode');
 
     // Turning it on needs a confirmation that says what will change, and does nothing before it.
     const sw = {dataset: {dockSwitch: ''}, checked: true};
@@ -220,6 +228,61 @@ const tick = () => new Promise(r => setImmediate(r));
     assert.equal(sandbox.dockHomeDraft, null);
     assert.equal(sandbox.dockHomeError, null);
     assert.match(sandbox.previewTile({slug: 'customhome', label: '<Home>'}, 92, true, false), /&lt;Home&gt;/);
+
+    // Double press can follow the saved shortcut or choose a separate launchable app.
+    sandbox.inventory=[{appId:'GlassHome1.GlassHome',name:'Glass Home',show:true,disabled:false},
+        {appId:'hidden.helper',name:'Hidden',show:false,disabled:false},{appId:'disabled.app',name:'Disabled',show:true,disabled:true},
+        {appId:'escaped.app',name:'<unsafe>',show:true,disabled:false}];
+    const shortcutBefore=JSON.stringify(dock.homeShortcut);
+    const chooseMode=mode=>el('dock').onchange({target:{dataset:{dockDoubleHomeMode:''},value:mode}});
+    const chooseApp=appId=>el('dock').onchange({target:{dataset:{dockDoubleHomeApp:''},value:appId}});
+    const saveTarget=()=>el('dock').onclick({target:{closest:()=>({dataset:{dockDoubleHomeSave:''}})}});
+    chooseMode('app');page=el('dockBody').innerHTML;
+    assert.match(page,/id="dockDoubleHomeApp"/);
+    assert.match(page,/data-dock-double-home-save disabled/,'an app must be selected before saving');
+    assert.doesNotMatch(page,/hidden\.helper|disabled\.app/);
+    assert.match(page,/&lt;unsafe&gt;/,'app names are escaped');
+    const beforeEmptySave=calls.length;await saveTarget();
+    assert.equal(calls.length,beforeEmptySave);assert.match(el('dockBody').innerHTML,/Choose an app for double press/);
+    chooseApp('GlassHome1.GlassHome');
+    await sandbox.loadDock();
+    assert.match(el('dockBody').innerHTML,/value="GlassHome1\.GlassHome" selected/,'refresh keeps an unsaved separate destination');
+    let finishTargetSave;doubleTargetSaveWait=new Promise(resolve=>finishTargetSave=resolve);
+    const savingTarget=saveTarget();await tick();
+    assert.match(el('dockBody').innerHTML,/data-dock-double-home-save disabled>Saving…/);
+    assert.match(el('dockBody').innerHTML,/value="GlassHome1\.GlassHome" selected/,'pending save retains the app choice');
+    finishTargetSave();await savingTarget;doubleTargetSaveWait=null;
+    assert.deepEqual(calls.filter(c=>c.url==='/dock'&&c.body).pop().body,{action:'doublePressHomeTarget',appId:'GlassHome1.GlassHome'});
+    assert.equal(JSON.stringify(dock.homeShortcut),shortcutBefore,'a separate destination does not edit the launcher shortcut');
+    assert.equal(sandbox.dockDoubleHomeDraft,null);assert.equal(sandbox.dockDoubleHomeError,null);
+    assert.match(sandbox.operationEntries[0].message,/Double-press action saved: Glass Home/);
+    await sandbox.loadDock();
+    assert.match(el('dockBody').innerHTML,/value="app" selected>Choose a different app/);
+    assert.match(el('dockBody').innerHTML,/value="GlassHome1\.GlassHome" selected/);
+    dock=Object.assign({},dock,{homeShortcut:{appId:'new.shortcut',label:'New shortcut'}});await sandbox.loadDock();
+    assert.match(el('dockBody').innerHTML,/Press Home twice quickly to open Glass Home/,'the separate destination ignores changes to the launcher shortcut');
+
+    chooseApp('com.samsung.tv.csfs');ignoreDoubleTargetSave=true;
+    await saveTarget();
+    assert.match(el('dockBody').innerHTML,/TV returned a different double-press action/);
+    assert.match(el('dockBody').innerHTML,/value="com.samsung.tv.csfs" selected/,'failed readback keeps the draft');
+    assert.match(el('dockBody').innerHTML,/Press Home twice quickly to open Glass Home/,'the effective destination remains clear while a different draft is pending');
+    ignoreDoubleTargetSave=false;doubleTargetSaveError='TV registry unavailable';await saveTarget();
+    assert.match(el('dockBody').innerHTML,/Save could not be confirmed\. TV registry unavailable/);
+    doubleTargetSaveError=null;await saveTarget();
+    assert.equal(dock.doublePressHomeTarget.appId,'com.samsung.tv.csfs');
+    assert.equal(dock.homeShortcut.appId,'new.shortcut');
+    chooseMode('shortcut');assert.doesNotMatch(el('dockBody').innerHTML,/id="dockDoubleHomeApp"/);
+    await saveTarget();assert.equal(dock.doublePressHomeTarget,null);
+    assert.match(el('dockBody').innerHTML,/Press Home twice quickly to open New shortcut/,'follow mode uses the current saved launcher shortcut');
+
+    // An older read cannot replace a newly saved double-press selection.
+    let finishTargetRead;dockReadWait=new Promise(resolve=>finishTargetRead=resolve);
+    const olderTargetRead=sandbox.loadDock();chooseMode('app');chooseApp('GlassHome1.GlassHome');await saveTarget();
+    finishTargetRead();await olderTargetRead;dockReadWait=null;
+    assert.match(el('dockBody').innerHTML,/value="GlassHome1\.GlassHome" selected/);
+    sandbox.inventory=[];sandbox.renderDock();
+    assert.match(el('dockBody').innerHTML,/Glass Home \(unavailable\)/,'removed apps remain identifiable with the documented fallback');
 
     // A package without the dock cannot be switched on.
     dock = Object.assign({}, dock, {installed: false});

@@ -36,6 +36,12 @@ var RETRY_MAX_MS = 300000;
 function wrap(s) { return 'echo ' + Buffer.from(s).toString('base64') + ' | base64 -d | sh'; }
 function q(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 
+function doubleHomeTarget(value) {
+    if(value == null)return null;
+    if(typeof value.appId!=='string'||!/^[A-Za-z0-9_.-]{1,120}$/.test(value.appId)||typeof value.label!=='string'||!value.label.trim()||value.label.length>120||/[\u0000-\u001f\u007f]/.test(value.label))throw Error('Invalid double-press app');
+    return {appId:value.appId,label:value.label.trim()};
+}
+
 function Dock(options) {
     options = options || {};
     this.execute = options.execute;
@@ -93,9 +99,10 @@ Dock.prototype.readState = function () {
     try {
         var s = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
         var shortcut = null; try { shortcut = catalog.homeShortcut(s && s.homeShortcut); } catch (ignored) {}
-        return {homeShortcut: shortcut, doublePressHome: s && s.doublePressHome === true, enabled: s && s.enabled === true, since: typeof s.since === 'number' ? s.since : null, fixTizenTube: s && s.fixTizenTube === true,
+        var doubleTarget = null; try { doubleTarget = doubleHomeTarget(s && s.doublePressHomeTarget); } catch (ignored) {}
+        return {homeShortcut: shortcut, doublePressHomeTarget: doubleTarget, doublePressHome: s && s.doublePressHome === true, enabled: s && s.enabled === true, since: typeof s.since === 'number' ? s.since : null, fixTizenTube: s && s.fixTizenTube === true,
             autorunWas: s && s.autorunWas === 1 ? 1 : null};
-    } catch (e) { return {homeShortcut: null, doublePressHome: false, enabled: false, since: null, fixTizenTube: false, autorunWas: null}; }
+    } catch (e) { return {homeShortcut: null, doublePressHomeTarget: null, doublePressHome: false, enabled: false, since: null, fixTizenTube: false, autorunWas: null}; }
 };
 
 // Change some fields of the saved state and keep the rest.
@@ -179,7 +186,7 @@ Dock.prototype.status = function (options) {
 
 Dock.prototype.statusNow = function () {
     var self = this, state = this.readState();
-    var base = {homeShortcut: state.homeShortcut, doublePressHome: state.doublePressHome, homeLabelMax: catalog.HOME_LABEL_MAX, installed: this.installed(), enabled: state.enabled, since: state.since, busy: this.busy, lastControl: this.lastControl,
+    var base = {homeShortcut: state.homeShortcut, doublePressHomeTarget: state.doublePressHomeTarget, doublePressHome: state.doublePressHome, homeLabelMax: catalog.HOME_LABEL_MAX, installed: this.installed(), enabled: state.enabled, since: state.since, busy: this.busy, lastControl: this.lastControl,
         error: this.lastError, failures: this.failures, apps: this.lastCatalog, fixTizenTube: state.fixTizenTube, autorunSwitchedOff: state.autorunWas === 1,
         entries: this.entries(), inputs: this.inputEntries()};
     return this.probe().then(function (p) {
@@ -339,6 +346,20 @@ Dock.prototype.setDoublePressHome = function (on) {
     if(this.busy)return Promise.reject(Error('Another launcher change is in progress'));
     if(!this.installed())return Promise.reject(Error('The dock files are not in this Vetro package'));
     try { this.patchState({doublePressHome:on}); } catch(e) { return Promise.reject(e); }
+    return this.status();
+};
+// A null target follows the launcher shortcut; an app target is saved independently.
+Dock.prototype.setDoublePressHomeTarget = function (appId, available) {
+    if(appId!==null&&(typeof appId!=='string'||!/^[A-Za-z0-9_.-]{1,120}$/.test(appId)))return Promise.reject(Error('Choose an installed app or use the Home shortcut'));
+    if(this.busy)return Promise.reject(Error('Another launcher change is in progress'));
+    if(!this.installed())return Promise.reject(Error('The dock files are not in this Vetro package'));
+    var target=null;
+    if(appId!==null){
+        var app=appId===HOME_APP?{appId:HOME_APP,name:'Samsung Home'}:(available||[]).find(function(a){return a.appId===appId&&a.show===true&&a.disabled===false;});
+        if(!app)return Promise.reject(Error('Choose an installed, enabled app with a visible launch entry'));
+        target={appId:appId,label:catalog.cleanLabel(app.name,appId)};
+    }
+    try { this.patchState({doublePressHomeTarget:target}); } catch(e) { return Promise.reject(e); }
     return this.status();
 };
 // Change only the pinned shortcut. Physical Home handling and the root service stay as configured.

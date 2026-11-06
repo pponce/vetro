@@ -22,18 +22,27 @@ saved shortcuts keep their settings.
 
 ## Double-press Home
 
-In **Launcher**, choose the app and label under **Home shortcut**, then turn on
-**Double-press Home**. This option is off by default and is active only when Home
-is assigned to **Toggle Vetro launcher** and the launcher is enabled.
+In **Launcher → Double-press Home**, choose what a quick double press opens:
+
+- **Use Home shortcut above** follows the app selected under **Home shortcut**.
+  This is the default choice.
+- **Choose a different app** reveals an app picker. Select an installed, enabled
+  app or Samsung Home. This choice is independent of the launcher's Home shortcut.
+
+Choose **Save double-press action**, then turn on **Double-press Home**. The feature
+is off by default and is active only when Home is assigned to **Toggle Vetro
+launcher** and the launcher is enabled. Saving a destination does not restart the
+launcher or change the Home-button assignment.
 
 The first press immediately shows or hides the overlay. Press Home again within
-350 milliseconds to close the overlay and open the saved Home shortcut. With
-Glass Home selected, the second press opens Glass Home. With the default shortcut,
-it opens Samsung Home. A double press may briefly show the overlay before the
+350 milliseconds to close the overlay and open the saved destination. For example,
+the launcher can keep its Samsung Home shortcut while a double press opens Glass
+Home. A double press may briefly show the overlay before the
 chosen app opens. Holding Home does not trigger the double-press action.
 
-Changing the Home shortcut changes this destination too. If the chosen app is no
-longer installed or enabled, double press opens Samsung Home. Turning off the
+Changing the Home shortcut changes the double-press destination only when **Use
+Home shortcut above** is selected. If the chosen app is no longer installed or
+enabled, double press opens Samsung Home. Turning off the
 launcher keeps the preference saved but inactive. A different Home assignment
 continues to run immediately on each press, including fast repeated presses.
 
