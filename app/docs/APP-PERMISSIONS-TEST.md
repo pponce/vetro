@@ -65,14 +65,17 @@ catalog does not require installing extra apps to reproduce that test.
 | Pause Glass Home | New Vetro calls are denied while the saved approval remains paused. Resume restores only the saved scopes. |
 | Revoke Glass Home | New Vetro calls are denied; the app needs a new request and owner approval. |
 | Disable app access | New app calls are denied; saved approvals remain available when the feature is enabled again. |
-| Update or reinstall Glass Home | Installation identity changes invalidate approval; request it again. Re-signing may require the platform's normal uninstall/install flow, so this test is optional and can remove client data. |
+| Update Glass Home in place while Vetro is running, keeping its app/package IDs and author certificate | A verified native update retains only the existing scopes. Refresh the app list and correlate successful Vetro calls with recent activity. Additional scopes still require approval. |
+| Update an app whose approval is paused or reduced | The updated identity retains the paused state and reduced scopes. It must not regain access or removed permissions. |
+| Update while Vetro is stopped, or while package notifications are unavailable | A changed installation requires fresh approval. A later observed update must not restore the stale approval. |
+| Uninstall and reinstall, change signer or change app/package IDs | Existing approval does not transfer. Re-signing may require the platform's normal uninstall/install flow; this optional test can remove client data. |
 | Lose a reply during a launch | The client reports an uncertain outcome and does not send a second launch automatically. Inspect the TV before retrying. |
 
-Pause, revoke and scope changes cancel operations still waiting for dispatch. They cannot undo a command already sent to the TV. Saved app tiles and native fallback must not be mistaken for continued Vetro access.
+Pause, revoke, scope changes and package updates cancel operations still waiting for dispatch. They cannot undo a command already sent to the TV. Saved app tiles and native fallback must not be mistaken for continued Vetro access. After a verified update, restart Vetro and confirm that the saved approval matches the updated installation and still permits only the approved scopes.
 
 ## Automated coverage and reporting
 
-Run Vetro's `node app/tests/run.cjs` and the repository CI jobs. These include identity, grant storage, protected-app rules, native port framing, authenticated reply verification, HTTP authorization, screen authentication, lifecycle and bounded icon reads. The browser job exercises the permission controls. Glass Home has focused tests in `dev/test-vetro-permissions.js`, `dev/test-vetro-icons.js`, `dev/test-vetro-replies.js` and `dev/test-vetro-reply-integration.js`.
+Run Vetro's `node app/tests/run.cjs` and the repository CI jobs. These include identity, grant storage, verified update continuity, uninstall and watcher-gap revocation, stale-call cancellation, protected-app rules, native port framing, authenticated reply verification, HTTP authorization, screen authentication, lifecycle and bounded icon reads. The browser job exercises the permission controls. Glass Home has focused tests in `dev/test-vetro-permissions.js`, `dev/test-vetro-icons.js`, `dev/test-vetro-replies.js` and `dev/test-vetro-reply-integration.js`.
 
 The Glass Home flow does not exercise task stopping, brightness, volume/playback keys or power-off permissions. Review those scope tests separately and test applicable operations on a suitable TV before claiming hardware support. Rooted apps already outside the platform isolation boundary are not sandboxed by this API.
 

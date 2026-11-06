@@ -51,9 +51,14 @@ function start(tizen,access,auth,diagnostics,replies) {
     try {
         if (!tizen || !tizen.messageport || !access.options.identity.available()) throw Error('Tizen app identity and MessagePort APIs are required');
         access.options.identity.read('vetrotvapp.app'); // Exercise the certificate privilege, not just API presence.
-        function changed(id){access.options.identity.changed(id);access.packageChanged(id);}
-        tizen.package.setPackageInfoEventListener({oninstalled:function(p){changed(p.id);},onupdated:function(p){changed(p.id);},onuninstalled:changed});
+        function changed(id,kind,info){if(watching)access.packageChanged(id,kind,info);}
+        tizen.package.setPackageInfoEventListener({
+            oninstalled:function(p){changed(p&&p.id,'installed',p);},
+            onupdated:function(p){changed(p&&p.id,'updated',p);},
+            onuninstalled:function(id){changed(id,'uninstalled');}
+        });
         watching=true;
+        access.startPackageWatch();
         local=tizen.messageport.requestLocalMessagePort(APP_PORT);
         listener=local.addMessagePortListener(function(data,remote){
             var p,ticket,rejection='sender-rejected',replyReason;
@@ -129,7 +134,8 @@ function start(tizen,access,auth,diagnostics,replies) {
         handle.ready=false;
         if(replies)replies.clear();
         access.transport={available:false,error:'App communication stopped'};
-        try{if(watching)tizen.package.unsetPackageInfoEventListener();}catch(_){}
+        var wasWatching=watching;watching=false;access.stopPackageWatch();
+        try{if(wasWatching)tizen.package.unsetPackageInfoEventListener();}catch(_){}
         try{if(local && listener!==undefined)local.removeMessagePortListener(listener);}catch(_){}
         try{if(internal && widgetListener!==undefined)internal.removeMessagePortListener(widgetListener);}catch(_){}
         try{if(widgetReply && widgetReplyListener!==undefined)widgetReply.removeMessagePortListener(widgetReplyListener);}catch(_){}

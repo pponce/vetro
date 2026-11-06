@@ -16,7 +16,11 @@ This build requires a Samsung **Partner** certificate because it declares `http:
 
 Requests expire after ten minutes. Pending requests and the last 100 activity records are held in memory. Approvals are saved atomically in Vetro's private package directory. An unreadable or unwritable security store blocks access; it never resets to permissive defaults. Do not put these files in shared storage or diagnostic exports.
 
-Updates, reinstalls and signer changes require new approval. Vetro checks installation metadata on every call and revokes approval when Tizen reports a package installation, update or removal. Pausing or changing an approval also invalidates calls that are waiting to execute. A command already dispatched to the TV may still finish; revocation cannot undo it.
+Verified updates retain the app's existing approved scopes and paused state. Keep Vetro running while updating an approved app: it must observe Tizen's native package-update notification, have verified the previously approved installation while watching package events, and match the updated app ID, package ID and author signing certificate. The notification's version, modification time and app membership must also match fresh native package data. An update does not approve any additional permissions.
+
+Uninstall/install events, signer or app-identity changes, unverifiable update metadata and installation changes discovered after Vetro was stopped require fresh approval. Reusing the same app name or certificate alone is insufficient. Already revoked approvals are never restored by an update. The full installation fingerprint is still checked on every API call, together with live app eligibility.
+
+Each observed package change invalidates pending permission requests and calls that were waiting to execute. A retained approval receives the updated installation fingerprint and a new internal grant generation, saved atomically before use. Pausing or changing an approval also invalidates queued calls. A command already dispatched to the TV may still finish; these checks cannot undo it or safely replay an uncertain result.
 
 ## Available controls
 

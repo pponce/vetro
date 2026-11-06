@@ -60,6 +60,7 @@ function Access(options) {
     this.options = options; this.state = {schema:1,enabled:false,revision:0,grants:[]};
     this.store = new Store(validateState); this.pending = []; this.events = []; this.buckets = Object.create(null);
     this.inFlight = Object.create(null); this.active = 0; this.now = options.now || Date.now;
+    this.packageWatching = false; this.packageContinuity = Object.create(null);
     this.transport = {available:false,error:'App communication is not ready'};
     if (options.file) this.configure(options.file);
 }
@@ -69,13 +70,54 @@ Access.prototype.event = function (appId, method, outcome) {
     this.events = this.events.slice(0,100);
 };
 Access.prototype.commit = function (next) { next.revision = this.state.revision + 1; this.store.save(next); this.state = next; };
-Access.prototype.packageChanged = function (packageId) {
+// Continuity is established only while native package notifications are active.
+// A changed installation found after a restart is never treated as an update.
+Access.prototype.startPackageWatch = function () {
+    var self=this;
+    this.packageWatching=true; this.packageContinuity=Object.create(null);
+    this.state.grants.forEach(function(g){
+        try {
+            if(self.options.identity.read(g.identity.appId).installation===g.identity.installation)
+                self.packageContinuity[g.identity.appId]=g.identity.installation;
+        } catch(_) {}
+    });
+};
+Access.prototype.stopPackageWatch = function () {
+    this.packageWatching=false; this.packageContinuity=Object.create(null);
+};
+Access.prototype.packageChanged = function (packageId, kind, info) {
     if(!validId(packageId))return;
+    this.options.identity.changed(packageId);
     this.pending=this.pending.filter(function(p){return p.identity.packageId!==packageId;});
     if(!this.state.grants.some(function(g){return g.identity.packageId===packageId;}))return;
-    var next=JSON.parse(JSON.stringify(this.state));
-    next.grants=next.grants.filter(function(g){return g.identity.packageId!==packageId;});
-    try{this.commit(next);this.event(null,'package.changed','approval_revoked');}catch(_){/* A write failure blocks all app access. */}
+    var self=this,previous=this.state,next=JSON.parse(JSON.stringify(previous)),retained=[];
+    next.grants=next.grants.filter(function(g){
+        if(g.identity.packageId!==packageId)return true;
+        var old=g.identity,current=null,continuous=self.packageWatching&&self.packageContinuity[old.appId]===old.installation;
+        delete self.packageContinuity[old.appId];
+        // Only the native update callback can retain a grant. Match its package
+        // metadata to fresh native identity, including the verified author signer.
+        if(kind==='updated'&&continuous)try{
+            var candidate=self.options.identity.read(old.appId);
+            if(identityValid(candidate)&&candidate.appId===old.appId&&candidate.packageId===old.packageId&&candidate.signer===old.signer&&
+                info&&info.id===candidate.packageId&&info.version===candidate.version&&
+                info.lastModified&&info.lastModified.getTime()===candidate.installedAt&&
+                Array.isArray(info.appIds)&&info.appIds.indexOf(candidate.appId)>=0)current=candidate;
+        }catch(_){}
+        if(!current||!self.packageWatching)return false;
+        g.identity=current;g.generation=crypto.randomBytes(16).toString('hex');g.updatedAt=self.now();
+        retained.push(g);return true;
+    });
+    // A reentrant state change must win over this package notification.
+    if(this.state!==previous)return;
+    try{
+        this.commit(next);
+        retained.forEach(function(g){self.packageContinuity[g.identity.appId]=g.identity.installation;});
+        previous.grants.filter(function(g){return g.identity.packageId===packageId;}).forEach(function(g){
+            var kept=retained.some(function(current){return current.identity.appId===g.identity.appId;});
+            self.event(g.identity.appId,'package.'+(kind==='updated'?'updated':'changed'),kept?'approval_retained':'approval_revoked');
+        });
+    }catch(_){/* A write failure blocks all app access. */}
 };
 Access.prototype.ready = function () {
     if (this.store.error) throw fault('unavailable',this.store.error);
@@ -112,7 +154,10 @@ Access.prototype.admin = function (p) {
             if (typeof p.enabled !== 'boolean') return Promise.reject(fault('invalid_request','Choose on or off'));
             g.scopes=changed; g.enabled=p.enabled; g.generation=crypto.randomBytes(16).toString('hex'); g.updatedAt=this.now();
         }
-        this.commit(next); if(p.action==='revoke')this.pending=this.pending.filter(function(r){return r.identity.appId!==p.appId;}); this.event(p.appId,'access.'+p.action,'saved');
+        this.commit(next); if(p.action==='revoke'){
+            this.pending=this.pending.filter(function(r){return r.identity.appId!==p.appId;});
+            delete this.packageContinuity[p.appId];
+        } this.event(p.appId,'access.'+p.action,'saved');
         return Promise.resolve(this.snapshot());
     }
     var pending=this.pending.find(function (r) { return r.id===p.requestId && r.expires>self.now(); });
@@ -133,6 +178,7 @@ Access.prototype.admin = function (p) {
         if (next.grants.length>=40) throw fault('limit','Revoke an app before approving another');
         next.grants.push({generation:crypto.randomBytes(16).toString('hex'),identity:identity,scopes:selected,enabled:true,updatedAt:self.now()});
         self.commit(next); self.pending=self.pending.filter(function (r) { return r!==pending; });
+        if(self.packageWatching)self.packageContinuity[identity.appId]=identity.installation;
         self.event(identity.appId,'access.approve','saved'); return self.snapshot();
     });
 };
