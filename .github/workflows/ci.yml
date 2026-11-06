@@ -77,7 +77,7 @@ jobs:
       - name: Compile TV updater
         run: dotnet build tools/tv-updater/VetroUpdate.csproj --configuration Release
   combined_package:
-    if: github.repository == 'pponce/vetro' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/combined/startup-return-launcher' || github.ref == 'refs/heads/combined/permissions-startup-return' || github.ref == 'refs/heads/combined/runtime-wrapper-observation-20261103')
+    if: github.repository == 'pponce/vetro' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/combined/startup-return-launcher' || github.ref == 'refs/heads/combined/permissions-startup-return' || github.ref == 'refs/heads/combined/runtime-wrapper-observation-20261103' || github.ref == 'refs/heads/feat/home-double-press')
     needs: [check, launcher, permissions_ui]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -87,7 +87,7 @@ jobs:
           persist-credentials: false
       - name: Build full unsigned combined package
         env:
-          VETRO_CONNECTION_DIAGNOSTICS: ${{ github.ref == 'refs/heads/combined/runtime-wrapper-observation-20261103' && '1' || '0' }}
+          VETRO_CONNECTION_DIAGNOSTICS: ${{ (github.ref == 'refs/heads/combined/runtime-wrapper-observation-20261103' || github.ref == 'refs/heads/feat/home-double-press') && '1' || '0' }}
         run: |
           node - <<'NODE'
           const fs = require('fs');
@@ -118,4 +118,3 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
-

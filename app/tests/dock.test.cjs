@@ -287,6 +287,20 @@ function fixture(options) {
     const reopened = new Dock({execute: f.dock.execute, dir: f.dock.dir,
         stateFile: f.dock.stateFile, appsFile: f.dock.appsFile});
     assert.deepEqual((await reopened.status()).homeShortcut, netflix);
+    assert.equal((await reopened.status()).doublePressHome,false,'missing preference defaults off');
+    const beforeDoubleSave=f.tv.scripts.length;
+    await reopened.setDoublePressHome(true);
+    assert.equal(reopened.readState().doublePressHome,true);
+    assert.deepEqual(reopened.readState().homeShortcut,netflix);
+    assert.ok(!f.tv.scripts.slice(beforeDoubleSave).some(c=>Buffer.from(c.split(' ')[1],'base64').toString().includes('setsid')),'gesture preference does not restart the launcher');
+    const reopenedAgain=new Dock({execute:f.dock.execute,dir:f.dock.dir,stateFile:f.dock.stateFile,appsFile:f.dock.appsFile});
+    assert.equal(reopenedAgain.readState().doublePressHome,true,'preference survives a service restart');
+    await reopenedAgain.disable();assert.equal(reopenedAgain.readState().doublePressHome,true,'disabling the launcher retains the inactive preference');
+    assert.equal(reopenedAgain.readState().enabled,false);
+    await assert.rejects(reopenedAgain.setDoublePressHome('true'),/Choose on or off/);
+    const write=reopenedAgain.writeState;reopenedAgain.writeState=()=>{throw Error('disk full');};
+    await assert.rejects(reopenedAgain.setDoublePressHome(false),/disk full/);
+    reopenedAgain.writeState=write;assert.equal(reopenedAgain.readState().doublePressHome,true,'failed persistence keeps the saved preference');
     assert.match(fs.readFileSync(f.dock.appsFile, 'utf8'), /customhome\tNetflix\tsys:org\.tizen\.netflix-app\tcom\.samsung\.tv\.csfs/);
 
     f = fixture();f.dock.mappedHome=true;

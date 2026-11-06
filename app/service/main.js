@@ -665,9 +665,11 @@ function handleDock(req, res) {
     readJsonBody(req, res, function (p) {
         if (!p || typeof p.action !== 'string') return serveJson(res, {error:'Launcher action required'}, 400);
         if (homeRouting.busy) return serveJson(res, {error: 'A remote shortcut change is already in progress'}, 409);
+        if(p.action==='doublePressHome'||p.action==='homeShortcut'){homePress.reset();homePressRevision++;}
         var t = p.action === 'enable' || p.action === 'disable' ?
             homeRouting.setLauncher(p.action === 'enable', {device: p.device, expectedRevision: p.expectedRevision}).then(function () { return dock.status(); }) :
             p.action === 'refresh' ? dock.refresh() : p.action === 'fixTizenTube' ? dock.setFixTizenTube(p.on) :
+            p.action === 'doublePressHome' ? dock.setDoublePressHome(p.on) :
             p.action === 'homeShortcut' ? (p.appId === null ? dock.setHomeShortcut(null) : inventory(true).then(function (d) {
                 if (d.registryError) throw Error('TV registry unavailable');
                 return dock.setHomeShortcut({appId:p.appId,label:p.label},d.apps);
@@ -692,6 +694,7 @@ function runActions(actions, authorize) {
         noteReturnActions([a]);
         var command;
         if(a.type==='mqtt'){bridge.publish(a.topic,a.payload);sent++;mqttSent++;return;}
+        if(a.type==='launcherHome')return openLauncherHome(a.context,a.intent).then(function(r){sent+=r.sent||0;});
         if(a.type==='launcher'){
             return Promise.resolve(dock.toggle()).then(function(delivered){
                 if(delivered){sent++;return;}
@@ -707,6 +710,29 @@ function runActions(actions, authorize) {
     });},Promise.resolve()).then(function(){var result={ok:true,sent:sent,skipped:skipped,transport:mqttSent?(mqttSent===sent?'mqtt':'mixed'):'native'};if(launcherFallback)result.launcherFallback=launcherFallback;return result;});
 }
 var actionQueue=Promise.resolve(), pendingActions=0, inputError=null;
+var homePress=new (require('./home-double-press.js').Gesture)(), homePressRevision=0, homePressIntent=0;
+function homePressContext() {
+    var rule=HomeRouting.rule(remapStore), state=dock.readState(), policy=physical&&physical.status().policy;
+    if(!inputLifecycleActive||inputPaused||homeRouting&&homeRouting.busy||dock.busy||!state.enabled||!state.doublePressHome||
+        !rule||!rule.enabled||rule.actions.length!==1||rule.actions[0].type!=='launcher'||
+        !policy||!policy.connected||policy.mode!=='filter'||(policy.blocked||[]).indexOf(HomeRouting.code(remapStore))<0)return null;
+    return JSON.stringify([inputGeneration,physical.generation||0,policy.node||null,homePressRevision,remapStore.revision||0,HomeRouting.code(remapStore),state.homeShortcut||null]);
+}
+function openLauncherHome(context, intent) {
+    function current(){return context&&homePressIntent===intent&&homePressContext()===context;}
+    function guard(){if(!current()){var e=Error('Home shortcut cancelled');e.code='home_gesture_cancelled';throw e;}return true;}
+    if(!current())return Promise.resolve({sent:0});
+    var shortcut=dock.readState().homeShortcut;
+    return (shortcut?inventory(true):Promise.resolve({apps:[]})).then(function(data){
+        if(!current())return {sent:0};
+        if(data.registryError)throw Error('App registry unavailable; Home shortcut was not opened');
+        var target=shortcut&&data.apps.some(function(app){return app.appId===shortcut.appId&&app.show===true&&app.disabled===false;})?shortcut.appId:'com.samsung.tv.csfs';
+        return dock.hide().then(function(){
+            if(!current())return {sent:0};
+            return runActions([{type:'launch',appId:target}],guard);
+        });
+    }).catch(function(e){if(e.code==='home_gesture_cancelled')return {sent:0};throw e;});
+}
 var remoteActivitySequence=0, remoteActivityAt=0;
 function noteRemoteActivity(event) {
     if(event && (event.action!=='down'||event.key==='XF86PowerOff'||event.code===116))return;
@@ -721,9 +747,16 @@ function remoteActivity() {
 var physical=new PhysicalInput(agentExecute,function(event){
     if(!inputLifecycleActive)return;
     noteRemoteActivity(event);
+    var homeContext=null, gesture=null;
+    if(String(event.code)===HomeRouting.code(remapStore)&&event.decision==='blocked'){
+        homeContext=homePressContext();gesture=homePress.feed(event,homeContext);
+    }else if(event.action==='down'){homePress.reset();homePressIntent++;}
     if(event.action!=='down'||event.decision!=='blocked')return;
     if (homeRouting && homeRouting.busy) return;
+    if(homeContext&&gesture===null)return;
+    if(gesture!=='double')homePressIntent++;
     var actions=remap.resolve(remapStore.rules,'physical',String(event.code)), generation=inputGeneration;
+    if(gesture==='double')actions=[{type:'launcherHome',context:homeContext,intent:homePressIntent}];
     if(pendingActions>=8){inputPaused=true;physical.stop();inputError='input action queue exceeded';return;}
     noteReturnActions(actions);
     pendingActions++;
@@ -784,7 +817,7 @@ function restoreInput(){
     inputRestoring=true;
     return startInputPlan().then(function(){if(inputLifecycleActive&&generation===inputGeneration)inputError=null;}).catch(function(e){if(inputLifecycleActive&&generation===inputGeneration)inputError=e.message;}).finally(function(){if(generation===inputGeneration)inputRestoring=false;});
 }
-function stopInput(){++inputGeneration;inputRestoring=false;inputObservers.forEach(function(b){b.stop();});inputObservers=[];physical.stop();}
+function stopInput(){++inputGeneration;if(homePress)homePress.reset();inputRestoring=false;inputObservers.forEach(function(b){b.stop();});inputObservers=[];physical.stop();}
 
 function inputSnapshot(){
     if(!inputObservers.length)return Object.assign({},physical.status(),{preference:inputPreference()});

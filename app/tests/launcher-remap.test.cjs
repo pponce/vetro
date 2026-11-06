@@ -18,7 +18,7 @@ const service = load(path.resolve(__dirname, ".."), {dependencies: {
     "./platform.js": {start() {}, status: () => ({agent: {connected: false}}),
         execute: (command, timeout) => {
             commands.push(command);
-            if (command.includes("--control toggle")) {
+            if (command.includes("--control toggle") || command.includes("--control hide")) {
                 assert.equal(timeout, 5000);
                 return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
             }
@@ -83,6 +83,12 @@ async function press() { service.context.physical.onEvent(event("down")); await 
     assert.deepEqual(commands, [control]);
     assert.equal(service.context.inputError, null);
     console.log("PASS launcher root control: one command per press, typed results, visible fallback, no replay after timeout/disconnect");
+    commands.length=0;assert.equal(await dock.hide(),true);
+    assert.deepEqual(commands,[control.replace('--control toggle','--control hide')],'hide uses the existing headless pipe command');
+    await assert.rejects(dock.control('launch'),/Invalid launcher control/);
+    response={exit_code:0,timed_out:true,stdout:frame('sent','ok')};
+    commands.length=0;await assert.rejects(dock.hide(),/not replayed/);
+    assert.equal(commands.length,1,'an ambiguous hide is never replayed');
 })().catch(error => {console.error(error); process.exitCode = 1;}).finally(() => {
     fs.rmSync(directory, {recursive: true, force: true});
 });

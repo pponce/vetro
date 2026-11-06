@@ -58,8 +58,11 @@ function Dock(options) {
 // The app service cannot assume access to the root launcher's private files.
 // Run the headless, nonblocking pipe client through the existing root adapter.
 // Only an explicit not-sent result permits falling back to the native Home key.
-Dock.prototype.toggle = function () {
+Dock.prototype.toggle = function () { return this.control('toggle'); };
+Dock.prototype.hide = function () { return this.control('hide'); };
+Dock.prototype.control = function (word) {
     var self = this;
+    if(word!=='toggle'&&word!=='hide')return Promise.reject(Error('Invalid launcher control'));
     function record(state, reason) {
         self.lastControl = {at: self.now(), state: state, reason: reason};
         return state === 'sent';
@@ -67,12 +70,12 @@ Dock.prototype.toggle = function () {
     if (this.busy) return Promise.resolve(record('not-sent', 'launcher restarting'));
     if (!this.readState().enabled) return Promise.resolve(record('not-sent', 'launcher disabled'));
     if (!this.installed()) return Promise.resolve(record('not-sent', 'launcher files unavailable'));
-    var command = '/usr/bin/dotnet ' + q(path.join(this.dir, DLL)) + ' --control toggle --dir ' + q(RUN_DIR);
+    var command = '/usr/bin/dotnet ' + q(path.join(this.dir, DLL)) + ' --control ' + word + ' --dir ' + q(RUN_DIR);
     return Promise.resolve().then(function () { return self.execute(command, 5000); }).then(function (r) {
         var frames = String(r && r.stdout || '').split(/\r?\n/).filter(function (line) { return line.indexOf('VETRO_LAUNCHER_CONTROL_V1\t') === 0; });
         var match = frames.length === 1 && /^VETRO_LAUNCHER_CONTROL_V1\t(sent|not-sent|unknown)\t([a-z-]+)\t(\d+)$/.exec(frames[0]);
         if (!r || r.timed_out || !match) throw Error('Launcher command outcome unknown; Home was not replayed');
-        if (match[1] === 'sent' && match[2] === 'ok' && match[3] === '0' && r.exit_code === 0) return record('sent', 'toggle delivered');
+        if (match[1] === 'sent' && match[2] === 'ok' && match[3] === '0' && r.exit_code === 0) return record('sent', word + ' delivered');
         if (match[1] === 'not-sent' && r.exit_code === 3) return record('not-sent', match[2] + (match[3] === '0' ? '' : ' (errno ' + match[3] + ')'));
         throw Error('Launcher command outcome unknown; Home was not replayed');
     }).catch(function (error) {
@@ -90,9 +93,9 @@ Dock.prototype.readState = function () {
     try {
         var s = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
         var shortcut = null; try { shortcut = catalog.homeShortcut(s && s.homeShortcut); } catch (ignored) {}
-        return {homeShortcut: shortcut, enabled: s && s.enabled === true, since: typeof s.since === 'number' ? s.since : null, fixTizenTube: s && s.fixTizenTube === true,
+        return {homeShortcut: shortcut, doublePressHome: s && s.doublePressHome === true, enabled: s && s.enabled === true, since: typeof s.since === 'number' ? s.since : null, fixTizenTube: s && s.fixTizenTube === true,
             autorunWas: s && s.autorunWas === 1 ? 1 : null};
-    } catch (e) { return {homeShortcut: null, enabled: false, since: null, fixTizenTube: false, autorunWas: null}; }
+    } catch (e) { return {homeShortcut: null, doublePressHome: false, enabled: false, since: null, fixTizenTube: false, autorunWas: null}; }
 };
 
 // Change some fields of the saved state and keep the rest.
@@ -176,7 +179,7 @@ Dock.prototype.status = function (options) {
 
 Dock.prototype.statusNow = function () {
     var self = this, state = this.readState();
-    var base = {homeShortcut: state.homeShortcut, homeLabelMax: catalog.HOME_LABEL_MAX, installed: this.installed(), enabled: state.enabled, since: state.since, busy: this.busy, lastControl: this.lastControl,
+    var base = {homeShortcut: state.homeShortcut, doublePressHome: state.doublePressHome, homeLabelMax: catalog.HOME_LABEL_MAX, installed: this.installed(), enabled: state.enabled, since: state.since, busy: this.busy, lastControl: this.lastControl,
         error: this.lastError, failures: this.failures, apps: this.lastCatalog, fixTizenTube: state.fixTizenTube, autorunSwitchedOff: state.autorunWas === 1,
         entries: this.entries(), inputs: this.inputEntries()};
     return this.probe().then(function (p) {
@@ -330,6 +333,14 @@ Dock.prototype.inputEntries = function () {
     try { return parseTsv(fs.readFileSync(path.join(this.dir, 'res', 'inputs.tsv'), 'utf8')); } catch (e) { return []; }
 };
 
+// Save the optional gesture without restarting the launcher or changing Home's assignment.
+Dock.prototype.setDoublePressHome = function (on) {
+    if(typeof on!=='boolean')return Promise.reject(Error('Choose on or off for double-press Home'));
+    if(this.busy)return Promise.reject(Error('Another launcher change is in progress'));
+    if(!this.installed())return Promise.reject(Error('The dock files are not in this Vetro package'));
+    try { this.patchState({doublePressHome:on}); } catch(e) { return Promise.reject(e); }
+    return this.status();
+};
 // Change only the pinned shortcut. Physical Home handling and the root service stay as configured.
 Dock.prototype.setHomeShortcut = function (value, available) {
     var self = this, shortcut;

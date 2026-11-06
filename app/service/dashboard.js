@@ -977,7 +977,12 @@ function dockHomeControls(d){
  var options='<option value="">Samsung Home (default)</option>';
  if(saved.appId&&!available.some(function(a){return a.appId===saved.appId}))options+='<option value="'+esc(saved.appId)+'" selected>'+esc(saved.label)+' (unavailable)</option>';
  options+=available.map(function(a){return '<option value="'+esc(a.appId)+'"'+(a.appId===saved.appId?' selected':'')+'>'+esc(a.name||a.appId)+'</option>'}).join('');
- return '<div class="quick-item"><div><h3>Home shortcut</h3><p>Choose what the Samsung Home button opens. This changes the button only; the remote’s Home key still opens Vetro.</p><label class="field" for="dockHomeApp"><span>App</span><select id="dockHomeApp" data-dock-home-app '+(dockBusy?'disabled':'')+'>'+options+'</select></label><label class="field" for="dockHomeLabel"><span>Button label (1–12 characters)</span><input id="dockHomeLabel" maxlength="12" value="'+esc(saved.label)+'" placeholder="AeroTizen" '+(!saved.appId||dockBusy?'disabled':'')+'></label><p class="section-note">An unavailable app falls back to Samsung Home when the launcher list refreshes. Keep a custom home app’s own Home takeover off when using Vetro’s launcher.</p><p id="dockHomeError" class="quick-callout" role="alert" '+(dockHomeError?'':'hidden')+'>'+esc(dockHomeError||'')+'</p><div class="quick-actions"><button data-dock-home-save '+(dockBusy||!d.installed?'disabled':'')+'>'+(dockHomeSaving?'Saving…':'Save shortcut')+'</button></div></div></div>';
+ return '<div class="quick-item"><div><h3>Home shortcut</h3><p>Choose the app opened by the launcher’s Home shortcut.</p><label class="field" for="dockHomeApp"><span>App</span><select id="dockHomeApp" data-dock-home-app '+(dockBusy?'disabled':'')+'>'+options+'</select></label><label class="field" for="dockHomeLabel"><span>Button label (1–12 characters)</span><input id="dockHomeLabel" maxlength="12" value="'+esc(saved.label)+'" placeholder="AeroTizen" '+(!saved.appId||dockBusy?'disabled':'')+'></label><p class="section-note">An unavailable app falls back to Samsung Home when the launcher list refreshes. Keep a custom home app’s own Home takeover off when using Vetro’s launcher.</p><p id="dockHomeError" class="quick-callout" role="alert" '+(dockHomeError?'':'hidden')+'>'+esc(dockHomeError||'')+'</p><div class="quick-actions"><button data-dock-home-save '+(dockBusy||!d.installed?'disabled':'')+'>'+(dockHomeSaving?'Saving…':'Save shortcut')+'</button></div></div></div>';
+}
+function dockDoubleHomeControls(d){
+ var target=d.homeShortcut?d.homeShortcut.label:'Samsung Home',active=!!d.enabled;
+ var state=d.doublePressHome?chip(active?'On':'Saved · inactive',active?'on':'partial'):chip('Off');
+ return '<div class="quick-item"><div><h3>Double-press Home</h3><p>Press Home twice quickly to open '+esc(target)+'. The first press shows or hides the launcher immediately.</p><p class="section-note">Uses the saved Home shortcut above. Active only when Home is assigned to Vetro’s launcher.</p><div class="quick-state">'+state+'</div></div>'+switchMarkup('data-dock-double-home',!!d.doublePressHome,dockBusy||!d.installed||!active&&!d.doublePressHome,'Double-press Home')+'</div>';
 }
 function renderDock(){
  var box=$('dockBody');if(!box)return;var d=dockData;
@@ -993,7 +998,7 @@ function renderDock(){
  var main='<div class="quick-item" data-quick-item="launcher"><div><h3>Vetro launcher</h3><p>Use Home to show or hide Vetro over the current screen. Edit Home in Remapper to choose another app.</p><div class="quick-state">'+state+'</div>'+setup+apps+problem+actions+log+'</div>'+control+confirm+'</div>';
  var noTube=inventory.length>0&&!tizenTubeInstalled(d),fixState=d.fixTizenTube?chip('On','on'):chip('Off');
  var fix='<div class="quick-item" data-quick-item="fix-tizentube"><div><h3>Fix TizenTube</h3><p>Shows the YouTube icon on the TizenTube tile and closes Samsung’s YouTube (com.samsung.tv.cobalt-yt) before starting it. Launcher tile only.</p><div class="quick-state">'+fixState+(noTube?chip('TizenTube is not installed on this TV','partial'):d.enabled&&!dockHasTizenTube(d)?chip('TizenTube is not in Samsung’s Home row','partial'):'')+'</div></div>'+switchMarkup('data-dock-fix',!!d.fixTizenTube,dockBusy||!d.installed||noTube&&!d.fixTizenTube,'Fix TizenTube')+'</div>';
- box.innerHTML='<div class="dock-layout">'+previewMarkup(d)+'<div class="quick-group">'+main+dockHomeControls(d)+fix+'</div></div>';
+ box.innerHTML='<div class="dock-layout">'+previewMarkup(d)+'<div class="quick-group">'+main+dockHomeControls(d)+dockDoubleHomeControls(d)+fix+'</div></div>';
  setTimeout(fitPreview,0);
 }
 function setDock(action,label,extra){
@@ -1004,12 +1009,13 @@ function setDock(action,label,extra){
  if((action==='enable'||action==='disable')&&dockData&&dockData.home)extra=Object.assign({expectedRevision:dockData.home.revision},extra||{});
  return runUiOperation('dock',label,'Launcher',null,function(mark){return api('/dock',Object.assign({action:action},extra||{})).then(function(d){
   ++dockReadGeneration;dockData=d;dockError=null;if(d.home)homeAssignment=d.home;if(action==='enable'||action==='disable'){dockNeedsDetection=false;loadRules();pollInput();}
+  if(action==='doublePressHome'&&d.doublePressHome!==extra.on)throw Error('The double-press setting could not be confirmed. Refresh the current settings.');
   if(action==='homeShortcut'){
    var saved=d.homeShortcut,expected=extra.appId?extra:null;
    if(!Object.prototype.hasOwnProperty.call(d,'homeShortcut')||(expected?(!saved||saved.appId!==expected.appId||saved.label!==expected.label):saved!==null))throw Error('The TV returned a different Home shortcut. Read the current settings before trying again.');
    dockHomeDraft=null;dockHomeError=null;
   }
-  var message=action==='homeShortcut'?'Home shortcut saved'+(d.enabled?'; the launcher restarted.':'; it applies when the launcher is on.'):action==='enable'?'Launcher on'+(d.running?' and running':'')+'. Press Home to show or hide it.':action==='disable'?'Launcher off. Samsung’s Home answers the Home key again.':action==='fixTizenTube'?'Fix TizenTube '+(d.fixTizenTube?'on':'off')+(d.enabled?'; the launcher was restarted with the new list.':'; it applies when the launcher is on.'):'App list rebuilt and the launcher restarted.';
+  var message=action==='doublePressHome'?'Double-press Home '+(d.doublePressHome?'on':'off')+(d.doublePressHome&&!d.enabled?'; active when Home uses Vetro’s launcher.':'.'):action==='homeShortcut'?'Home shortcut saved'+(d.enabled?'; the launcher restarted.':'; it applies when the launcher is on.'):action==='enable'?'Launcher on'+(d.running?' and running':'')+'. Press Home to show or hide it.':action==='disable'?'Launcher off. Samsung’s Home answers the Home key again.':action==='fixTizenTube'?'Fix TizenTube '+(d.fixTizenTube?'on':'off')+(d.enabled?'; the launcher was restarted with the new list.':'; it applies when the launcher is on.'):'App list rebuilt and the launcher restarted.';
   mark(message,'Service confirmed');return {state:'success',resultLabel:'Service confirmed',message:message};
  }).catch(function(e){if(action==='homeShortcut')dockHomeError='Save could not be confirmed. '+e.message;if(e.code==='home_detection_required')dockNeedsDetection=true;throw e;})}).then(function(ok){if(!ok)return loadDock()}).finally(function(){dockBusy=false;dockHomeSaving=false;renderDock()});
 }
@@ -1023,6 +1029,7 @@ $('dock').onchange=function(e){var x=e.target;if(!x.dataset)return;
  if(x.dataset.dockHomeApp!=null){var app=inventory.filter(function(a){return a.appId===x.value})[0],label=$('dockHomeLabel');label.disabled=!x.value;label.value=app?(app.name||app.appId).slice(0,12):'';rememberDockHome();return}
  if(x.id==='dockHomeLabel'){rememberDockHome();return}
  if(x.dataset.dockFix!=null)return setDock('fixTizenTube',x.checked?'Turn on Fix TizenTube':'Turn off Fix TizenTube',{on:!!x.checked});
+ if(x.dataset.dockDoubleHome!=null)return setDock('doublePressHome',x.checked?'Turn on double-press Home':'Turn off double-press Home',{on:!!x.checked});
  if(x.dataset.dockSwitch==null)return;
  if(x.checked){x.checked=false;dockConfirm=true;renderDock();var c=document.querySelector('[data-dock-confirm]');if(c)c.focus();return}
  return setDock('disable','Turn off the launcher');

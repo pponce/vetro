@@ -4,7 +4,7 @@ const html = require('../service/dashboard.js')();
 const nodes = {};
 const el = id => nodes[id] || (nodes[id] = {id, value: '', hidden: true, textContent: '', innerHTML: '', disabled: false, focus() {}});
 const calls = [];
-let homeSaveWait = null, homeSaveError = null, ignoreHomeSave = false, dockReadWait = null;
+let homeSaveWait = null, homeSaveError = null, ignoreHomeSave = false, dockReadWait = null, ignoreDoubleSave = false;
 let dock = {installed: true, enabled: false, running: false, busy: false, error: null, apps: null, log: '', fixTizenTube: false,
     entries: [{slug: 'netflix', label: 'Netflix', appId: 'org.tizen.netflix-app', system: false}, {slug: 'tizentube', label: 'TizenTube', appId: 'xvvl3S1TT1.TizenTubeStandalone', system: false}, {slug: 'settings', label: 'Settings', appId: 'com.samsung.tv.csfs', system: true}]};
 const sandbox = {document: {getElementById: el, querySelectorAll: () => [], querySelector: () => null, addEventListener() {}}, console, setTimeout() { return 1; }, clearTimeout() {}, setInterval() {},
@@ -16,6 +16,7 @@ const sandbox = {document: {getElementById: el, querySelectorAll: () => [], quer
         else if (url === '/dock') {
             if (body.action === 'enable') dock = Object.assign({}, dock, {enabled: true, running: true, apps: {count: 11, skipped: [{item: 'd/webapp@gone', reason: 'Not installed'}]}, log: 'elm_run'});
             if (body.action === 'fixTizenTube') dock = Object.assign({}, dock, {fixTizenTube: body.on});
+            if (body.action === 'doublePressHome' && !ignoreDoubleSave) dock = Object.assign({}, dock, {doublePressHome: body.on});
             if (body.action === 'homeShortcut') {
                 if (homeSaveWait) await homeSaveWait;
                 if (homeSaveError) return {ok: false, json: async () => ({error: homeSaveError})};
@@ -54,6 +55,8 @@ const tick = () => new Promise(r => setImmediate(r));
     assert.match(page, /com\.samsung\.tv\.cobalt-yt/, 'says which process it closes');
     assert.match(page, /data-dock-fix[^>]*aria-label="Fix TizenTube"/);
     assert.doesNotMatch(page, /data-dock-fix[^>]* checked/);
+    assert.match(page, /data-dock-double-home[^>]* disabled/,'double press cannot be enabled while the launcher is off');
+    assert.doesNotMatch(page, /data-dock-double-home[^>]* checked/,'double press starts off');
 
     // Turning it on needs a confirmation that says what will change, and does nothing before it.
     const sw = {dataset: {dockSwitch: ''}, checked: true};
@@ -95,11 +98,28 @@ const tick = () => new Promise(r => setImmediate(r));
     assert.match(page, /<div class="lp-hint">Source/, 'the hint over the bar');
     assert.match(sandbox.operationEntries[0].message, /Launcher on and running\. Press Home to show or hide it\./, 'recorded in Actions');
 
+    const doubleHome = {dataset: {dockDoubleHome: ''}, checked: true};
+    await el('dock').onchange({target: doubleHome}); await tick(); await tick();
+    assert.deepEqual(calls.filter(c=>c.url==='/dock'&&c.body).pop().body,{action:'doublePressHome',on:true});
+    assert.match(el('dockBody').innerHTML,/data-dock-double-home[^>]* checked/);
+    assert.match(el('dockBody').innerHTML,/The first press shows or hides the launcher immediately/);
+    assert.match(sandbox.operationEntries[0].message,/Double-press Home on/);
+    await sandbox.loadDock();
+    assert.match(el('dockBody').innerHTML,/data-dock-double-home[^>]* checked/,'confirmed preference survives a refresh');
+    doubleHome.checked=false;ignoreDoubleSave=true;
+    await el('dock').onchange({target:doubleHome});await tick();await tick();
+    assert.match(el('dockBody').innerHTML,/data-dock-double-home[^>]* checked/,'a failed readback does not pretend to disable the feature');
+    assert.match(sandbox.operationEntries[0].message,/could not be confirmed/);
+    ignoreDoubleSave=false;
+
     // Turning it off needs no warning.
     const off = {dataset: {dockSwitch: ''}, checked: false};
     await el('dock').onchange({target: off}); await tick(); await tick(); await tick();
     assert.deepEqual(calls.filter(c => c.url === '/dock' && c.body).pop().body, {action: 'disable'});
     assert.match(el('dockBody').innerHTML, /state-chip[^>]*>Off</);
+    assert.match(el('dockBody').innerHTML,/Saved · inactive/,'saved double press is inactive with the launcher off');
+    doubleHome.checked=false;await el('dock').onchange({target:doubleHome});await tick();await tick();
+    assert.doesNotMatch(el('dockBody').innerHTML,/data-dock-double-home[^>]* checked/,'an inactive preference can be turned off');
 
     // Fix TizenTube is its own switch: no warning, one request, and it stays after a reload.
     const fix = {dataset: {dockFix: ''}, checked: true};

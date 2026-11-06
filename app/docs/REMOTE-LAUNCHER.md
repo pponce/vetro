@@ -20,6 +20,28 @@ The launcher handles navigation while visible. Samsung Home can remain behind it
 Turning off Vetro on the Launcher page restores Home's native behavior. Other
 saved shortcuts keep their settings.
 
+## Double-press Home
+
+In **Launcher**, choose the app and label under **Home shortcut**, then turn on
+**Double-press Home**. This option is off by default and is active only when Home
+is assigned to **Toggle Vetro launcher** and the launcher is enabled.
+
+The first press immediately shows or hides the overlay. Press Home again within
+350 milliseconds to close the overlay and open the saved Home shortcut. With
+Glass Home selected, the second press opens Glass Home. With the default shortcut,
+it opens Samsung Home. A double press may briefly show the overlay before the
+chosen app opens. Holding Home does not trigger the double-press action.
+
+Changing the Home shortcut changes this destination too. If the chosen app is no
+longer installed or enabled, double press opens Samsung Home. Turning off the
+launcher keeps the preference saved but inactive. A different Home assignment
+continues to run immediately on each press, including fast repeated presses.
+
+Detection/listening, input reconnects, other navigation and Home-setting changes
+cancel an unfinished gesture. Queued app launches recheck the current assignment
+before dispatch. The feature uses the existing selected physical remote; it adds
+no app permissions and does not require changes to the destination app.
+
 ## Choose another app
 
 1. Open **Remapper → Home button → Edit**.
