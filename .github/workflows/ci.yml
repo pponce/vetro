@@ -35,12 +35,14 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/vetro-browser" --no-audit --no-fund playwright@1.56.1
           "$RUNNER_TEMP/vetro-browser/node_modules/.bin/playwright" install --with-deps chromium
-      - name: Permission and launcher settings interaction and responsive layout
+      - name: Permission settings interaction and responsive layout
         env:
           VETRO_PREVIEW_DIR: ${{ runner.temp }}/vetro-permissions-preview
-        run: |
-          NODE_PATH="$RUNNER_TEMP/vetro-browser/node_modules" node app/tests/app-access-browser.cjs
-          NODE_PATH="$RUNNER_TEMP/vetro-browser/node_modules" node app/tests/dock-double-home-browser.cjs
+        run: NODE_PATH="$RUNNER_TEMP/vetro-browser/node_modules" node app/tests/app-access-browser.cjs
+      - name: Launcher double-press picker and responsive layout
+        env:
+          VETRO_PREVIEW_DIR: ${{ runner.temp }}/vetro-permissions-preview
+        run: NODE_PATH="$RUNNER_TEMP/vetro-browser/node_modules" node app/tests/dock-double-home-browser.cjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: vetro-permissions-preview
