@@ -95,7 +95,7 @@ jobs:
           const integration = require('./rooting/build.cjs');
           const files = integration.collectIntegration();
           const names = files.map(f => decodeURIComponent(f.uri));
-          for (const name of ['service/startup-app.js', 'service/return-app.js', 'service/return-navigation.js', 'service/home-routing.js', 'service/root-agent.js', 'native/dock/tvlauncher-dotnet.dll']) {
+          for (const name of ['service/startup-app.js', 'service/return-app.js', 'service/return-navigation.js', 'service/home-routing.js', 'service/home-double-press.js', 'service/root-agent.js', 'native/dock/tvlauncher-dotnet.dll']) {
             if (!names.includes(name)) throw Error('Missing combined package file: ' + name);
           }
           const launcher = files.find(f => decodeURIComponent(f.uri) === 'native/dock/tvlauncher-dotnet.dll');
