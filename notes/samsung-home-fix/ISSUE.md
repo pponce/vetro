@@ -3,6 +3,7 @@
 On my Samsung S95C running Tizen 9, the default Samsung Home tile closed Vetro's overlay but left the current app visible. The fix below is now confirmed working on this TV.
 
 Reproduction before the fix:
+
 1. Enable the Vetro launcher and leave its Home tile set to Samsung Home.
 2. Open an app, press Home, then select Samsung Home in the overlay.
 3. The overlay closes, but Samsung Home does not appear. Waiting four seconds before selecting the tile gives the same result.
@@ -20,8 +21,9 @@ Expected: the default Samsung Home tile opens Samsung Home without a special set
 
 **Fix confirmed on S95C:** enhanced build `a57bf4cf` keeps CoBA first, then explicitly opens First Screen for this Home pair. After installation, selecting Samsung Home from Vetro's launcher works. Installed files, the running revision and the native launcher refresh were independently verified.
 
-Proposed PR: [Samsung Home fix PR](https://github.com/andrearicci93/vetro/pulls?q=is%3Apr%20author%3Apponce%20head%3Afix%2Fsamsung-home-csfs-handoff) ([source comparison](https://github.com/andrearicci93/vetro/compare/main...pponce:vetro:fix/samsung-home-csfs-handoff)). The standalone branch contains only the launch-helper fix and regression tests; CI passes.
+Proposed fix: [PR #169 — Fix Samsung Home tile when CoBA launch succeeds without opening Home](https://github.com/andrearicci93/vetro/pull/169). The PR contains only the launch-helper fix and regression tests; the standalone branch passes CI.
 
 Testing scope: before/after hardware testing used enhanced builds `eb222734` and `a57bf4cf`. The affected selection and fallback code was verified against official v0.5.0 (`81e16b16`), where it is unchanged. I have not repeated the test on a fresh stock installation or other TV generations.
 
 Related contribution plan: #138.
+

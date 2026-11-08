@@ -28,11 +28,11 @@ Installation report `report-20261108T211324503481Z.json` confirms completion on 
 
 On 2026-11-08 the owner confirmed that the Samsung Home tile in the launcher now works and requested the prefilled PR and issue for submission. This establishes visible success on the S95C with the enhanced fixed build. It does not establish repeated/cold-boot tests, success from two specific source apps, fresh stock-build installation, or other TV generations. Both drafts and prefilled URLs now include the confirmed result with those testing boundaries.
 
-Prefilled PR and issue text and URLs are in this folder. Submit the PR first. Until a PR number exists, the issue's PR link searches the exact author and unique branch; it will find the submitted PR. No PR or issue has been posted by the assistant.
+The owner submitted [PR #169](https://github.com/andrearicci93/vetro/pull/169), verified open at the intended head `cba08242c1a552b21f3b6e41881a95c7697cf48b`. The issue draft and prefilled link now point directly to that PR. Issue submission remains with the owner. No PR or issue has been posted by the assistant.
 
 ## Exact next steps
 
-1. Submit the prepared standalone PR and issue; the owner requested prefilled links, so publication remains with them. Once a PR number is available, the issue's branch-specific PR lookup can be replaced with its direct URL.
+1. Submit the prepared issue linking to existing PR #169; the owner requested a prefilled link, so publication remains with them.
 2. Request the maintainer's comparison on other Home generations. Keep the separate PR #117 in-flight-close scope distinct from this launch fix.
 3. Continue the remaining enhanced Home, Glass Home and Garage Home acceptance checks from the overall plan. Do not repeat the verified installation.
 
