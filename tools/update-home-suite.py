@@ -425,6 +425,17 @@ class Updater:
         self.script('/usr/bin/app_launcher -k ' + spec['app'] + ' >/dev/null 2>&1\n'
                     '/usr/bin/app_launcher -k ' + spec['service'] + ' >/dev/null 2>&1\n'
                     '/usr/bin/app_launcher -s ' + spec['app'])
+        if spec['key'] == 'garage':
+            # Garage starts its controls service on demand, not when its home
+            # screen opens. Start that installed service before probing it.
+            print('Starting the installed Garage Home controls service...', flush=True)
+            try:
+                self.remote('/usr/bin/app_launcher -s GarageHome.Controls')
+                record['serviceStartConfirmed'] = True
+            except Exception as error:
+                record['serviceStartConfirmed'] = False
+                record['serviceStartErrorType'] = type(error).__name__
+            self.save()
         for attempt in range(20):
             try:
                 if spec['key'] == 'glass':
@@ -432,15 +443,37 @@ class Updater:
                     if health.get('vetroApps') == 4 and health.get('vetroStock') == 1:
                         return True
                 else:
-                    root = self.root(spec)
-                    health = json.loads(self.script("key=$(grep -oE '[a-f0-9]{64}' " + shlex.quote(root + '/local-key.js') + ")\n"
-                                                   'curl -fsS --max-time 3 -H "X-Garage-Key: $key" http://127.0.0.1:8092/health'))
+                    health = self.garage_health(spec, record)
                     if health.get('ok') is True and health.get('protocol') == 1:
                         return True
-            except Exception:
-                pass
+            except Exception as error:
+                record['runtimeCheckErrorType'] = type(error).__name__
             time.sleep(1)
         return False
+
+    def garage_health(self, spec, record):
+        root = self.root(spec)
+        output = self.script("key=$(grep -oE '[a-f0-9]{64}' " + shlex.quote(root + '/local-key.js') + ")\n"
+                             'curl -s --noproxy "*" --connect-timeout 2 --max-time 3 '
+                             '-H "X-Garage-Key: $key" -w "\\nGARAGE_HTTP:%{http_code}\\n" '
+                             'http://127.0.0.1:8092/health 2>/dev/null\n'
+                             'garage_probe_code=$?\nprintf "\\nGARAGE_PROBE_EXIT:%s\\n" "$garage_probe_code"')
+        body, marker, rest = output.partition('\nGARAGE_HTTP:')
+        status = re.search(r'(?:^|\n)GARAGE_HTTP:(\d{3})(?:\n|$)', output)
+        code = re.search(r'(?:^|\n)GARAGE_PROBE_EXIT:(\d+)(?:\n|$)', output)
+        record['lastRuntimeProbe'] = {'httpStatus': int(status[1]) if status else None,
+                                      'curlExit': int(code[1]) if code else None}
+        try:
+            health = json.loads(body) if marker and len(body) < 4096 else {}
+        except ValueError:
+            health = {}
+        if not isinstance(health, dict):
+            health = {}
+        if health.get('error') == 'local_only':
+            record['lastRuntimeProbe']['error'] = 'local_only'
+        record['lastRuntimeProbe']['healthy'] = health.get('ok') is True and health.get('protocol') == 1
+        self.save()
+        return health if status and status[1] == '200' and code and code[1] == '0' else {}
 
     def refresh_native(self, record):
         dock = self.owner.request('/dock', timeout=30)

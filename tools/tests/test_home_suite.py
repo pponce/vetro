@@ -211,11 +211,41 @@ class SuiteTests(unittest.TestCase):
             u.root = lambda app: '/usr/apps/GarageHome/res/wgt'
             def script(source):
                 commands.append(source)
-                return '{"ok":true,"protocol":1}'
+                return '{"ok":true,"protocol":1}\nGARAGE_HTTP:200\nGARAGE_PROBE_EXIT:0'
             u.script = script
+            u.remote = Mock(return_value='launched')
+            u.garage_health = lambda spec, record: m.Updater.garage_health(u, spec, record)
             self.assertTrue(m.Updater.refresh_runtime(u, m.APPS[1], {}))
+            u.remote.assert_called_once_with('/usr/bin/app_launcher -s GarageHome.Controls')
             self.assertIn('X-Garage-Key: $key', commands[-1])
             self.assertIn('local-key.js', commands[-1])
+
+    def test_garage_service_started_before_probe(self):
+        with tempfile.TemporaryDirectory() as work:
+            u = FakeUpdater(work)
+            events = []
+            u.script = lambda source: events.append('open-screen')
+            u.remote = lambda command: events.append('start-service')
+            def health(spec, record):
+                events.append('health')
+                self.assertTrue(record['serviceStartConfirmed'])
+                return {'ok': True, 'protocol': 1}
+            u.garage_health = health
+            self.assertTrue(m.Updater.refresh_runtime(u, m.APPS[1], {}))
+            self.assertEqual(events, ['open-screen', 'start-service', 'health'])
+
+    def test_garage_probe_records_connection_and_auth_failures(self):
+        with tempfile.TemporaryDirectory() as work:
+            u = FakeUpdater(work)
+            u.root = lambda spec: '/usr/apps/GarageHome/res/wgt'
+            for raw, status, code in [
+                    ('\nGARAGE_HTTP:000\nGARAGE_PROBE_EXIT:7', 0, 7),
+                    ('{"error":"local_only"}\nGARAGE_HTTP:403\nGARAGE_PROBE_EXIT:0', 403, 0)]:
+                u.script = lambda source: raw
+                record = {}
+                self.assertEqual(m.Updater.garage_health(u, m.APPS[1], record), {})
+                self.assertEqual(record['lastRuntimeProbe']['httpStatus'], status)
+                self.assertEqual(record['lastRuntimeProbe']['curlExit'], code)
 
     def test_native_reload_preserves_disabled_state(self):
         with tempfile.TemporaryDirectory() as work:
