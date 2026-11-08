@@ -22,17 +22,17 @@ Official v0.5.0 commit `81e16b164236e2fd1edae50a06d986da5e607469` has the same C
 
 `tools/update-vetro-home-fix.py` reuses `tools/update-home-suite.py` and `tools/vetro_owner.py`, pins only the new Vetro artifact, and uses `vetro-install/vetro-home-fix-20261108-r1` as a separate ledger. Owner pairing is reused from the existing maintenance location. Glass Home and Garage Home are not prepared, installed or restarted. Existing certificate and package identity are checked. Installed payloads, source revision, root reconnection and active launcher refresh are verified. Reruns never repeat a recorded installation attempt.
 
-All 33 local Python tests pass, including the Vetro-only execution scope and preservation of the prior ledger/pairing location. Python compilation and whitespace checks pass. No application install or hardware acceptance of the rebuilt fix has occurred yet.
+All 33 local Python tests pass, including the Vetro-only execution scope and preservation of the prior ledger/pairing location. Python compilation and whitespace checks pass.
+
+Installation report `report-20261108T211324503481Z.json` now confirms completion on the TV: enhanced revision `a57bf4cf4967620f158e750b7e37f0399efc4176`, installed files verified, runtime verified, and active native launcher refresh verified. Vetro SDB access remained active. The CLI output parser recorded JSONDecodeError, but independent payload and runtime verification succeeded; do not reinstall because of that parser result. Visual acceptance of the Samsung Home tile is still pending. The owner explicitly wants to test the enhanced build before submitting the PR and issue.
 
 Prefilled PR and issue text and URLs are in this folder. Submit the PR first. Until a PR number exists, the issue's PR link searches the exact author and unique branch; it will find the submitted PR. No PR or issue has been posted by the assistant.
 
 ## Exact next steps
 
-1. Run the pinned Vetro-only installer; keep the TV on, Vetro root connected and its SDB LAN access enabled. Use the existing signing identity.
-2. Inspect the returned installation report for source revision `a57bf4cf4967620f158e750b7e37f0399efc4176`, verified payloads, runtime and native launcher refresh.
-3. Test the default Samsung Home tile from Glass Home and another app, including quick selection and repeated reopen. No Home override should be needed.
-4. Confirm the other enhanced Home interactions remain intact. Keep the separate PR #117 in-flight-close scope distinct from this launch fix.
-5. Update the PR/issue validation paragraph with actual fixed-build results. Cross-generation TV behavior is still unverified; request the maintainer's comparison.
+1. Ask for the visible result of selecting the default Samsung Home tile from Glass Home and another app, including quick selection and repeated reopen. The updated build is already installed and running; no Home override should be needed.
+2. Confirm the other enhanced Home interactions remain intact. Keep the separate PR #117 in-flight-close scope distinct from this launch fix.
+3. After the owner confirms the fixed tile works, update the PR/issue validation paragraph and prefilled links with the actual S95C result, then return them for submission. Cross-generation TV behavior remains unverified; request the maintainer's comparison.
 
 ## Working environment
 
