@@ -7,7 +7,7 @@ Thanks Andrea. I’ve now refreshed the remaining work on top of the released 0.
 - **Double press:** prepared separately on the Home prerequisite stack. Single press remains immediate; a distinct second press within 350 ms opens an independently selected app or the Home tile destination. The intended combination is overlay on single press, Samsung Home on the tile, and Glass Home on double press.
 - **Clients:** prepared separate Glass Home and Garage Home branches using stock endpoints. Glass reads the installed registry and Home ordering, with Home-row/package artwork fallback. Garage adapts optional controls while retaining native Sources, confirmations and verification. Exact Samsung catalog/artwork coverage still needs checking on the TV.
 
-All four refreshed PR branches, the separate double-press branch and the combined Vetro build pass CI. The combined run includes native tests, real Ecore process tests and a fresh TV launcher compilation.
+All four refreshed PR branches, the separate double-press branch and the combined Vetro build pass CI. Both client branches also pass their hosted tests and browser checks and produce unsigned widgets. The combined run includes native tests, real Ecore process tests and a fresh TV launcher compilation.
 
 **Combined test build:** [download the unsigned integration package](https://github.com/pponce/vetro/actions/runs/42508536173/artifacts/13627979773) · [passing CI](https://github.com/pponce/vetro/actions/runs/42508536173) · [source](https://github.com/pponce/vetro/tree/eb2227342f66cb9a0eb9a855c62fe2f105619793). It includes the rebuilt launcher, source revision and checksums. It needs signing for the target TV.
 

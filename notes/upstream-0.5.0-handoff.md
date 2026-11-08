@@ -38,7 +38,7 @@ Separate branches named `compat/stock-vetro-0.5.0`:
 
 - Glass Home: `pponce/glass-home-samsung-tv`, based on main `318778fb2028f944dff7c3d373ac8057f48ee4e4`. Uses `/apps` installed registry + `/dock` ordering, including eligible unpinned apps; `/dock/icon` then `/apps/icon`; existing guarded launch path. Saves selection, hidden state and custom-artwork priority. No per-app approval UI. Exact Samsung store artwork/catalog parity is not established by registry fixtures; test YouTube, Prime and unpinned entries on the TV.
 - Garage Home: `pponce/garage-home`, based on `feat/vetro-controls` / `755fc205bccf72b83b197ee06b1bb14041902707`. Fixed same-TV service adapter for `/monitor`, `/components/action`, `/control` and `/tv-settings`. Removable visible user-app filtering, close confirmation/verification, no automatic repeat after uncertain writes; brightness opt-in plus confirmed TV support. Native Sources is unchanged.
-- Neither client's default branch was changed. New PRs remain unsubmitted. Client CI results and exact heads are recorded in the delivery index after completion.
+- Neither client's default branch was changed. New PRs remain unsubmitted. Client CI results and exact heads are recorded in the delivery index. Garage Home head `66f6a378c60cc94dcbb1fc3c3a19fd7c4bcbdbc3` passed all package, unit and browser checks in run `42508972819`. Glass Home head `06621f448c956ca582abf1f5fc0b2aab6cec1ae4` passed the full service/API/browser suite and packaging in run `42509712172`; the focused picker acceptance also passed.
 
 ## Decisions and unresolved evidence
 

@@ -35,5 +35,7 @@ Open double press as a draft: it is stacked on the open Home PRs and awaits owne
 
 Garage Home: `66f6a378c60cc94dcbb1fc3c3a19fd7c4bcbdbc3` — [passing tests and browser acceptance](https://github.com/pponce/garage-home/actions/runs/42508972819) · [unsigned widget](https://github.com/pponce/garage-home/actions/runs/42508972819/artifacts/13628697593).
 
-Glass Home: final browser validation in progress. This section will be updated after its final checks.
+Glass Home: `06621f448c956ca582abf1f5fc0b2aab6cec1ae4` — [passing service, API and browser checks](https://github.com/pponce/glass-home-samsung-tv/actions/runs/42509712172) · [unsigned widget](https://github.com/pponce/glass-home-samsung-tv/actions/runs/42509712172/artifacts/13628544795).
+
+All three packages are unsigned and remain untested on the target TV. Use the existing compatible signing profile. The remaining hardware matrix is in the handoff.
 
