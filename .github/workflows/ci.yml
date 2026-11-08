@@ -14,6 +14,8 @@ jobs:
           persist-credentials: false
       - name: Application tests
         run: node app/tests/run.cjs
+      - name: Home suite updater tests
+        run: python3 -m unittest discover -s tools/tests -v
       - name: Integration fixtures
         run: node rooting/tests/run.cjs
       - uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d # v5.0.0
