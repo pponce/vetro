@@ -9,6 +9,7 @@ def updater_module():
                                                 Path(__file__).with_name('update-home-suite.py'))
     suite = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(suite)
+    suite.__doc__ = __doc__
     vetro = dict(next(app for app in suite.APPS if app['key'] == 'vetro'))
     vetro.update(
         revision='a57bf4cf4967620f158e750b7e37f0399efc4176',
