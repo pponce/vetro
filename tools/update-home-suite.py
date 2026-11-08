@@ -2,8 +2,8 @@
 """Update three existing TV apps from pinned, checksum-verified CI packages.
 
 Requires the saved Apps2Samsung CLI and Partner certificate. Reads installed
-configuration through owner-paired Vetro before installing through TV-Store's
-SDB relay. Package data is retained; removal and certificate creation are not
+configuration through owner-paired Vetro before installing through its SDB
+access or TV-Store's relay. Package data is retained; removal and certificate creation are not
 requested. A saved install attempt is verified, never automatically repeated.
 """
 import argparse
@@ -203,12 +203,40 @@ class Updater:
         return base64.b64decode(''.join(value.split()), validate=True)
 
     def idle_relay(self):
+        # Stock Vetro can own 26201 itself. Its shared SDB connection is a valid
+        # installation transport even when TV-Store cannot bind that same port.
         for attempt in range(13):
-            relay = json_url('http://' + self.args.tv + ':8077/relay').get('relay', {})
+            try:
+                access = self.owner.request('/sdb-access', timeout=5)
+                if not isinstance(access, dict):
+                    access = {}
+                self.report['vetroSdbAccess'] = {k: access.get(k) for k in ('available', 'enabled', 'active', 'port')}
+            except Exception as error:
+                access = {}
+                self.report['vetroSdbAccess'] = {'readError': type(error).__name__}
+            if (access.get('available') is True and access.get('enabled') is True
+                    and access.get('active') is True and access.get('port') == 26201):
+                self.report['transport'] = 'vetro-sdb'
+                print('CONNECTION: Vetro SDB access is ready on port 26201.', flush=True)
+                return
+            try:
+                response = json_url('http://' + self.args.tv + ':8077/relay')
+                relay = response.get('relay', response) if isinstance(response, dict) else {}
+                if not isinstance(relay, dict):
+                    relay = {}
+                self.report['tvStoreRelay'] = {k: relay.get(k) for k in ('enabled', 'listening', 'port', 'sessions', 'error')}
+            except Exception as error:
+                relay = {}
+                self.report['tvStoreRelay'] = {'readError': type(error).__name__}
+            if access.get('available') is True and access.get('active') is not True:
+                raise Stop('In the Vetro dashboard, open Quick settings and enable "Allow SDB from the local network", '
+                           'then confirm "Enable LAN access". Keep Host PC IP at 127.0.0.1 and rerun this block.')
             if (relay.get('enabled') is not True or relay.get('listening') is not True
                     or relay.get('error') or relay.get('port') != 26201):
-                raise Stop('Enable the TV-Store relay on port 26201 before running this updater.')
+                raise Stop('No ready SDB connection on port 26201. The report includes Vetro and TV-Store connection states.')
             if type(relay.get('sessions')) is int and relay['sessions'] == 0:
+                self.report['transport'] = 'tv-store-relay'
+                print('CONNECTION: TV-Store relay is ready on port 26201.', flush=True)
                 return
             if attempt < 12:
                 time.sleep(1)
@@ -220,9 +248,11 @@ class Updater:
             raise Stop('The existing signing profile changed; no further installation was submitted.')
 
     def preflight(self):
-        print('Checking Vetro root access, the TV-Store relay and the existing signing identity...', flush=True)
+        self.report['stage'] = 'owner-and-root-check'
+        print('Checking Vetro owner access and root connection...', flush=True)
         if not self.owner.request('/exec').get('connected'):
             raise Stop('Vetro root is not connected. Open Vetro and let its checks finish.')
+        print('VERIFIED: owner access and Vetro root connection.', flush=True)
         if not shutil.which('openssl'):
             raise Stop('OpenSSL is required to compare the installed signing identities.')
         locator = self.project / 'vetro-install/bin/apps2samsung-beta.path'
@@ -231,7 +261,9 @@ class Updater:
             raise Stop('The saved Apps2Samsung CLI was not found.')
         if CLI_VERSION not in self.run([self.cli, '--version'], timeout=20).decode():
             raise Stop('The saved Apps2Samsung CLI is not the reviewed version.')
+        self.report['stage'] = 'sdb-connection-check'
         self.idle_relay()
+        self.report['stage'] = 'certificate-check'
         cert = json.loads(self.run([self.cli, 'cert', '--partner', '--tv', self.args.tv,
                                     '--local-ip', self.args.local_ip, '--json']))
         self.duid, self.profile = partner_profile(cert)
@@ -428,6 +460,7 @@ class Updater:
         return record['nativeRefreshVerified']
 
     def install(self, spec, path):
+        self.report['stage'] = 'install-' + spec['key']
         record = self.state['apps'][spec['key']]
         if record.get('submitted'):
             raise Stop('Refusing to repeat an existing installation attempt.')
@@ -438,6 +471,8 @@ class Updater:
         record['submitted'] = True
         self.save()  # Durable before the installer can touch the TV.
         print('Installing ' + spec['name'] + ' once; this may take a few minutes...', flush=True)
+        if spec['key'] == 'vetro':
+            print('Vetro may close while its service updates. If it closes, reopen it once with the remote and let its checks finish.', flush=True)
         try:
             result = json.loads(self.run(install_command(self.cli, path, spec, self.args, self.duid), timeout=300))
             record['cliConfirmed'] = (result.get('ok') is True and result.get('appId') == spec['app']
@@ -505,7 +540,7 @@ def main():
         result = 0
     except (Exception, KeyboardInterrupt) as error:
         # Remote/CLI output, certificate paths, DUIDs and local app keys stay out of reports.
-        detail = str(error) if isinstance(error, Stop) else type(error).__name__
+        detail = str(error) if isinstance(error, RuntimeError) else type(error).__name__
         print('STOPPED: ' + detail, flush=True)
         if updater:
             updater.report['error'] = detail

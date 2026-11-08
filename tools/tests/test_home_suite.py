@@ -239,6 +239,62 @@ class SuiteTests(unittest.TestCase):
             self.assertTrue(m.Updater.refresh_native(u, record))
             self.assertEqual(u.owner.request.call_count, 1)
 
+    def test_vetro_transport_accepts_active_shared_sdb(self):
+        with tempfile.TemporaryDirectory() as work:
+            u = FakeUpdater(work)
+            u.owner = Mock()
+            u.owner.request.return_value = dict(available=True, enabled=True, active=True, port=26201)
+            with patch.object(m, 'json_url', side_effect=AssertionError('TV-Store is not required')):
+                m.Updater.idle_relay(u)
+            self.assertEqual(u.report['transport'], 'vetro-sdb')
+            self.assertTrue(u.report['vetroSdbAccess']['active'])
+
+    def test_disabled_vetro_access_requests_documented_setting(self):
+        with tempfile.TemporaryDirectory() as work:
+            u = FakeUpdater(work)
+            u.owner = Mock()
+            u.owner.request.return_value = dict(available=True, enabled=False, active=False, port=26201)
+            with patch.object(m, 'json_url', return_value={'relay': {'enabled': True, 'listening': False, 'error': 'EADDRINUSE'}}):
+                with self.assertRaisesRegex(m.Stop, 'Allow SDB from the local network'):
+                    m.Updater.idle_relay(u)
+            self.assertEqual(u.report['tvStoreRelay']['error'], 'EADDRINUSE')
+            # Reads only: never switch on network developer access automatically.
+            u.owner.request.assert_called_once_with('/sdb-access', timeout=5)
+
+    def test_tvstore_transport_accepts_both_response_shapes_and_ignores_history(self):
+        with tempfile.TemporaryDirectory() as work:
+            relay = dict(enabled=True, listening=True, port=26201, sessions=0, error=None,
+                         lastFailure={'code': 'SDBD_DROPPED'})
+            for response in (relay, {'relay': relay}):
+                u = FakeUpdater(work)
+                u.owner = Mock()
+                u.owner.request.return_value = dict(available=False, enabled=False, active=False, port=26201)
+                with patch.object(m, 'json_url', return_value=response):
+                    m.Updater.idle_relay(u)
+                self.assertEqual(u.report['transport'], 'tv-store-relay')
+
+    def test_unavailable_transports_record_evidence(self):
+        with tempfile.TemporaryDirectory() as work:
+            u = FakeUpdater(work)
+            u.owner = Mock()
+            u.owner.request.side_effect = TimeoutError()
+            with patch.object(m, 'json_url', side_effect=ConnectionError()):
+                with self.assertRaisesRegex(m.Stop, 'No ready SDB connection'):
+                    m.Updater.idle_relay(u)
+            self.assertEqual(u.report['vetroSdbAccess']['readError'], 'TimeoutError')
+            self.assertEqual(u.report['tvStoreRelay']['readError'], 'ConnectionError')
+
+    def test_busy_tvstore_does_not_start_install(self):
+        with tempfile.TemporaryDirectory() as work:
+            u = FakeUpdater(work)
+            u.owner = Mock()
+            u.owner.request.return_value = dict(available=False)
+            relay = dict(enabled=True, listening=True, port=26201, sessions=1, error=None)
+            with patch.object(m, 'json_url', return_value=relay), patch.object(m.time, 'sleep'):
+                with self.assertRaisesRegex(m.Stop, 'relay session is still open'):
+                    m.Updater.idle_relay(u)
+            self.assertEqual(u.report['tvStoreRelay']['sessions'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()
