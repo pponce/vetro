@@ -290,7 +290,7 @@ class Updater:
             root = self.root(spec)
             if author_fingerprint(self.read_tv(root + '/author-signature.xml')) != self.fingerprint:
                 raise Stop(spec['name'] + ': the saved certificate differs from its installed author identity.')
-        print('VERIFIED: all three installed apps match the existing Partner author certificate.', flush=True)
+        print('VERIFIED: selected installed apps match the existing Partner author certificate.', flush=True)
 
     def download(self, spec):
         api = 'https://api.github.com/repos/' + spec['repo']
@@ -536,7 +536,7 @@ class Updater:
             self.report['preparedOnly'] = True
             print('PREPARED: all packages checked; no installations submitted.', flush=True)
             return
-        print('All three packages and signing identities are ready.', flush=True)
+        print('Packages and signing identities are ready.', flush=True)
         for spec in APPS:
             record = self.state['apps'][spec['key']]
             if not record.get('submitted'):
@@ -551,8 +551,11 @@ class Updater:
                 raise Stop(spec['name'] + ' files are installed, but its updated runtime is not confirmed. Return this report before further changes.')
             print('RUNNING: ' + spec['name'] + '.', flush=True)
         self.report['complete'] = True
-        print('DONE: Glass Home, Garage Home and Vetro are updated and their services are running.', flush=True)
-        print('Test the Home actions, Glass app list, and Garage Sources/controls with the remote.', flush=True)
+        print('DONE: ' + ', '.join(spec['name'] for spec in APPS) + ' updated and running.', flush=True)
+        if len(APPS) == 1 and APPS[0]['key'] == 'vetro':
+            print('Test the default Samsung Home tile with the remote. Keep Disable Samsung Home off.', flush=True)
+        else:
+            print('Test the Home actions, Glass app list, and Garage Sources/controls with the remote.', flush=True)
 
 
 def main():
@@ -566,7 +569,8 @@ def main():
     os.umask(0o077)
     updater = None
     result = 1
-    print('=== Vetro + Glass Home + Garage Home update START ===', flush=True)
+    label = ' + '.join(spec['name'] for spec in APPS) + ' update'
+    print('=== ' + label + ' START ===', flush=True)
     try:
         updater = Updater(args)
         updater.execute()
@@ -591,7 +595,7 @@ def main():
                 print('The report could not be written. Retain this terminal output.', flush=True)
             finally:
                 updater.lock.close()
-        print('=== Vetro + Glass Home + Garage Home update END: ' + ('OK' if result == 0 else 'STOPPED') + ' ===', flush=True)
+        print('=== ' + label + ' END: ' + ('OK' if result == 0 else 'STOPPED') + ' ===', flush=True)
     return result
 
 

@@ -30,6 +30,16 @@ An installation attempt is recorded before it is submitted. Rerunning verifies t
 
 Run the isolated updater tests with `python3 -m unittest discover -s tools/tests -v`. These tests cover preparation order, configuration retention, archive checks, package identity, resumability, and failure handling. They do not replace hardware testing.
 
+## Enhanced Vetro Samsung Home update
+
+`update-vetro-home-fix.py` installs only enhanced Vetro revision `a57bf4cf4967620f158e750b7e37f0399efc4176`. It uses the same signing, download verification, installation and runtime checks as the suite updater. Keep `update-home-suite.py` and `vetro_owner.py` beside it. Glass Home and Garage Home are not prepared, installed or restarted by this entry point.
+
+```bash
+python3 tools/update-vetro-home-fix.py --project-root /path/to/samsung-tv-tools --tv TV_IP --local-ip COMPUTER_IP --report-host user@COMPUTER_IP
+```
+
+The update retains the enhanced Home features and applies the default Samsung Home launch correction: when the tile uses CoBA with First Screen as its fallback, it starts CoBA and then explicitly opens First Screen. No additional setting is required. It retains the TV's saved launcher settings and reloads an active launcher after verifying the updated service. The installer uses a separate ledger in `vetro-install/vetro-home-fix-20261108-r1` and reuses the existing owner pairing. Reruns verify the recorded installation instead of installing it again. Test the Samsung Home tile after completion; automated checks cannot confirm what appears on the TV.
+
 ## Samsung Home tile diagnostics
 
 `diagnose-home-tile.py` collects the native launcher's log, Home tile target, launcher configuration, relevant process state, installed launcher checksum, and Samsung Home registry flags. Run it with `vetro_owner.py` beside it:

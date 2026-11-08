@@ -1,5 +1,7 @@
 # Home suite updater checkpoint
 
+Latest milestone: the Samsung Home launch correction is now prepared independently for stock 0.5.0 and included in enhanced build `a57bf4cf4967620f158e750b7e37f0399efc4176`. Both application branches pass CI. Use `tools/update-vetro-home-fix.py` for the Vetro-only update. See [the current fix handoff](samsung-home-fix/HANDOFF.md) for authoritative build, installer, review links and next steps; the original installation record below remains historical evidence.
+
 Objective: install and verify the reviewed Vetro 0.5.0 enhancements plus compatible Glass Home and Garage Home, then complete interaction testing.
 
 Repository: `pponce/vetro`, branch `tools/home-suite-updater-0.5.0`, based on combined build `eb2227342f66cb9a0eb9a855c62fe2f105619793`. Implementation is in `tools/update-home-suite.py`, with `tools/vetro_owner.py` and tests in `tools/tests/test_home_suite.py`.
