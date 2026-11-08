@@ -24,15 +24,17 @@ Official v0.5.0 commit `81e16b164236e2fd1edae50a06d986da5e607469` has the same C
 
 All 33 local Python tests pass, including the Vetro-only execution scope and preservation of the prior ledger/pairing location. Python compilation and whitespace checks pass.
 
-Installation report `report-20261108T211324503481Z.json` now confirms completion on the TV: enhanced revision `a57bf4cf4967620f158e750b7e37f0399efc4176`, installed files verified, runtime verified, and active native launcher refresh verified. Vetro SDB access remained active. The CLI output parser recorded JSONDecodeError, but independent payload and runtime verification succeeded; do not reinstall because of that parser result. Visual acceptance of the Samsung Home tile is still pending. The owner explicitly wants to test the enhanced build before submitting the PR and issue.
+Installation report `report-20261108T211324503481Z.json` confirms completion on the TV: enhanced revision `a57bf4cf4967620f158e750b7e37f0399efc4176`, installed files verified, runtime verified, and active native launcher refresh verified. Vetro SDB access remained active. The CLI output parser recorded JSONDecodeError, but independent payload and runtime verification succeeded; do not reinstall because of that parser result.
+
+On 2026-11-08 the owner confirmed that the Samsung Home tile in the launcher now works and requested the prefilled PR and issue for submission. This establishes visible success on the S95C with the enhanced fixed build. It does not establish repeated/cold-boot tests, success from two specific source apps, fresh stock-build installation, or other TV generations. Both drafts and prefilled URLs now include the confirmed result with those testing boundaries.
 
 Prefilled PR and issue text and URLs are in this folder. Submit the PR first. Until a PR number exists, the issue's PR link searches the exact author and unique branch; it will find the submitted PR. No PR or issue has been posted by the assistant.
 
 ## Exact next steps
 
-1. Ask for the visible result of selecting the default Samsung Home tile from Glass Home and another app, including quick selection and repeated reopen. The updated build is already installed and running; no Home override should be needed.
-2. Confirm the other enhanced Home interactions remain intact. Keep the separate PR #117 in-flight-close scope distinct from this launch fix.
-3. After the owner confirms the fixed tile works, update the PR/issue validation paragraph and prefilled links with the actual S95C result, then return them for submission. Cross-generation TV behavior remains unverified; request the maintainer's comparison.
+1. Submit the prepared standalone PR and issue; the owner requested prefilled links, so publication remains with them. Once a PR number is available, the issue's branch-specific PR lookup can be replaced with its direct URL.
+2. Request the maintainer's comparison on other Home generations. Keep the separate PR #117 in-flight-close scope distinct from this launch fix.
+3. Continue the remaining enhanced Home, Glass Home and Garage Home acceptance checks from the overall plan. Do not repeat the verified installation.
 
 ## Working environment
 

@@ -1,28 +1,27 @@
 # Samsung Home tile does nothing on S95C when CoBA reports a successful launch
 
-On my Samsung S95C running Tizen 9, the default Samsung Home tile dismisses Vetro's overlay but leaves the current app visible.
+On my Samsung S95C running Tizen 9, the default Samsung Home tile closed Vetro's overlay but left the current app visible. The fix below is now confirmed working on this TV.
 
-Steps:
-1. Enable the Vetro launcher and keep the Home tile at its default Samsung Home destination.
+Reproduction before the fix:
+1. Enable the Vetro launcher and leave its Home tile set to Samsung Home.
 2. Open an app, press Home, then select Samsung Home in the overlay.
 3. The overlay closes, but Samsung Home does not appear. Waiting four seconds before selecting the tile gives the same result.
 
-Samsung Home and its related components are enabled. Remapper interception and double press were off during these tests. The logs show the close sequence finished more than five seconds before the launch request, with no subsequent close in the captured interval.
+Samsung Home and its related components were enabled. Remapper interception and double press were off. The recorded close sequence completed more than five seconds before launch, with no later close in the captured interval.
 
-Direct comparison:
-
-| Command | Exit code | Visible result |
+| Direct launch | Exit code | Visible result |
 | --- | --- | --- |
-| `app_launcher -s com.samsung.tv.coba.newhome` | 0, successfully launched | Previous app remains visible |
-| `app_launcher -s com.samsung.tv.csfs` | 0, successfully launched | Samsung Home opens |
+| `app_launcher -s com.samsung.tv.coba.newhome` | 0 | Previous app remains visible |
+| `app_launcher -s com.samsung.tv.csfs` | 0 | Samsung Home opens |
 
-Official v0.5.0 [selects CoBA when its package exists](https://github.com/andrearicci93/vetro/blob/v0.5.0/app/service/dock-catalog.js#L73), with csfs as fallback. [SystemLaunch only runs that fallback on an error](https://github.com/andrearicci93/vetro/blob/v0.5.0/dock/src/Core/SystemLaunch.cs), so a successful CoBA command that does not show Home leaves the tile ineffective.
+Official v0.5.0 [selects CoBA when its package exists](https://github.com/andrearicci93/vetro/blob/v0.5.0/app/service/dock-catalog.js#L73), with csfs as fallback. [SystemLaunch runs the fallback only on error](https://github.com/andrearicci93/vetro/blob/v0.5.0/dock/src/Core/SystemLaunch.cs). CoBA reports success here, so the fallback is skipped.
 
-Expected: the default Samsung Home tile should open Samsung Home without a per-TV override.
+Expected: the default Samsung Home tile opens Samsung Home without a special setting.
 
-Proposed fix: [PR for fix/samsung-home-csfs-handoff](https://github.com/andrearicci93/vetro/pulls?q=is%3Apr%20author%3Apponce%20head%3Afix%2Fsamsung-home-csfs-handoff) ([source comparison](https://github.com/andrearicci93/vetro/compare/main...pponce:vetro:fix/samsung-home-csfs-handoff)). It preserves CoBA first and then explicitly opens First Screen for this Home pair. The branch passes CI.
+**Fix confirmed on S95C:** enhanced build `a57bf4cf` keeps CoBA first, then explicitly opens First Screen for this Home pair. After installation, selecting Samsung Home from Vetro's launcher works. Installed files, the running revision and the native launcher refresh were independently verified.
 
-Testing scope: hardware reproduction used my 0.5.0-based enhanced build `eb222734`, not a fresh stock installation. I verified the relevant selection and fallback code against official v0.5.0 (`81e16b16`), where it is unchanged. The rebuilt fix and other TV generations still need hardware validation.
+Proposed PR: [Samsung Home fix PR](https://github.com/andrearicci93/vetro/pulls?q=is%3Apr%20author%3Apponce%20head%3Afix%2Fsamsung-home-csfs-handoff) ([source comparison](https://github.com/andrearicci93/vetro/compare/main...pponce:vetro:fix/samsung-home-csfs-handoff)). The standalone branch contains only the launch-helper fix and regression tests; CI passes.
+
+Testing scope: before/after hardware testing used enhanced builds `eb222734` and `a57bf4cf`. The affected selection and fallback code was verified against official v0.5.0 (`81e16b16`), where it is unchanged. I have not repeated the test on a fresh stock installation or other TV generations.
 
 Related contribution plan: #138.
-
