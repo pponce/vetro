@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read launcher evidence while the owner operates the Samsung Home tile."""
+"""Capture Home tile evidence; optionally compare two standard Home app launches."""
 import argparse
 import base64
 import datetime
@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shlex
 import sys
+import time
 import urllib.error
 
 from vetro_owner import OwnerClient
@@ -198,16 +199,95 @@ def run(args, prompt=input, owner=None):
     return result
 
 
+def run_launch_check(args, prompt=input, owner=None, pause=time.sleep):
+    project = Path(args.project_root).expanduser().resolve()
+    if not project.is_dir():
+        print('The existing samsung-tv-tools project folder was not found.')
+        return 1
+    work = project / 'vetro-install' / 'home-suite-20261108-r1'
+    work.mkdir(parents=True, exist_ok=True)
+    report_path = work / ('home-launch-' + timestamp() + '.json')
+    report = {'diagnostic': 'home-launch-r1', 'started': timestamp(), 'complete': False,
+              'tvChanges': 'Standard app launch requests only; no settings or installed files changed.',
+              'attempts': [], 'snapshots': []}
+    result = 1
+    try:
+        owner = owner or OwnerClient('http://' + str(ipaddress.IPv4Address(args.tv)) + ':8099',
+                                     project / 'vetro-install' / 'combined-updates')
+        if not owner.request('/exec').get('connected'):
+            report['failure'] = 'root_not_connected'
+            print('Vetro root is not connected. No app launch was issued.')
+            return 1
+        candidates = ('com.samsung.tv.coba.newhome', 'com.samsung.tv.csfs')
+        inventory = owner.request('/apps?refresh=1')
+        apps = {r.get('appId'): r for r in inventory.get('apps', [])}
+        if inventory.get('registryError') or any(
+                app not in apps or apps[app].get('disabled') is not False or apps[app].get('launchRisk')
+                for app in candidates):
+            report['failure'] = 'home_apps_not_verified_enabled'
+            print('Could not verify both Home apps are installed and enabled. No launch was issued.')
+            return 1
+        print('This test opens CoBA Home once, then Samsung First Screen (csfs) once.')
+        print('Keep the Vetro launcher enabled. Close any overlay with Back and leave Glass Home visible.')
+        print('Avoid pressing Home during each test, so it cannot trigger a new close sequence.')
+        prompt('Press Enter when ready for TEST 1 (CoBA Home): ')
+        pause(4)
+        report['snapshots'].append(capture(owner, 'before_direct_launches'))
+        write_report(report_path, report)
+        for index, app in enumerate(candidates):
+            if index:
+                print('\nTEST 2: Return to Glass Home if needed, and close the Vetro overlay.')
+                prompt('Press Enter when ready to open Samsung First Screen (csfs): ')
+                pause(4)
+            attempt = {'appId': app, 'submittedAt': timestamp(), 'outcome': 'awaiting_command_result'}
+            report['attempts'].append(attempt)
+            write_report(report_path, report)
+            print('Opening ' + app + ' once...', flush=True)
+            reply = remote(owner, '/usr/bin/app_launcher -s ' + app + ' 2>&1')
+            attempt['command'] = reply
+            write_report(report_path, report)
+            if reply['timed_out'] or reply['exit_code'] is None:
+                attempt['outcome'] = 'command_unresolved'
+                report['failure'] = 'launch_result_unresolved'
+                print('Launch result is unresolved. Stopping without retrying or launching the next app.')
+                return 1
+            print('Actual app_launcher exit code: ' + str(reply['exit_code']))
+            print('Wait two seconds. Describe what the TV shows; do not press Home during this check.')
+            attempt['observation'] = prompt('Result: ').strip()[:240]
+            attempt['outcome'] = 'observed'
+            report['snapshots'].append(capture(owner, 'after_' + app))
+            write_report(report_path, report)
+        report['complete'] = True
+        result = 0
+        print('Both launch paths were tested. Return the report; exit code zero alone does not confirm visible Home.')
+    except (KeyboardInterrupt, EOFError):
+        report['failure'] = 'interrupted'
+        print('\nStopped. No further app launches will be issued.')
+    except Exception as error:
+        report['failure'] = safe_error(error)
+        print('Stopped: ' + safe_error(error) + '. No request will be retried automatically.')
+    finally:
+        report['finished'] = timestamp()
+        write_report(report_path, report)
+        print('Report: ' + str(report_path))
+        if args.report_host:
+            print('Run on your Mac:')
+            print('rsync -P ' + shlex.quote(args.report_host + ':' + str(report_path)) + ' ~/Downloads/')
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project-root', required=True)
     parser.add_argument('--tv', required=True)
     parser.add_argument('--report-host')
+    parser.add_argument('--launch-check', action='store_true',
+                        help='Open CoBA Home and csfs once each and record their actual command results')
     args = parser.parse_args()
     print('=== Vetro Samsung Home capture START ===', flush=True)
     result = 1
     try:
-        result = run(args)
+        result = run_launch_check(args) if args.launch_check else run(args)
     except Exception as error:
         print('Could not save the capture: ' + safe_error(error))
     finally:

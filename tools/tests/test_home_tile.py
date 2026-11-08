@@ -98,5 +98,65 @@ class HomeTileTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
+class LaunchOwner(FakeOwner):
+    def __init__(self, disabled=False, timeout=False):
+        super().__init__()
+        self.disabled = disabled
+        self.timeout = timeout
+        self.launches = []
+
+    def request(self, route, body=None, timeout=40):
+        if route == '/exec' and body:
+            source = base64.b64decode(body['cmd'].split()[2]).decode()
+            allowed = ['/usr/bin/app_launcher -s ' + app + ' 2>&1' for app in
+                       ('com.samsung.tv.coba.newhome', 'com.samsung.tv.csfs')]
+            if source in allowed:
+                self.launches.append(source)
+                return {'exit_code': 1 if 'coba' in source else 0,
+                        'timed_out': self.timeout, 'output': 'native launcher result'}
+        reply = super().request(route, body, timeout)
+        if route == '/apps?refresh=1':
+            reply['apps'].append({'appId': 'com.samsung.tv.coba.newhome', 'disabled': self.disabled})
+        return reply
+
+
+class DirectLaunchTests(unittest.TestCase):
+    def run_check(self, owner):
+        with tempfile.TemporaryDirectory() as project:
+            args = argparse.Namespace(project_root=project, tv='192.0.2.1', report_host='user@192.0.2.2')
+            with patch('sys.stdout', io.StringIO()):
+                result = m.run_launch_check(args, prompt=lambda _: 'stayed closed', owner=owner, pause=lambda _: None)
+            files = list(Path(project).rglob('home-launch-*.json'))
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0].stat().st_mode & 0o777, 0o600)
+            return result, json.loads(files[0].read_text())
+
+    def test_only_two_fixed_launches_and_actual_exit_codes(self):
+        owner = LaunchOwner()
+        result, report = self.run_check(owner)
+        self.assertEqual(result, 0)
+        self.assertTrue(report['complete'])
+        self.assertEqual(owner.launches, ['/usr/bin/app_launcher -s com.samsung.tv.coba.newhome 2>&1',
+                                         '/usr/bin/app_launcher -s com.samsung.tv.csfs 2>&1'])
+        self.assertEqual([a['command']['exit_code'] for a in report['attempts']], [1, 0])
+        self.assertEqual(len(report['snapshots']), 3)
+        self.assertNotIn('do-not-include', json.dumps(report))
+
+    def test_disabled_home_does_not_launch_anything(self):
+        owner = LaunchOwner(disabled=True)
+        result, report = self.run_check(owner)
+        self.assertEqual(result, 1)
+        self.assertEqual(owner.launches, [])
+        self.assertEqual(report['failure'], 'home_apps_not_verified_enabled')
+
+    def test_timeout_stops_without_second_launch_or_retry(self):
+        owner = LaunchOwner(timeout=True)
+        result, report = self.run_check(owner)
+        self.assertEqual(result, 1)
+        self.assertEqual(len(owner.launches), 1)
+        self.assertEqual(report['attempts'][0]['outcome'], 'command_unresolved')
+        self.assertFalse(report['complete'])
+
+
 if __name__ == '__main__':
     unittest.main()
