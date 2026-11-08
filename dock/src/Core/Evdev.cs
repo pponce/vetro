@@ -42,10 +42,15 @@ namespace Launcher.Core
         /// <summary>Allocation-free variant: appends the presses to a list the caller reuses.</summary>
         public void Feed(byte[] data, int count, List<int> presses)
         {
-            FeedEvents(data, count, e => { if (e.Value == 1) presses.Add(e.Code); });
+            FeedCore(data, count, presses, null);
         }
 
         public void FeedEvents(byte[] data, int count, Action<InputKeyEvent> receive)
+        {
+            FeedCore(data, count, null, receive);
+        }
+
+        private void FeedCore(byte[] data, int count, List<int> presses, Action<InputKeyEvent> receive)
         {
             int i = 0;
             while (i < count)
@@ -58,16 +63,17 @@ namespace Launcher.Core
                 i += take;
                 if (_carried < _record) break;
                 _carried = 0;
-                Decode(_carry, receive);
+                Decode(_carry, presses, receive);
             }
         }
 
-        private void Decode(byte[] rec, Action<InputKeyEvent> receive)
+        private void Decode(byte[] rec, List<int> presses, Action<InputKeyEvent> receive)
         {
             int type = rec[_typeOffset] | (rec[_typeOffset + 1] << 8);
             int code = rec[_typeOffset + 2] | (rec[_typeOffset + 3] << 8);
             int value = rec[_typeOffset + 4] | (rec[_typeOffset + 5] << 8) | (rec[_typeOffset + 6] << 16) | (rec[_typeOffset + 7] << 24);
             if (type != EvKey) return;
+            if (presses != null) { if (value == 1) presses.Add(code); return; }
             long seconds = _record == 16 ? BitConverter.ToInt32(rec, 0) : BitConverter.ToInt64(rec, 0);
             long micros = _record == 16 ? BitConverter.ToInt32(rec, 4) : BitConverter.ToInt64(rec, 8);
             double time = seconds >= 0 && micros >= 0 && micros < 1000000 ? seconds + micros / 1000000.0 : 0;
