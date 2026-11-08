@@ -33,3 +33,30 @@ jobs:
         run: python3 .github/scripts/test_parse_log.py
       - name: Release hygiene and architecture
         run: python3 .github/scripts/audit_release.py
+      - name: Package the rebuilt integration for testing
+        if: github.repository == 'pponce/vetro'
+        env:
+          VETRO_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          cp dock/bin/Release/netcoreapp3.1/tvlauncher-dotnet.dll app/native/dock/tvlauncher-dotnet.dll
+          node - <<'NODE'
+          const fs = require('fs'), crypto = require('crypto');
+          const builder = require('./app/build.cjs');
+          const files = require('./rooting/build.cjs').collectIntegration();
+          const names = files.map(f => decodeURIComponent(f.uri));
+          for (const name of ['service/home-double-press.js', 'service/plugin-launcher.js', 'service/root-agent.js', 'native/dock/tvlauncher-dotnet.dll']) {
+            if (!names.includes(name)) throw Error('Missing integration file: ' + name);
+          }
+          fs.mkdirSync('dist', {recursive:true});
+          fs.writeFileSync('dist/vetro-0.5.0-home-enhancements-unsigned.wgt', builder.zip(files));
+          fs.writeFileSync('dist/SOURCE_COMMIT.txt', process.env.VETRO_SOURCE_REVISION + '\n');
+          fs.writeFileSync('dist/LAUNCHER_SHA256.txt', crypto.createHash('sha256').update(fs.readFileSync('app/native/dock/tvlauncher-dotnet.dll')).digest('hex') + '\n');
+          NODE
+          sha256sum dist/*.wgt > dist/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.repository == 'pponce/vetro'
+        with:
+          name: vetro-0.5.0-home-enhancements-unsigned
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
