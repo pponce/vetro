@@ -26,7 +26,15 @@ All three CLI replies raised JSONDecodeError while parsing installer output, but
 
 Garage correction: its GUI starts the controls service only on demand. The updater explicitly starts `GarageHome.Controls` before the authenticated health probe and records bounded HTTP/curl outcomes. The completed TV run confirms service readiness after this change.
 
+Home tile investigation: after enabling the native Vetro launcher, selecting its Samsung Home tile did not open Samsung Home. Screenshots show the shared Home destination set to the Vetro overlay, the launcher running, Remapper interception off, and **Disable Samsung Home** off. That last switch means Samsung Home is enabled; leave it off. Do not add a physical Home remap. The launcher handles Home independently.
+
+Read-only collector: `tools/diagnose-home-tile.py`, with the existing owner helper. It captures before and after a normal tile selection and a selection after waiting four seconds. Evidence includes the saved tile target, launcher state, relevant processes, native binary hash, close/launch log, and Samsung Home registry flags. It writes a private JSON report under the existing updater work directory and prints the copy command. Five diagnostic tests pass, plus all 23 updater tests. The collector has not yet run on the TV.
+
+The cause is not established. Review the report for unfinished native close operations, missing launch requests, incorrect tile targets, disabled registry entries, or launches immediately followed by another close. The native system-app launch currently logs the detached shell's return code, which does not establish that Samsung Home opened. Do not install a speculative fix or repeat the successful suite installation.
+
 Exact next steps:
+
+0. Run the Home tile collector and inspect the returned report before making a launcher change. Continue the interaction checks after resolving the failed Samsung Home tile.
 
 1. Configure the intended Home setup through Vetro's Launcher: overlay on single press, Samsung Home as the Home tile destination, and Glass Home as the independent double-press destination. Keep Samsung Home available.
 2. Verify single press, distinct fast double press, slow second press, held-key/repeat handling, and Home behavior while a close is already executing. The binary is installed, but none of these interactions is established by the installation report.

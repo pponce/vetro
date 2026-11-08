@@ -29,3 +29,13 @@ The updater keeps a private installation ledger and prepared packages under `vet
 An installation attempt is recorded before it is submitted. Rerunning verifies that attempt against the installed payload and author identity; it never automatically submits that installation again. If verification fails, keep the report and investigate before starting another updater.
 
 Run the isolated updater tests with `python3 -m unittest discover -s tools/tests -v`. These tests cover preparation order, configuration retention, archive checks, package identity, resumability, and failure handling. They do not replace hardware testing.
+
+## Samsung Home tile diagnostics
+
+`diagnose-home-tile.py` collects the native launcher's log, Home tile target, launcher configuration, relevant process state, installed launcher checksum, and Samsung Home registry flags. Run it with `vetro_owner.py` beside it:
+
+```bash
+python3 tools/diagnose-home-tile.py --project-root /path/to/samsung-tv-tools --tv TV_IP --report-host user@COMPUTER_IP
+```
+
+Keep Vetro connected to root and its launcher enabled. The tool prompts for two manual attempts: a normal Samsung Home tile selection, followed by a selection after waiting four seconds. It does not launch apps, change TV settings, restart processes, or install packages. Owner pairing may prompt if no valid maintenance credential is available. The report contains the selected Home configuration and launcher log, omits credentials and unrelated app inventory, and is saved with private file permissions. An interrupted run retains the snapshots collected so far.
