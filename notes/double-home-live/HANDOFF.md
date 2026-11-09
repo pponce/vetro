@@ -15,7 +15,7 @@ Published correction r3:
 
 ## Latest hardware evidence and confirmed cause
 
-Hardware acceptance update: `report-20261109T035153810007Z.json` confirms r3 installed successfully with `complete: true`, installed files and runtime verified, and `liveDoubleHome.sameProcess: true` plus `savedAndApplied: true`. The user then confirmed: "save worked" in the dashboard. Automated live-save verification and a manual dashboard save have therefore passed on the S95C. Post-update destination-switching, enable/disable and physical double-press tests have not yet been explicitly reported. No further install or cold boot is needed for the save correction.
+Hardware acceptance update: `report-20261109T035153810007Z.json` confirms r3 installed successfully with `complete: true`, installed files and runtime verified, and `liveDoubleHome.sameProcess: true` plus `savedAndApplied: true`. The user then confirmed: "save worked" in the dashboard. Automated live-save verification and a manual dashboard save have therefore passed on the S95C. The user additionally confirmed: "changing the app works after saving." Destination changes therefore take effect after a live save, completing acceptance of the reported save/destination issue. Separate disable/re-enable coverage has not been explicitly reported. No further install or cold boot is needed for the save correction.
 
 `reply-20261109T034424602817Z.json` completed the focused diagnostic on installed r2 (`1768e251`). The helper returned exit code 0 without a timeout. Its output contained the exact fresh `double-home-applied <nonce>` line, followed by two Samsung .NET `[GC_INFO]` lines. The native acknowledgement file exactly matched the full request, including nonce, PID and Glass Home destination. The launcher PID remained unchanged and persisted preferences were unchanged. The native log recorded the application.
 
@@ -40,7 +40,7 @@ Both full CI runs passed:
 - Combined: https://github.com/pponce/vetro/actions/runs/42558228305
 - PR #167: https://github.com/pponce/vetro/actions/runs/42558249333
 
-The existing CI includes root/app EACCES boundary tests with separate processes, native launcher tests, Ecore tests, TV launcher compilation and release checks. The native root path has now also been verified on the TV by the uploaded diagnostic. The r3 installer live-save check and manual dashboard save are now confirmed on the S95C; physical gesture acceptance after this update remains to be reported.
+The existing CI includes root/app EACCES boundary tests with separate processes, native launcher tests, Ecore tests, TV launcher compilation and release checks. The native root path has now also been verified on the TV by the uploaded diagnostic. The r3 installer live-save check and manual dashboard save are now confirmed on the S95C; the user also confirmed that changing the destination takes effect after saving.
 
 ## Earlier findings retained
 
@@ -54,8 +54,8 @@ Before live save was introduced, changing double-press settings restarted the la
 2. Completed: the combined source/run/artifact/digest is pinned in `tools/update-vetro-live-double-home.py`, using suite `vetro-live-double-home-20261109-r3`. All 14 installer tests and Python compilation passed with these final pins. Tooling and this checkpoint are published together.
 3. Completed: the user ran the checksum-verified r3 installer successfully. Installer files are under `vetro-install/live-double-home-installer-r3`; records/reports are under `vetro-install/vetro-live-double-home-20261109-r3` within the existing `samsung-tv-tools` project. Retain earlier records. Keep the TV awake with Vetro/root connected; no cold boot is required.
 4. Completed: the report confirms the installer live save applied successfully in the same launcher process. The user also confirmed a dashboard save succeeded.
-5. Remaining acceptance: change the double-press destination, save and test it, then return to Glass Home and test two quick distinct Home presses. Keep Toggle Vetro overlay and remote interception enabled. Enabling/disabling only double press is additional coverage; do not repeat completed installation or diagnostic steps.
-6. Record actual dashboard and remote acceptance separately from passing CI and the already-confirmed native helper path.
+5. Completed: the user confirmed that changing the app works after saving. The reported live-save issue is resolved. Enabling/disabling only double press is optional additional coverage; do not repeat completed installation or diagnostic steps.
+6. Completed: installer same-process application, manual dashboard saving, and destination changes are recorded separately from CI and diagnostic evidence. No further correction or installation is required for this reported issue.
 
 The GitHub connection allowed branch updates but refused an upstream PR comment with HTTP 403 (`Resource not accessible by integration`). Do not claim a comment or PR body edit was posted. Prepared comment text is in `PR167-UPDATE.md`.
 
