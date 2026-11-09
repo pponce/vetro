@@ -15,10 +15,11 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="tests/**;native-tests/**;bin/**;obj/**" />
+    <Compile Remove="tests/**;native-tests/**;settings-tests/**;bin/**;obj/**" />
   </ItemGroup>
   <ItemGroup>
     <!-- Glass images and the generic Source/Settings/HDMI icons. The app list and the apps' own icons come from the TV at run time. -->
     <None Include="res/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
+
