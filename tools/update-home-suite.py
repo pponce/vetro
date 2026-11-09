@@ -414,10 +414,12 @@ class Updater:
             for attempt in range(40):
                 try:
                     status = self.owner.request('/status', timeout=3)
-                    if status.get('app', {}).get('sourceRevision') == spec['revision'] and status.get('agent', {}).get('connected'):
-                        return self.refresh_native(record)
                 except Exception:
-                    pass
+                    status = {}
+                # Only a service-read failure is a reconnection condition.
+                # Native refresh/save failures must stop with their actual error.
+                if status.get('app', {}).get('sourceRevision') == spec['revision'] and status.get('agent', {}).get('connected'):
+                    return self.refresh_native(record)
                 if attempt in (9, 24):
                     print('Waiting for the updated Vetro service and root connection...', flush=True)
                 time.sleep(2)
@@ -541,12 +543,16 @@ class Updater:
             record = self.state['apps'][spec['key']]
             if not record.get('submitted'):
                 self.install(spec, prepared[spec['key']])
-            running = self.refresh_runtime(spec, record)
-            record['runtimeVerified'] = running
-            self.save()
+            self.report['stage'] = 'verify-runtime-' + spec['key']
+            record['runtimeVerified'] = False
             self.report['apps'][spec['name']] = {
                 'revision': spec['revision'], 'installedFilesVerified': record.get('verified', False),
-                'runtimeVerified': running}
+                'runtimeVerified': False}
+            self.save()
+            running = self.refresh_runtime(spec, record)
+            record['runtimeVerified'] = running
+            self.report['apps'][spec['name']]['runtimeVerified'] = running
+            self.save()
             if not running:
                 raise Stop(spec['name'] + ' files are installed, but its updated runtime is not confirmed. Return this report before further changes.')
             print('RUNNING: ' + spec['name'] + '.', flush=True)

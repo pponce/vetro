@@ -1,15 +1,16 @@
-Updated this PR in bd4c234455226cb4cdbd1c96295f819ccc099971 so double-press settings can be changed while the Vetro overlay is running.
+Double-press settings now apply through Vetro's root agent while the existing launcher stays running. The root helper validates the launcher process and uses a private request plus an exact acknowledgement before the service saves the preference.
 
-Save asks the running launcher to apply the setting and waits for an acknowledgement tied to that process and request, then saves the preference. Enabling, disabling, changing the destination, and selecting the Home shortcut all use this path. Applying a change clears an unfinished gesture and cancels a pending launch of the previous double-press destination. An unconfirmed change attempts to restore the previous runtime setting and reports the result.
+This corrects a permission failure found on my S95C when the app service tried to deliver the live setting directly. It covers unchanged saves, enabling or disabling double press, changing the target app, and choosing the Home shortcut. A failed application or persistence step attempts to restore the previous runtime setting and reports the result.
 
-The physical Home assignment, remote interception preference and overlay Home tile remain independent.
+The physical Home assignment, remote interception preference and overlay Home tile remain independent. No normal double-press save restarts the launcher.
 
-Validation:
+Both source-check runs passed. Validation for the correction:
 
-- [PR source checks passed](https://github.com/pponce/vetro/actions/runs/42547343657), including application tests, native launcher tests, Ecore tests and TV launcher compilation.
-- Tests cover live changes, persistence failure and recovery, missing FIFO readers, stale acknowledgements, process identity and malformed requests.
-- [The combined enhanced build also passed](https://github.com/pponce/vetro/actions/runs/42547293171), including direct Home input tests and packaging.
+- PR commit: `2164f937769410ba1c2ff08ab7cf4b891c11ecea` — [source checks](https://github.com/pponce/vetro/actions/runs/42550281754).
+- Combined build: `1768e251784adb14dc007052c5b9a45e567e2777` — [source checks](https://github.com/pponce/vetro/actions/runs/42550258938).
+- The new native test runs an unprivileged process that gets EACCES, then confirms the root helper changes settings in the same resident launcher process. It also covers stale acknowledgements, wrong PID, malformed requests, missing readers and invalid FIFO paths.
+- Service tests cover denied app filesystem access, live updates, rollback and concurrent saves. Installer tests cover failure reporting without repeated live-save attempts.
 
-On my S95C, double press itself works after saving while the launcher is off and then enabling it. The new live-save implementation still needs installation and hardware testing. The underlying cause of the earlier restart-command failure has not been established.
+Hardware acceptance of this correction is pending. The preceding package installed and restarted successfully on my S95C, but its direct live-save path failed with EACCES. The original restart-command failure's underlying cause remains unproven; this change removes restarting from ordinary double-press saves.
 
 This update is scoped to double-press configuration. The PR keeps its existing native input path and prerequisite stack; direct-interception integration and #169 remain separate.

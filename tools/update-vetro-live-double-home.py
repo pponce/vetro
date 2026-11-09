@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Install enhanced Vetro with confirmed live double-press settings."""
 import importlib.util
+import json
+import urllib.error
 from pathlib import Path
 
 
@@ -10,14 +12,14 @@ def updater_module():
     spec.loader.exec_module(suite)
     suite.__doc__ = __doc__
     vetro = dict(next(app for app in suite.APPS if app['key'] == 'vetro'))
-    vetro.update(revision='d0a431dc66a7cf1f82b6e921538bf76c67127530',
-                 run=42547293171, artifact=13643688897, digest='b88c1e8723c0bd541386deeb1980368301201c4f92d058799c7bd7bcfe68df73')
+    vetro.update(revision='1768e251784adb14dc007052c5b9a45e567e2777',
+                 run=42550258938, artifact=13644104863, digest='9945da1734b88d507fdbc8eba28656c9582b86df60eba49ce33f6fad79e0743d')
     vetro['required'] = vetro['required'] + [
         'payload/SamsungTvRemoteInputAgent.dll',
         'payload/SamsungTvRemoteInputAgent.deps.json',
         'payload/SamsungTvRemoteInputAgent.runtimeconfig.json']
     suite.APPS = [vetro]
-    suite.SUITE = 'vetro-live-double-home-20261109-r1'
+    suite.SUITE = 'vetro-live-double-home-20261109-r2'
     base = suite.Updater
 
     class LiveDoubleHomeUpdater(base):
@@ -79,7 +81,19 @@ def updater_module():
                 if not isinstance(before_pid, int) or before_pid <= 0:
                     raise suite.Stop('The native launcher process could not be identified.')
                 print('Checking a live save of the existing double-press setting...', flush=True)
-                after = self.owner.request('/dock', {'action': 'doubleHome', 'value': plan['doubleHome']}, timeout=30)
+                try:
+                    after = self.owner.request('/dock', {'action': 'doubleHome', 'value': plan['doubleHome']}, timeout=45)
+                except urllib.error.HTTPError as error:
+                    detail = 'HTTP ' + str(error.code)
+                    try:
+                        response = json.loads(error.read(8192))
+                        if isinstance(response.get('error'), str):
+                            detail += ': ' + response['error'][:1500]
+                    except (ValueError, AttributeError):
+                        pass
+                    record['liveDoubleHome'] = {'savedAndApplied': False, 'error': detail}
+                    self.save()
+                    raise suite.Stop('Live-save verification failed. ' + detail) from None
                 verified = (after.get('running') is True and after.get('pid') == before_pid
                             and all(after.get(key) == plan.get(key) for key in ('enabled', 'customApp', 'doubleHome', 'homeShortcut')))
                 record['liveDoubleHome'] = {'sameProcess': after.get('pid') == before_pid, 'savedAndApplied': verified}

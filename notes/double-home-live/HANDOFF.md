@@ -1,39 +1,59 @@
-# Double-press Home live-save checkpoint
+# Double-press Home correction checkpoint
 
-Objective: change double-press enablement and destination while the Vetro overlay is running, with confirmation that the current native launcher applied the setting.
+Objective: save double-press enablement and destination while the Vetro overlay remains running, without changing the physical Home assignment or remote interception preference.
 
-## Current state
+## Repositories and branches
 
-- Repository: `pponce/vetro`.
-- Combined branch: `combined/home-enhancements-0.5.0`, commit `d0a431dc66a7cf1f82b6e921538bf76c67127530` (parent `a5055f2216ba3dbdcef2b089c9bc4e04b337a089`). The same commit is on `fix/double-home-live-settings-0.5.0`.
-- Open upstream PR [#167](https://github.com/andrearicci93/vetro/pull/167): branch `pr/home-double-press-0.5.0`, commit `bd4c234455226cb4cdbd1c96295f819ccc099971` (parent `3aa46f572eb4518dd91c84dc67f28d9884c33827`). Also on `fix/double-home-live-settings-pr167`.
-- PR #167 was updated with only the live-save fix. Its native Home input path and prerequisite stack remain intact. Direct interception and #169 were not added to its branch.
-- Other open Home PRs do not contain double-press configuration, so this scoped fix does not apply to them.
-- The last hardware-confirmed installed build is `a5055f22`. The user confirmed fast double press opens Glass Home after stopping the overlay, saving, and enabling it again. Live save in the new build has not yet been tested on the TV.
+Repository: `pponce/vetro`. Combined branch: `combined/home-enhancements-0.5.0`. Upstream PR [#167](https://github.com/andrearicci93/vetro/pull/167) uses `pr/home-double-press-0.5.0`. Installer branch: `tools/home-suite-updater-0.5.0`.
 
-## Implementation and verification
+Published correction:
 
-The service sends a fixed `reload-double-home` command to the existing nonblocking control FIFO. A bounded request in the service state directory includes a fresh nonce, target process id, and validated setting. The native event loop applies the setting, clears an unfinished gesture and any pending launch of the previous double-press target, then atomically publishes an exact acknowledgement readable by the service. The service persists the setting only after confirmation. An unconfirmed application or persistence failure attempts live restoration of the old setting. No normal double-press save stops the launcher, rebuilds its app catalog, changes the physical Home assignment, or changes interception preferences.
+- Combined: `1768e251784adb14dc007052c5b9a45e567e2777`, test branch `fix/double-home-root-ipc-0.5.0`, base `d0a431dc66a7cf1f82b6e921538bf76c67127530`.
+- PR #167: `2164f937769410ba1c2ff08ab7cf4b891c11ecea`, test branch `fix/double-home-root-ipc-pr167`, base `bd4c234455226cb4cdbd1c96295f819ccc099971`.
+- PR #167 retains its existing native input path and prerequisite stack. Direct interception and PR #169 are not added to it. Other Home PRs do not contain double-press configuration.
 
-Startup arguments still load the saved setting when the launcher starts. Off/custom modes save double-press preferences for future overlay use without starting the overlay. A missing running launcher produces an explicit error rather than silently reporting a successful live application.
+## Confirmed hardware state and diagnosis
 
-- [Combined CI](https://github.com/pponce/vetro/actions/runs/42547293171): all checks passed, including application and integration tests, direct Home FIFO tests, native launcher logic, real Ecore child-process tests, TV compilation, release audit and package creation.
-- [PR CI](https://github.com/pponce/vetro/actions/runs/42547343657): all checks passed on the independent PR commit.
-- Local tests passed for live-save enable/change/disable, rollback after lost confirmation and persistence failure, absent readers, wrong process/stale acknowledgements, shared Home assignment and existing dock behavior.
-- Installer tests passed: ten cases covering pinned artifact identity, one stop/start for binary replacement, identical-PID live save, lost responses, safe reruns, later user preference changes, off/custom modes and failure detection. Python compilation passed.
+The uploaded `report-20261109T020040550319Z.json` confirms that revision `d0a431dc66a7cf1f82b6e921538bf76c67127530` installed: all packaged files and the author identity matched. One stop and one start of the native launcher were confirmed. The existing Glass Home double-press preference was retained. Only runtime/live-save verification failed. The installer has stopped.
 
-Package artifact: `13643688897`, run `42547293171`, source `d0a431dc66a7cf1f82b6e921538bf76c67127530`, SHA-256 `b88c1e8723c0bd541386deeb1980368301201c4f92d058799c7bd7bcfe68df73`.
+A dashboard save without any edits returned `EACCES` from the new service-side live settings delivery. The exact denied filesystem operation was not distinguished by that implementation. Root connectivity itself was confirmed. This is a defect in the first live-save correction, not evidence that installation failed or root access was lost.
 
-## Installer and next steps
+The installer additionally caught live-save errors inside its service-reconnection loop and retried them. That produced repeated checks and misleading reconnect messages. The corrected loop retries only status-read/reconnection failures and lets native refresh/save errors stop immediately.
 
-Tooling branch: `tools/home-suite-updater-0.5.0`. Installer: `tools/update-vetro-live-double-home.py`, alongside the existing `tools/update-home-suite.py` and `tools/vetro_owner.py`. It pins and verifies the passing CI artifact, reuses the existing signing identity and owner pairing, and updates only Vetro. It uses separate confirmed public stop/start operations once to load the new native binary, then resaves the current double-press preference and verifies the launcher PID is unchanged. Interrupted steps are checked before proceeding; an installation is not blindly repeated.
+The earlier `Start failed` error occurred when double-press saves restarted the launcher. The workaround of stopping the overlay, saving, and enabling it worked. That original restart failure's underlying cause is still unproven. Stock 0.5.0 does not have this double-press settings feature; the introduced live-save defect belongs to the enhanced implementation.
 
-Keep all host work under the established `samsung-tv-tools` project. The download folder is `vetro-install/live-double-home-installer-r1`; installation records and reports are in `vetro-install/vetro-live-double-home-20261109-r1`. The installer prints an exact rsync command for the report. No backup was created and no ad hoc patch was applied to the TV.
+## Implemented correction
 
-1. Run the pinned installer with the TV awake, root connected, and the existing SDB/TV-Store connection available.
-2. Confirm `VERIFIED: double-press settings saved and applied without restarting the launcher.` Return the generated report if any operation stops or is unresolved.
-3. With the overlay and Remote interception still enabled, save another double-press destination, then save Glass Home again. Test each on the same physical remote.
-4. Disable and re-enable only double press, saving each time. Test normal single Home, fast distinct double presses, slower second presses and held keys. Leave the physical Home assignment on Toggle Vetro overlay.
-5. Record hardware acceptance separately from the passing desktop/CI tests. Do not claim the original stop/start failure was diagnosed: the fix removes that operation from double-press saving, while its original underlying cause remains unproven.
+The app service invokes a bounded `--apply-double-home` mode in the packaged launcher through Vetro's existing root executor. This mode runs before instance acquisition or EFL setup; it never starts/stops the resident launcher or shows its window. All request-file, FIFO and acknowledgement operations occur in the root process. The service performs none of those operations itself.
 
-The GitHub connection allowed updating the PR branch but refused posting the validation comment to the upstream repository with HTTP 403 (`Resource not accessible by integration`). The prepared note is in [PR167-UPDATE.md](PR167-UPDATE.md). No comment was posted and the PR body was not edited.
+The root client validates the PID and launcher command line, opens the control FIFO nonblocking without following symlinks, verifies the opened descriptor is a pipe, writes a private request, sends the fixed reload command and waits for an exact nonce/PID/settings acknowledgement. Request and acknowledgement files are in the launcher's runtime directory with mode 0600. Staged requests are removed on completion or timeout.
+
+The existing native event loop applies the setting and resets any unfinished double gesture and pending launch of the old target. The service persists the preference only after confirmation; on failure it attempts to restore the previous runtime setting. Off/custom modes retain their existing save behavior.
+
+The updater preserves installed-file evidence when runtime verification fails, records the actual HTTP error, and uses a separate r2 ledger for the corrected build. It reuses the existing Partner certificate and owner pairing. Loading the new binary requires one confirmed stop/start; ordinary settings saves do not. No backups or ad hoc TV patches are created.
+
+## Validation
+
+Local service tests passed for live changes, rollback, concurrent saves, unchanged Home assignment, and root dispatch while app filesystem calls throw EACCES. Existing dock and Home-assignment tests passed. All 14 installer tests passed, including real HTTP-error reporting, failure propagation without repeat saves, transient connection recovery, and retaining successful installation evidence. Python compilation passed.
+
+Both CI runs passed, including the permissions test, existing native tests, Ecore tests, TV launcher compilation and release checks:
+
+- Combined: https://github.com/pponce/vetro/actions/runs/42550258938
+- PR #167: https://github.com/pponce/vetro/actions/runs/42550281754
+
+CI adds a real root/app permissions test: a process running as uid 65534 gets EACCES, while the root client updates a separate resident process. It exercises unchanged saves, destination changes, disablement, exact acknowledgements, stale acknowledgements, wrong PID, malformed input, regular files, symlinks and absent FIFO readers. Full native compilation, existing native tests and release checks also remain required. Hardware acceptance of r2 is pending.
+
+## Exact next steps
+
+1. Completed: both CI runs passed and the combined and PR branches were advanced with expected-head checks.
+2. Completed: the combined artifact, digest and source revision are pinned in `tools/update-vetro-live-double-home.py`, using suite `vetro-live-double-home-20261109-r2`. All 14 installer tests and Python compilation passed again with the final pins. The tooling commit contains the scripts and this checkpoint.
+3. Deliver a full checksum-verified Bash block for the existing `samsung-tv-tools` project. The TV should remain awake with its current settings; no cold boot is required for this correction. The installer prints the report's exact rsync command.
+4. Confirm `VERIFIED: double-press settings saved and applied without restarting the launcher.` If it stops, return the new report rather than toggling Home modes or reinstalling repeatedly.
+5. Reload the dashboard. With Toggle Vetro overlay and remote interception enabled, save unchanged double-press settings, then change the destination and save, then return to Glass Home and save. Test each target with two quick distinct Home presses. Disable and re-enable only double press and test normal single Home.
+6. Record hardware acceptance separately from desktop and CI checks.
+
+The GitHub connection permitted branch updates but refused an upstream PR comment with HTTP 403 (`Resource not accessible by integration`). Do not claim a comment or PR body update was posted. Prepared comment text is in `PR167-UPDATE.md`.
+
+Package artifact: `13644104863`, source `1768e251784adb14dc007052c5b9a45e567e2777`, run `42550258938`, SHA-256 `9945da1734b88d507fdbc8eba28656c9582b86df60eba49ce33f6fad79e0743d`.
+
+Installer files go under `vetro-install/live-double-home-installer-r2`; installation records and reports go under `vetro-install/vetro-live-double-home-20261109-r2`, within the existing project. Earlier r1 records remain intact.
