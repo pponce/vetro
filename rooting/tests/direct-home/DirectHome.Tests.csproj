@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <StartupObject>DirectHomeTests</StartupObject>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../payload/SamsungTvRemoteInputAgent.cs" Link="Agent.cs" />
+    <Compile Include="../../../dock/src/Core/DirectHomeInput.cs" Link="DirectHomeInput.cs" />
+    <Compile Include="../../../dock/src/Core/HomeGesture.cs" Link="HomeGesture.cs" />
+  </ItemGroup>
+</Project>

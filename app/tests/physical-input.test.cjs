@@ -37,9 +37,12 @@ assert.equal(withForwarded[0].unique,true);
   assert.equal(filtered.policy.connected,true);
   assert.equal(filtered.policy.node,'/dev/input/event4');
   bridge.stop();
+  const homeOnly=await bridge.start('Smart Control','filter',[],true);
+  assert.equal(homeOnly.policy.connected,true,'Home can intercept without unrelated shortcuts');
+  bridge.stop();
   authMode='observe';
   bad=true;await assert.rejects(bridge.start('Smart Control','observe',[]),/authentication/);assert.equal(bridge.status().policy.mode,'off');
-  assert.equal(commands.filter(x=>x.includes('nohup')).length,3);
+  assert.equal(commands.filter(x=>x.includes('nohup')).length,4);
   console.log('PASS physical input: exact devices, own forwarding device skipped, authenticated events, stop, reject invalid MAC');
  }finally{bridge.stop();if(socket)socket.destroy();}
 })().catch(e=>{console.error(e);process.exitCode=1});

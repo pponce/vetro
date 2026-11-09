@@ -51,12 +51,12 @@ Bridge.prototype.stop = function () {
     if(socket)socket.destroy();
     if(server)server.close();
 };
-Bridge.prototype.start = function (device, mode, tokens) {
+Bridge.prototype.start = function (device, mode, tokens, homeEnabled) {
     var self=this;
     if (mode==='off') {self.stop(); return Promise.resolve(self.status());}
     if (mode!=='observe' && mode!=='filter') return Promise.reject(new Error('invalid input mode'));
     if (!Array.isArray(tokens) || tokens.some(function(t){return !KEY_CODE_RE.test(t) || +t>767;})) return Promise.reject(new Error('invalid input codes'));
-    if (mode==='filter' && !tokens.length) return Promise.reject(new Error('save a physical rule before enabling interception'));
+    if (mode==='filter' && !tokens.length && !homeEnabled) return Promise.reject(new Error('save a physical rule before enabling interception'));
     var requestGeneration=self.generation;
     return self.inventory().then(function(list){
         if(requestGeneration!==self.generation)throw new Error('input request cancelled');

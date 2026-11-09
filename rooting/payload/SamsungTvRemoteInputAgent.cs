@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Globalization;
+using System.Text.Json;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -424,6 +426,7 @@ internal static class SamsungTvRemoteInputAgent
         Dictionary<int, string> keyNames = ReadKeyNames();
         Dictionary<ushort, bool> pressedBlocked = new Dictionary<ushort, bool>();
         long sequence = 0;
+        var home = new DirectHomeRouter();
         int? scanCode = null;
         byte[] buffer = new byte[eventSize];
         PollDescriptor[] descriptors = new PollDescriptor[]
@@ -512,6 +515,16 @@ internal static class SamsungTvRemoteInputAgent
                         block = first;
                     }
                 }
+                if (filter && type == EventKey)
+                {
+                    long seconds = IntPtr.Size == 8 ? BitConverter.ToInt64(buffer, 0) : BitConverter.ToInt32(buffer, 0);
+                    long micros = IntPtr.Size == 8 ? BitConverter.ToInt64(buffer, 8) : BitConverter.ToInt32(buffer, 4);
+                    bool configured = blocked.Contains(code.ToString()) || (!string.IsNullOrEmpty(key) && blocked.Contains(key));
+                    bool homeDecision = home.Decide(code, value, configured, seconds, micros,
+                        () => LauncherEnabled("/opt/usr/home/owner/share/vetro-dock.json"),
+                        frame => WriteHomeFrame("/home/owner/tvlauncher-home.fifo", frame));
+                    if (code == 63) block = homeDecision;
+                }
                 if (filter
                     && !block
                     && (type == EventKey || type == EventSynchronization))
@@ -553,6 +566,94 @@ internal static class SamsungTvRemoteInputAgent
                 }
             }
         }
+    }
+
+    // Home goes straight to the native launcher's private FIFO. The existing
+    // remapper owns the grab; no extra device or polling loop is introduced.
+    internal sealed class DirectHomeRouter
+    {
+        private bool down, consumed, routed, gesture;
+        private int epoch;
+        private readonly int session = getpid();
+        internal bool Decide(ushort code, int value, bool configured, long seconds, long micros,
+            Func<bool> enabled, Func<string, bool> deliver)
+        {
+            if (code != 63)
+            {
+                if (value == 1 && gesture) { if (!deliver("reset\n")) epoch++; gesture = false; }
+                return configured;
+            }
+            if (value == 1 && !down)
+            {
+                down = true; consumed = configured; routed = false;
+                if (!configured && enabled())
+                {
+                    routed = deliver(Frame(value, seconds, micros));
+                    if (routed) { consumed = true; gesture = true; }
+                    else epoch++;
+                }
+                return consumed;
+            }
+            if (!down) return configured; // orphan repeats/releases never open the launcher
+            if (routed && value != 1 && !deliver(Frame(value, seconds, micros)))
+            { epoch++; routed = false; }
+            bool result = consumed;
+            if (value == 0) { down = consumed = routed = false; }
+            return result;
+        }
+        private string Frame(int value, long seconds, long micros)
+        {
+            return string.Format(CultureInfo.InvariantCulture, "home {0} {1} {2} {3} {4}\n", session, epoch, value, seconds, micros);
+        }
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct HomeStat
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(20)] public uint Uid;
+        [FieldOffset(28)] public ushort Mode;
+    }
+    [DllImport(Libc, SetLastError = true)]
+    private static extern int statx(int fd, string path, int flags, uint mask, out HomeStat status);
+
+    internal static int NoFollowFlag(Architecture architecture)
+    {
+        return architecture == Architecture.Arm ? 1 << 15 : 1 << 17;
+    }
+    internal static bool LauncherEnabled(string path)
+    {
+        try
+        {
+            if (new FileInfo(path).Length > 16384) return false;
+            using (JsonDocument state = JsonDocument.Parse(File.ReadAllText(path)))
+            {
+                if (state.RootElement.ValueKind != JsonValueKind.Object) return false;
+                JsonElement value;
+                if (state.RootElement.TryGetProperty("enabled", out value) && value.ValueKind == JsonValueKind.True) return true;
+                return state.RootElement.TryGetProperty("customApp", out value) && value.ValueKind == JsonValueKind.String &&
+                    Regex.IsMatch(value.GetString() ?? "", "^[A-Za-z0-9_.-]{1,120}$");
+            }
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (JsonException) { return false; }
+    }
+    internal static bool WriteHomeFrame(string path, string frame)
+    {
+        byte[] bytes = Encoding.ASCII.GetBytes(frame);
+        if (bytes.Length > 96) return false; // one atomic write, below Linux PIPE_BUF
+        int fd = open(path, OpenWriteOnly | OpenNonblock | NoFollowFlag(RuntimeInformation.ProcessArchitecture) | 0x80000);
+        if (fd < 0) return false;
+        try
+        {
+            HomeStat status;
+            if (statx(fd, "", 0x1000, 11, out status) != 0 || (status.Mask & 11) != 11 ||
+                (status.Mode & 0xf000) != 0x1000 || (status.Mode & 0x1ff) != 0x180 || status.Uid != (uint)getuid()) return false;
+            return write(fd, bytes, bytes.Length) == bytes.Length;
+        }
+        catch (EntryPointNotFoundException) { return false; }
+        finally { close(fd); }
     }
 
     private static string EventJson(

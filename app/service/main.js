@@ -761,10 +761,11 @@ function saveInputPreference(preference){
     if(!saveRemap()){remapStore.input=previous;throw new Error('Remote setting could not be saved to disk');}
 }
 function inputTokens(){return remapStore.rules.filter(function(r){return r.enabled&&r.trigger.type==='physical'&&r.trigger.value!=='63';}).map(function(r){return r.trigger.value;});}
+function directHomeEnabled(){var state=dock.readState();return state.enabled===true||!!state.customApp;}
 function restoreInput(){
     if(inputPaused&&Date.now()-inputSeenAt>INPUT_LISTEN_IDLE_MS){stopInput();inputPaused=false;}
     var preference=inputPreference(),generation=inputGeneration;
-    if(!inputLifecycleActive||!preference.enabled||inputPaused||Date.now()<inputFaultUntil||inputRestoring||physical.status().policy.connected||!platform.status().agent.connected||!inputTokens().length)return;
+    if(!inputLifecycleActive||!preference.enabled||inputPaused||Date.now()<inputFaultUntil||inputRestoring||physical.status().policy.connected||!platform.status().agent.connected||(!inputTokens().length&&!directHomeEnabled()))return;
     inputRestoring=true;
     physical.inventory().then(function(list){
         if(!inputLifecycleActive||generation!==inputGeneration||inputPaused||Date.now()<inputFaultUntil||inputPreference()!==preference)return;
@@ -773,7 +774,7 @@ function restoreInput(){
         // Several interfaces share the name: the one that advertises keys, and if more than one does, the saved node among them.
         var device=candidates.length===1?candidates[0]:keyed.length===1?keyed[0]:keyed.find(function(d){return d.node===preference.node;})||null;
         if(!device)throw new Error('Saved physical remote is unavailable');
-        return physical.start(device.node,'filter',inputTokens());
+        return physical.start(device.node,'filter',inputTokens(),directHomeEnabled());
     }).then(function(){if(generation===inputGeneration)inputError=null;}).catch(function(e){if(generation===inputGeneration)inputError=e.message;}).finally(function(){if(generation===inputGeneration)inputRestoring=false;});
 }
 function stopInput(){++inputGeneration;inputRestoring=false;inputObservers.forEach(function(b){b.stop();});inputObservers=[];physical.stop();}
@@ -810,7 +811,7 @@ function handleInput(req,res){
         }
         if(p.device==='auto')return serveJson(res,{error:'select the detected node before intercepting'},400);
         stopInput();var requestGeneration=inputGeneration;
-        physical.start(p.device,p.mode,tokens).then(function(status){
+        physical.start(p.device,p.mode,tokens,directHomeEnabled()).then(function(status){
             if(!inputLifecycleActive)throw new Error('Input request cancelled');
             if(requestGeneration!==inputGeneration)throw superseded();
             if(p.mode==='filter'){saveInputPreference({enabled:true,device:status.policy.device,node:status.policy.node});inputPaused=false;}

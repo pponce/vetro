@@ -28,6 +28,11 @@ namespace Launcher
         private static readonly Efl.TaskCb AnimCb = OnFrame;
         private static readonly Efl.TaskCb IdleCb = OnIdle;
         private static readonly Efl.FdCb FifoCb = OnFifo;
+        private static readonly Efl.FdCb HomeFifoCb = OnHomeFifo;
+        private static readonly DirectHomeInput HomeFrames = new DirectHomeInput();
+        private static int _homeFifoFd = -1, _directSession, _directEpoch;
+        private static IntPtr _homeFifoHandler;
+        private static string _homeFifoPath;
         private static readonly Efl.FdCb InputCb = OnInput;
 
         private static string _dir, _logPath, _pidPath, _fifoPath;
@@ -223,9 +228,22 @@ namespace Launcher
                 {
                     File.Delete(_pidPath);
                     Libc.unlink(_fifoPath);
+                    Libc.unlink(_homeFifoPath);
                 }
             }
             catch (Exception) { }
+        }
+
+        private static void SetupHomeFifo()
+        {
+            Libc.unlink(_homeFifoPath);
+            // Only the root input helper can deliver physical Home frames.
+            if (Libc.mkfifo(_homeFifoPath, 384u) != 0 || Libc.chmod(_homeFifoPath, 384u) != 0)
+            { Log("direct Home pipe unavailable; physical Home uses Samsung"); return; }
+            _homeFifoFd = Libc.open(_homeFifoPath, Libc.O_RDWR | Libc.O_NONBLOCK);
+            if (_homeFifoFd < 0) return;
+            _homeFifoHandler = Efl.ecore_main_fd_handler_add(_homeFifoFd, Efl.EcoreFdRead, HomeFifoCb, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            if (_homeFifoHandler == IntPtr.Zero) { Libc.close(_homeFifoFd); _homeFifoFd = -1; Libc.unlink(_homeFifoPath); }
         }
 
         private static void SetupFifo()
@@ -650,6 +668,56 @@ namespace Launcher
             return 1;
         }
 
+        private static byte OnHomeFifo(IntPtr data, IntPtr handler)
+        {
+            try
+            {
+                for (int round = 0; round < 8; round++)
+                {
+                    long n = (long)Libc.read(_homeFifoFd, ReadBuf, (UIntPtr)ReadBuf.Length);
+                    if (n <= 0) break;
+                    foreach (DirectHomeEvent e in HomeFrames.Feed(ReadBuf, (int)n))
+                    {
+                        if (e.Reset) { DoubleHome.Reset(); if (_pendingLaunch == _doubleHome) _pendingLaunch = null; if (CloseGuard != null) CloseGuard.CancelLaunch(); continue; }
+                        if (_directSession != e.Session || _directEpoch != e.Epoch)
+                        { DoubleHome.Reset(); _directSession = e.Session; _directEpoch = e.Epoch; }
+                        HandleHome(-1, e.Value, e.Time, true);
+                    }
+                }
+            }
+            catch (Exception ex) { Log("direct Home: " + ex.Message); }
+            return 1;
+        }
+
+        private static void HandleHome(int source, int value, double time, bool direct)
+        {
+            double now = Efl.ecore_time_get();
+            if (_doubleHome != null && _homeLaunch == null)
+            {
+                HomeGestureAction gesture = DoubleHome.Feed(source, value, time);
+                if (gesture == HomeGestureAction.Double)
+                {
+                    HomeKeys.ObserveRaw(now);
+                    CancelGuard(); HideDock();
+                    if (_ctl.Phase == Phase.Hidden) LaunchApp(_doubleHome);
+                    else _pendingLaunch = _doubleHome;
+                    Log(direct ? "direct Home double" : "Home double");
+                    return;
+                }
+                if (gesture != HomeGestureAction.Press) return;
+            }
+            else if (value != 1) return;
+            if (direct) HomeKeys.ObserveRaw(now);
+            else if (HomeKeys.FromEvdev(now, _ctl.IsActive) == HomeKeyAction.None) return;
+            _perfWhy = direct ? "direct-home" : "home";
+            if (direct) CancelGuard();
+            if (_homeLaunch != null) LaunchApp(_homeLaunch);
+            else if (_ctl.IsActive) HideDock(); else ShowDock();
+            // A consumed Home never opened Samsung Home, so there is nothing to close.
+            if (!direct) ArmGuard();
+            Log(direct ? "direct Home press" : "Home press");
+        }
+
         private static byte OnInput(IntPtr data, IntPtr handler)
         {
             try
@@ -669,27 +737,7 @@ namespace Launcher
                         int code = ev.Code;
                         if (_learn && ev.Value == 1) Log("key code " + code);
                         if (code != _homeCode) { if (ev.Value != 0) { DoubleHome.Reset(); if (_pendingLaunch == _doubleHome) _pendingLaunch = null; if (CloseGuard != null) CloseGuard.CancelLaunch(); } if (ev.Value == 1) NavFromInput(code); continue; }
-                        double now = Efl.ecore_time_get();
-                        if (_doubleHome != null && _homeLaunch == null)
-                        {
-                            HomeGestureAction gesture = DoubleHome.Feed(index, ev.Value, ev.Time);
-                            if (gesture == HomeGestureAction.Double)
-                            {
-                                HomeKeys.ObserveRaw(now);
-                                CancelGuard(); HideDock();
-                                if (_ctl.Phase == Phase.Hidden) LaunchApp(_doubleHome);
-                                else _pendingLaunch = _doubleHome;
-                                continue;
-                            }
-                            if (gesture != HomeGestureAction.Press) continue;
-                        }
-                        else if (ev.Value != 1) continue;
-                        // The focused dock also gets XF86Home through evas and hides itself: count it once.
-                        if (HomeKeys.FromEvdev(now, _ctl.IsActive) == HomeKeyAction.None) continue;
-                        _perfWhy = "home";
-                        if (_homeLaunch != null) { LaunchApp(_homeLaunch); ArmGuard(); continue; }
-                        if (_ctl.IsActive) HideDock(); else ShowDock();
-                        ArmGuard();
+                        HandleHome(index, ev.Value, ev.Time, false);
                     }
                 }
             }
@@ -977,6 +1025,7 @@ namespace Launcher
             _logPath = Path.Combine(_dir, "tvlauncher.log");
             _pidPath = Path.Combine(_dir, "tvlauncher.pid");
             _fifoPath = Path.Combine(_dir, "tvlauncher.fifo");
+            _homeFifoPath = Path.Combine(_dir, "tvlauncher-home.fifo");
             TrimLog();
 
             if (!AcquireInstance()) return 0;
@@ -1045,6 +1094,7 @@ namespace Launcher
 
                 Efl.evas_object_event_callback_add(_win, Efl.EvasCallbackKeyDown, KeyCb, IntPtr.Zero);
                 SetupFifo();
+                SetupHomeFifo();
                 string guard = Arg(args, "--kill-on-home");
                 if (guard != null)
                 {

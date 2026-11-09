@@ -19,6 +19,10 @@ jobs:
       - uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d # v5.0.0
         with:
           dotnet-version: 10.0.x
+      - name: Direct Home input and FIFO tests
+        run: dotnet run -c Release --project rooting/tests/direct-home
+      - name: Compile remote input helper
+        run: dotnet build rooting/remote-input-build/RemoteInput.csproj -c Release -p:UseAppHost=false
       - name: Native launcher checks
         run: dotnet run -c Release --project dock/tests
       - name: Install Ecore test runtime
@@ -38,13 +42,14 @@ jobs:
         env:
           VETRO_SOURCE_REVISION: ${{ github.sha }}
         run: |
+          cp rooting/remote-input-build/bin/Release/netcoreapp3.1/SamsungTvRemoteInputAgent.{dll,deps.json,runtimeconfig.json} rooting/payload/
           cp dock/bin/Release/netcoreapp3.1/tvlauncher-dotnet.dll app/native/dock/tvlauncher-dotnet.dll
           node - <<'NODE'
           const fs = require('fs'), crypto = require('crypto');
           const builder = require('./app/build.cjs');
           const files = require('./rooting/build.cjs').collectIntegration();
           const names = files.map(f => decodeURIComponent(f.uri));
-          for (const name of ['service/home-double-press.js', 'service/plugin-launcher.js', 'service/root-agent.js', 'native/dock/tvlauncher-dotnet.dll']) {
+          for (const name of ['service/home-double-press.js', 'service/plugin-launcher.js', 'service/root-agent.js', 'native/dock/tvlauncher-dotnet.dll', 'payload/SamsungTvRemoteInputAgent.dll', 'payload/SamsungTvRemoteInputAgent.runtimeconfig.json']) {
             if (!names.includes(name)) throw Error('Missing integration file: ' + name);
           }
           fs.mkdirSync('dist', {recursive:true});
