@@ -12,14 +12,14 @@ def updater_module():
     spec.loader.exec_module(suite)
     suite.__doc__ = __doc__
     vetro = dict(next(app for app in suite.APPS if app['key'] == 'vetro'))
-    vetro.update(revision='1768e251784adb14dc007052c5b9a45e567e2777',
-                 run=42550258938, artifact=13644104863, digest='9945da1734b88d507fdbc8eba28656c9582b86df60eba49ce33f6fad79e0743d')
+    vetro.update(revision='410a8ad7566e610a208839ab2b4623052515b775',
+                 run=42558228305, artifact=13648133816, digest='90862b3ee48b22395ed69f3cea3ee9aa6642cb60b1425c2bbca10a1077d7b97e')
     vetro['required'] = vetro['required'] + [
         'payload/SamsungTvRemoteInputAgent.dll',
         'payload/SamsungTvRemoteInputAgent.deps.json',
         'payload/SamsungTvRemoteInputAgent.runtimeconfig.json']
     suite.APPS = [vetro]
-    suite.SUITE = 'vetro-live-double-home-20261109-r2'
+    suite.SUITE = 'vetro-live-double-home-20261109-r3'
     base = suite.Updater
 
     class LiveDoubleHomeUpdater(base):

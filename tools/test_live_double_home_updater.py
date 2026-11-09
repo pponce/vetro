@@ -56,8 +56,8 @@ class InstallerTests(unittest.TestCase):
     def test_pinned_build(self):
         spec = SUITE.APPS[0]
         self.assertEqual(len(SUITE.APPS), 1)
-        self.assertEqual(spec['revision'], '1768e251784adb14dc007052c5b9a45e567e2777')
-        self.assertEqual(spec['artifact'], 13644104863)
+        self.assertEqual(spec['revision'], '410a8ad7566e610a208839ab2b4623052515b775')
+        self.assertEqual(spec['artifact'], 13648133816)
         self.assertIn('payload/SamsungTvRemoteInputAgent.dll', spec['required'])
 
     def test_preserve_and_verify_same_process(self):
