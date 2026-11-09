@@ -15,6 +15,8 @@ Published correction r3:
 
 ## Latest hardware evidence and confirmed cause
 
+Hardware acceptance update: `report-20261109T035153810007Z.json` confirms r3 installed successfully with `complete: true`, installed files and runtime verified, and `liveDoubleHome.sameProcess: true` plus `savedAndApplied: true`. The user then confirmed: "save worked" in the dashboard. Automated live-save verification and a manual dashboard save have therefore passed on the S95C. Post-update destination-switching, enable/disable and physical double-press tests have not yet been explicitly reported. No further install or cold boot is needed for the save correction.
+
 `reply-20261109T034424602817Z.json` completed the focused diagnostic on installed r2 (`1768e251`). The helper returned exit code 0 without a timeout. Its output contained the exact fresh `double-home-applied <nonce>` line, followed by two Samsung .NET `[GC_INFO]` lines. The native acknowledgement file exactly matched the full request, including nonce, PID and Glass Home destination. The launcher PID remained unchanged and persisted preferences were unchanged. The native log recorded the application.
 
 Therefore r2's native delivery and acknowledgement worked on this TV. The service incorrectly required the entire stdout stream to equal the confirmation. GC output made it report failure and attempt rollback. The same overly strict comparison then falsely rejected the rollback acknowledgement. This is an introduced confirmation-parser bug, not loss of root access or an installation failure.
@@ -38,7 +40,7 @@ Both full CI runs passed:
 - Combined: https://github.com/pponce/vetro/actions/runs/42558228305
 - PR #167: https://github.com/pponce/vetro/actions/runs/42558249333
 
-The existing CI includes root/app EACCES boundary tests with separate processes, native launcher tests, Ecore tests, TV launcher compilation and release checks. The native root path has now also been verified on the TV by the uploaded diagnostic. End-to-end dashboard acceptance of r3 remains pending.
+The existing CI includes root/app EACCES boundary tests with separate processes, native launcher tests, Ecore tests, TV launcher compilation and release checks. The native root path has now also been verified on the TV by the uploaded diagnostic. The r3 installer live-save check and manual dashboard save are now confirmed on the S95C; physical gesture acceptance after this update remains to be reported.
 
 ## Earlier findings retained
 
@@ -50,9 +52,9 @@ Before live save was introduced, changing double-press settings restarted the la
 
 1. Completed: both r3 CI runs passed and the combined branch and PR #167 were advanced with expected-head checks.
 2. Completed: the combined source/run/artifact/digest is pinned in `tools/update-vetro-live-double-home.py`, using suite `vetro-live-double-home-20261109-r3`. All 14 installer tests and Python compilation passed with these final pins. Tooling and this checkpoint are published together.
-3. Provide a complete checksum-verified Bash block. Installer files belong under `vetro-install/live-double-home-installer-r3`; records/reports belong under `vetro-install/vetro-live-double-home-20261109-r3` within the existing `samsung-tv-tools` project. Retain earlier records. Keep the TV awake with Vetro/root connected; no cold boot is required.
-4. Verify the installer reports `VERIFIED: double-press settings saved and applied without restarting the launcher.` If it stops, return its report using the printed rsync command.
-5. Reload the dashboard, save the unchanged setting, change the double-press destination and save, then return it to Glass Home and save. Test quick distinct Home presses. Keep Toggle Vetro overlay and remote interception enabled throughout. Also test disabling and re-enabling only double press.
+3. Completed: the user ran the checksum-verified r3 installer successfully. Installer files are under `vetro-install/live-double-home-installer-r3`; records/reports are under `vetro-install/vetro-live-double-home-20261109-r3` within the existing `samsung-tv-tools` project. Retain earlier records. Keep the TV awake with Vetro/root connected; no cold boot is required.
+4. Completed: the report confirms the installer live save applied successfully in the same launcher process. The user also confirmed a dashboard save succeeded.
+5. Remaining acceptance: change the double-press destination, save and test it, then return to Glass Home and test two quick distinct Home presses. Keep Toggle Vetro overlay and remote interception enabled. Enabling/disabling only double press is additional coverage; do not repeat completed installation or diagnostic steps.
 6. Record actual dashboard and remote acceptance separately from passing CI and the already-confirmed native helper path.
 
 The GitHub connection allowed branch updates but refused an upstream PR comment with HTTP 403 (`Resource not accessible by integration`). Do not claim a comment or PR body edit was posted. Prepared comment text is in `PR167-UPDATE.md`.
