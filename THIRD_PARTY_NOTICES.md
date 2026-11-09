@@ -143,3 +143,15 @@ original author and message; only a conflict in `runActions` (the `direct` param
 
 - `app/service/main.js`, `app/service/physical-input.js` and the tests `input-service-lifecycle`,
   `physical-input-lifecycle`: cancelling remote-input callbacks and queued actions after the service stops.
+
+## Physical Home interception
+
+Credit: [tomcraft](https://github.com/tomcraft),
+[physical Home interception in Vetro PR #30](https://github.com/andrearicci93/vetro/pull/30).
+
+The direct physical Home handling in `rooting/payload/SamsungTvRemoteInputAgent.cs`
+adapts that contribution's nonblocking FIFO delivery, opened-descriptor validation,
+ARM32 `O_NOFOLLOW` handling, and consume-or-forward decision through a held press.
+The integration extends the approach with timestamped press/release events on a
+separate private FIFO, launcher gesture handling, and shared Home configuration.
+It is an adaptation rather than an unchanged copy of the original PR.

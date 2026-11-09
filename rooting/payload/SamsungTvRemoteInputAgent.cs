@@ -568,6 +568,9 @@ internal static class SamsungTvRemoteInputAgent
         }
     }
 
+    // Direct Home interception adapts tomcraft's work in Vetro PR #30:
+    // https://github.com/andrearicci93/vetro/pull/30
+    // Credit includes FIFO validation, ARM32 flags, and held-key routing policy.
     // Home goes straight to the native launcher's private FIFO. The existing
     // remapper owns the grab; no extra device or polling loop is introduced.
     internal sealed class DirectHomeRouter
