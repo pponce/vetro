@@ -11,6 +11,6 @@ Both source-check runs passed. Validation for the correction:
 - The new native test runs an unprivileged process that gets EACCES, then confirms the root helper changes settings in the same resident launcher process. It also covers stale acknowledgements, wrong PID, malformed requests, missing readers and invalid FIFO paths.
 - Service tests cover denied app filesystem access, live updates, rollback and concurrent saves. Installer tests cover failure reporting without repeated live-save attempts.
 
-Hardware acceptance of this correction is pending. The preceding package installed and restarted successfully on my S95C, but its direct live-save path failed with EACCES. The original restart-command failure's underlying cause remains unproven; this change removes restarting from ordinary double-press saves.
+Hardware testing of this correction still fails: the package installed and restarted successfully, but the service received exit code 0 with a reply that did not exactly match the expected acknowledgement. An unchanged dashboard save returned the same error. Exact reply and native acknowledgement capture is the next step. The preceding direct live-save implementation failed with EACCES. The original restart-command failure's underlying cause remains unproven; this change removes restarting from ordinary double-press saves.
 
 This update is scoped to double-press configuration. The PR keeps its existing native input path and prerequisite stack; direct-interception integration and #169 remain separate.
